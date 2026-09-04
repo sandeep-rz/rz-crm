@@ -21,6 +21,7 @@ import {
   phoneNumberBelongsToWaba,
 } from '@/lib/whatsapp/waba-pairing';
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption';
+import { resolveVerifyTokenForSave } from '@/lib/whatsapp/verify-token';
 
 /**
  * Resolve the caller's account_id from their profile. Inlined here
@@ -152,7 +153,7 @@ export async function GET(request: Request) {
     const { data: configs, error: configError } = await supabase
       .from('whatsapp_config')
       .select(
-        'id, display_name, is_primary, phone_number_id, waba_id, access_token, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, mirror_inbound_media, created_at, updated_at'
+        'id, display_name, is_primary, phone_number_id, waba_id, access_token, verify_token, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, mirror_inbound_media, created_at, updated_at'
       )
       .eq('account_id', accountId)
       .order('is_primary', { ascending: false })
@@ -176,6 +177,7 @@ export async function GET(request: Request) {
       is_primary: config.is_primary,
       phone_number_id: config.phone_number_id,
       waba_id: config.waba_id,
+      has_verify_token: Boolean(config.verify_token),
       status: config.status,
       connected_at: config.connected_at,
       registered_at: config.registered_at,
@@ -500,31 +502,12 @@ export async function POST(request: Request) {
       }
     }
 
-    // Encrypt sensitive tokens before storing
-    let encryptedAccessToken: string;
-    let encryptedVerifyToken: string | null;
-    try {
-      encryptedAccessToken = encrypt(access_token);
-      encryptedVerifyToken = verify_token ? encrypt(verify_token) : null;
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Unknown encryption error';
-      console.error('Encryption failed:', message);
-      return NextResponse.json(
-        {
-          error:
-            'Failed to encrypt token. Check that ENCRYPTION_KEY is a valid 64-character hex string in your environment variables.',
-        },
-        { status: 500 }
-      );
-    }
-
-    // Look up any pre-existing row for this account so we know whether
-    // this number is already registered with Meta — if so we can skip
-    // /register when the user didn't provide a PIN this time around.
+    // Look up the exact existing connection. In addition to registration
+    // state, retain its encrypted webhook token when this save does not
+    // intentionally replace it.
     let existingQuery = supabase
       .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id')
+      .select('id, registered_at, phone_number_id, verify_token')
       .eq('account_id', accountId);
     existingQuery = connectionId
       ? existingQuery.eq('id', connectionId)
@@ -535,6 +518,28 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'WhatsApp connection not found' },
         { status: 404 }
+      );
+    }
+
+    // Encrypt sensitive tokens before storing.
+    let encryptedAccessToken: string;
+    let encryptedVerifyToken: string | null;
+    try {
+      encryptedAccessToken = encrypt(access_token);
+      encryptedVerifyToken = resolveVerifyTokenForSave(
+        verify_token,
+        existing?.verify_token ?? null
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Unknown encryption error';
+      console.error('Encryption failed:', message);
+      return NextResponse.json(
+        {
+          error:
+            'Failed to encrypt token. Check that ENCRYPTION_KEY is a valid 64-character hex string in your environment variables.',
+        },
+        { status: 500 }
       );
     }
 

@@ -73,7 +73,7 @@ type WabaSubscription = {
 type ConnectionSummary = Omit<
   WhatsAppConfigType,
   'access_token' | 'verify_token'
->;
+> & { has_verify_token?: boolean };
 
 export function WhatsAppConfig() {
   const t = useTranslations('Settings.whatsapp');
@@ -125,6 +125,7 @@ export function WhatsAppConfig() {
   const [verifyToken, setVerifyToken] = useState('');
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
+  const [verifyEdited, setVerifyEdited] = useState(false);
 
   // Inbound-media mirror (issue #466). Unlike everything else on this
   // page it is NOT part of handleSave: that path insists on re-entering
@@ -179,14 +180,19 @@ export function WhatsAppConfig() {
           : (list.find((row) => row.is_primary) ?? list[0] ?? null);
 
         if (data) {
-          setConfig({ ...data, access_token: '' } as WhatsAppConfigType);
+          setConfig({
+            ...data,
+            access_token: '',
+            verify_token: '',
+          } as WhatsAppConfigType);
           setDisplayName(data.display_name || '');
           setPhoneNumberId(data.phone_number_id || '');
           setWabaId(data.waba_id || '');
           setAccessToken(MASKED_TOKEN);
-          setVerifyToken('');
+          setVerifyToken(data.has_verify_token ? MASKED_TOKEN : '');
           setPin('');
           setTokenEdited(false);
+          setVerifyEdited(false);
           // Undefined on a row read before migration 039 — treat that as
           // on, matching the webhook's own default.
           setMirrorMedia(data.mirror_inbound_media !== false);
@@ -199,6 +205,7 @@ export function WhatsAppConfig() {
           setVerifyToken('');
           setPin('');
           setTokenEdited(false);
+          setVerifyEdited(false);
           setMirrorMedia(true);
         }
         // Clear any stale probe result when reloading the row.
@@ -312,7 +319,13 @@ export function WhatsAppConfig() {
         display_name: displayName.trim(),
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
-        verify_token: verifyToken.trim() || null,
+        // Omit an untouched masked/empty value so the server preserves the
+        // encrypted token already stored for this connection.
+        ...(verifyEdited &&
+        verifyToken.trim() &&
+        verifyToken.trim() !== MASKED_TOKEN
+          ? { verify_token: verifyToken.trim() }
+          : {}),
         // Optional — only sent when the user filled it in. The server
         // requires it on first save or when changing numbers; for a
         // simple token rotation, leaving it blank skips re-register.
@@ -501,6 +514,7 @@ export function WhatsAppConfig() {
       setAccessToken('');
       setVerifyToken('');
       setTokenEdited(false);
+      setVerifyEdited(false);
       setConnectionStatus('disconnected');
       setResetReason(null);
       setStatusMessage('');
@@ -533,6 +547,7 @@ export function WhatsAppConfig() {
     setVerifyToken('');
     setPin('');
     setTokenEdited(false);
+    setVerifyEdited(false);
     setMirrorMedia(true);
     setConnectionStatus('disconnected');
     setRegistrationProbe(null);
@@ -1053,11 +1068,22 @@ export function WhatsAppConfig() {
                       <Input
                         placeholder={t('webhookVerifyTokenPlaceholder')}
                         value={verifyToken}
-                        onChange={(e) => setVerifyToken(e.target.value)}
+                        onChange={(e) => {
+                          setVerifyToken(e.target.value);
+                          setVerifyEdited(true);
+                        }}
+                        onFocus={() => {
+                          if (verifyToken === MASKED_TOKEN) {
+                            setVerifyToken('');
+                            setVerifyEdited(true);
+                          }
+                        }}
                         className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       />
                       <p className="text-muted-foreground text-xs">
-                        {t('webhookVerifyTokenHint')}
+                        {verifyToken === MASKED_TOKEN && !verifyEdited
+                          ? t('webhookVerifyTokenSaved')
+                          : t('webhookVerifyTokenHint')}
                       </p>
                     </div>
 

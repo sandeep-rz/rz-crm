@@ -10,6 +10,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils';
 import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity';
+import { assertConversationInAccount } from '@/lib/whatsapp/conversation-scope';
 import {
   resolveTemplateRow,
   templateContentText,
@@ -133,6 +134,10 @@ async function sendViaMeta(
   if (contactErr || !contact) {
     throw new Error('contact not found for this account');
   }
+
+  // Same for the conversation the message lands in — see
+  // conversation-scope.ts (GHSA-m4fx-g6pr-hrw8).
+  await assertConversationInAccount(db, input.conversationId, input.accountId);
 
   // Phone number, or the business-scoped user ID when Meta has never
   // given us a number for this customer (issue #519).
@@ -260,7 +265,8 @@ async function sendViaMeta(
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq('id', input.conversationId);
+    .eq('id', input.conversationId)
+    .eq('account_id', input.accountId);
 
   return { whatsapp_message_id: waMessageId };
 }

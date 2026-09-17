@@ -141,6 +141,35 @@ export async function runAutomationsForTrigger(
       }
     }
 
+    // Same argument for `context.conversation_id` (GHSA-m4fx-g6pr-hrw8).
+    // It rides in on the same caller-supplied body, and every send step
+    // writes a `messages` row and a `conversations` preview update keyed
+    // on it through the service-role client — so an unvalidated id let a
+    // caller inject a message into another tenant's conversation. Refuse
+    // the same way: silently, with no existence oracle.
+    if (input.context?.conversation_id) {
+      const { data: conv, error: convErr } = await db
+        .from('conversations')
+        .select('id')
+        .eq('id', input.context.conversation_id)
+        .eq('account_id', input.accountId)
+        .maybeSingle();
+      if (convErr) {
+        console.error(
+          '[automations] conversation ownership check failed:',
+          convErr
+        );
+        return;
+      }
+      if (!conv) {
+        console.warn(
+          '[automations] conversation not in account, refusing dispatch',
+          input.context.conversation_id
+        );
+        return;
+      }
+    }
+
     const { data: automations, error } = await db
       .from('automations')
       .select('*')

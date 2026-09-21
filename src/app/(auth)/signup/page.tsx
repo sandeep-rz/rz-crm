@@ -33,8 +33,8 @@ function SignupPageInner() {
   // When the user lands here from `/join/<token>` we carry the
   // invite token in the query so it survives the signup → email
   // verification → redirect round-trip. `emailRedirectTo` below
-  // points back at /join/<token> so the user lands on the redeem
-  // step after verifying instead of being dropped on /dashboard.
+  // sends the verified user to /join/<token> so they land on the
+  // redeem step instead of being dropped on /dashboard.
   const inviteToken = searchParams.get('invite');
   const t = useTranslations('SignupPage');
 
@@ -63,13 +63,20 @@ function SignupPageInner() {
 
     setLoading(true);
 
-    // If we have an invite token, point Supabase's verification
-    // email back at the join page so the user can accept after
-    // verifying. Without a token, Supabase uses its default
-    // redirect (the app root).
-    const emailRedirectTo = inviteToken
-      ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
-      : undefined;
+    // Always name our own origin as the place the confirmation link
+    // returns to. Previously this was left unset unless an invite was
+    // involved, so Supabase fell back to its Site URL — which on a
+    // freshly-created or self-hosted project is `http://localhost:3000`
+    // (issue #595) — and even when the Site URL was right the link
+    // landed on `/` with an unexchanged `?code=`, so the user had to
+    // sign in again after verifying. /auth/callback exchanges the link
+    // for a session and forwards to `next` (issue #592). Supabase still
+    // has to allow this origin under Authentication → URL Configuration
+    // → Redirect URLs; see docs/auth-emails.md.
+    const next = inviteToken
+      ? `/join/${encodeURIComponent(inviteToken)}`
+      : '/dashboard';
+    const emailRedirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
     try {
       // Migration 045 validates this digest against a real pending invite
@@ -82,7 +89,7 @@ function SignupPageInner() {
         password,
         options: {
           data: metadata,
-          ...(emailRedirectTo ? { emailRedirectTo } : {}),
+          emailRedirectTo,
         },
       });
 

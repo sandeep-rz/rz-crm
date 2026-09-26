@@ -52,6 +52,11 @@
     "settings": "Settings",
     "openMenu": "Open menu",
     "openAccountMenu": "Open account menu",
+    "openWorkspaceMenu": "Open workspace menu",
+    "workspaces": "Workspaces",
+    "createWorkspace": "Create workspace",
+    "workspaceFallback": "Workspace",
+    "workspaceSwitchFailed": "Failed to switch workspace",
     "defaultUser": "User",
     "defaultAvatar": "Avatar",
     "menuProfile": "Profile",
@@ -62,11 +67,26 @@
     "switchMode": "Switch to {mode} mode"
   },
   "AccountAccess": {
+    "noWorkspaceTitle": "No workspace yet",
+    "noWorkspaceBody": "You haven't joined a workspace yet. Complete your invitation or create your own workspace.",
+    "createWorkspace": "Create workspace",
     "unlinkedTitle": "This user is not linked to an account",
     "unlinkedBody": "Nothing you change will be saved while this is unresolved — the database rejects every write from a user with no account or role. If you were invited to a team, ask the owner to re-send the invitation. On a self-hosted install, check that the account-bootstrap migration ran for this user.",
     "errorTitle": "Could not load your permissions",
     "errorBody": "Your account role did not load, so every action is treated as read-only and changes will not save. Check your connection and try again.",
     "retry": "Retry"
+  },
+  "CreateWorkspace": {
+    "title": "Create workspace",
+    "description": "Create a new workspace for your team, contacts and WhatsApp conversations.",
+    "nameLabel": "Workspace name",
+    "namePlaceholder": "One Tree",
+    "nameRequired": "Workspace name required",
+    "nameTooLong": "Workspace name must be {max} characters or fewer",
+    "createFailed": "Unable to create workspace",
+    "success": "{name} is now your active workspace",
+    "cancel": "Cancel",
+    "submit": "Create workspace"
   },
   "Dashboard": {
     "page": {
@@ -1897,6 +1917,7 @@
     }
   },
   "SignupPage": {
+    "signupFailed": "Unable to create account",
     "passwordsMismatch": "Passwords do not match",
     "passwordTooShort": "Password must be at least 6 characters",
     "checkEmailTitle": "Check your email",
@@ -1941,11 +1962,9 @@
       "serverErrorTitle": "Something went wrong",
       "serverErrorBody": "We couldn't verify this invitation right now. Try refreshing the page in a moment."
     },
-    "conflictDefault": "You are already in another account. Sign in with a different email to join this one.",
     "acceptFailed": "Failed to accept invitation",
     "welcome": "Welcome to the team",
     "serverUnreachable": "Could not reach the server",
-    "signOutFailed": "Could not sign out. Try refreshing the page.",
     "verifying": "Verifying invitation…",
     "tryAgain": "Try again",
     "createNewAccount": "Create a new account instead",
@@ -1954,12 +1973,7 @@
     "joinAs": "You'll join as <badge>{role}</badge>. Link valid until {date}.",
     "accepting": "Accepting…",
     "acceptInvitation": "Accept invitation",
-    "acceptNote": "Accepting moves your login into {name}. Your empty personal account from signup will be cleaned up.",
-    "conflictTitle": "Can't join {name} with this account",
-    "conflictBody": "To join <account>{name}</account>, sign out and sign up again with a different email address. The invite link stays valid as long as it hasn't expired.",
-    "staySignedIn": "Stay signed in",
-    "signingOut": "Signing out…",
-    "signOutSwitch": "Sign out & use a different email",
+    "acceptNote": "Accepting adds {name} to your workspaces and makes it active. Your existing workspaces stay available.",
     "createAndJoin": "Create account & join",
     "haveAccount": "I already have an account"
   },

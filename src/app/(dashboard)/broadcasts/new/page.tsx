@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -45,6 +45,19 @@ export default function NewBroadcastPage() {
   >({});
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
+  const [connections, setConnections] = useState<Array<{ id: string; display_name: string; is_primary: boolean }>>([]);
+  const [whatsappConfigId, setWhatsappConfigId] = useState('');
+
+  useEffect(() => {
+    fetch('/api/whatsapp/config')
+      .then((response) => response.json())
+      .then((payload) => {
+        const rows = payload.connections ?? [];
+        setConnections(rows);
+        setWhatsappConfigId(rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ?? rows[0]?.id ?? '');
+      })
+      .catch(() => undefined);
+  }, []);
 
   async function handleSend() {
     if (!template) return;
@@ -62,6 +75,7 @@ export default function NewBroadcastPage() {
         },
         variables,
         headerMediaUrl,
+        whatsappConfigId,
       });
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
@@ -104,6 +118,7 @@ export default function NewBroadcastPage() {
     const { error } = await supabase.from('broadcasts').insert({
       user_id: user.id,
       account_id: accountId,
+      whatsapp_config_id: whatsappConfigId,
       name: name.trim(),
       template_name: template.name,
       template_language: template.language ?? 'en_US',
@@ -138,6 +153,25 @@ export default function NewBroadcastPage() {
           {t('subtitle')}
         </p>
       </div>
+
+      {connections.length > 1 && (
+        <div className="space-y-2">
+          <label htmlFor="broadcast-connection" className="text-sm font-medium text-foreground">Send from</label>
+          <select
+            id="broadcast-connection"
+            value={whatsappConfigId}
+            onChange={(event) => {
+              setWhatsappConfigId(event.target.value);
+              setTemplate(null);
+            }}
+            className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm"
+          >
+            {connections.map((connection) => (
+              <option key={connection.id} value={connection.id}>{connection.display_name}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Step Indicator */}
       <div className="flex items-center justify-between">
@@ -194,6 +228,7 @@ export default function NewBroadcastPage() {
               onSelect={setTemplate}
               onNext={() => setCurrentStep(1)}
               onBack={() => router.push('/broadcasts')}
+              whatsappConfigId={whatsappConfigId}
             />
           )}
           {currentStep === 1 && (

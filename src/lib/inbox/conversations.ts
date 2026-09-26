@@ -42,6 +42,13 @@ export function normalizeConversations(
   return rows.map(normalizeConversation);
 }
 
+export function matchesConnectionFilter(
+  conversation: Conversation,
+  connectionId: string | 'all',
+): boolean {
+  return connectionId === 'all' || conversation.whatsapp_config_id === connectionId;
+}
+
 export interface ContactFilters {
   /** Tag ids; a conversation matches if its contact has ANY of them (OR). */
   tagIds: string[];

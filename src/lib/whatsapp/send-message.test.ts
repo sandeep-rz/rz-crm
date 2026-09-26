@@ -233,6 +233,18 @@ function sendPathDb(
           return builder;
         },
         maybeSingle: async () => ({ data: null, error: null }),
+        limit: async () => ({
+          data: table === 'whatsapp_config' ? [{
+            ...config,
+            account_id: 'acct-1',
+            user_id: 'user-1',
+            display_name: 'Main',
+            is_primary: true,
+            waba_id: 'waba-1',
+            status: 'connected',
+          }] : [],
+          error: null,
+        }),
         single: async () => {
           if (table === 'conversations') {
             return { data: conversation, error: null };

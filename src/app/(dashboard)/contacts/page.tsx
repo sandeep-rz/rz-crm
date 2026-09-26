@@ -55,6 +55,7 @@ import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
 import { CustomFieldsManager } from '@/components/contacts/custom-fields-manager';
 import { useCan } from '@/hooks/use-can';
+import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
 
@@ -69,6 +70,7 @@ export default function ContactsPage() {
   const supabase = createClient();
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
+  const { accountId } = useAuth();
 
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,7 +106,11 @@ export default function ContactsPage() {
   const fetchSeq = useRef(0);
 
   const fetchTags = useCallback(async () => {
-    const { data } = await supabase.from('tags').select('*');
+    if (!accountId) return;
+    const { data } = await supabase
+      .from('tags')
+      .select('*')
+      .eq('account_id', accountId);
     if (data) {
       const map: Record<string, Tag> = {};
       data.forEach((t) => (map[t.id] = t));
@@ -116,9 +122,10 @@ export default function ContactsPage() {
         return pruned.length === prev.length ? prev : pruned;
       });
     }
-  }, [supabase]);
+  }, [accountId, supabase]);
 
   const fetchContacts = useCallback(async () => {
+    if (!accountId) return;
     const seq = ++fetchSeq.current;
     setLoading(true);
     // The visible rows are about to change — drop any selection that
@@ -157,6 +164,7 @@ export default function ContactsPage() {
       let query = supabase
         .from('contacts')
         .select('*', { count: 'exact' })
+        .eq('account_id', accountId)
         .order('created_at', { ascending: false })
         .range(from, to);
 
@@ -207,7 +215,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, selectedTagIds, tagsMap, t]);
+  }, [accountId, supabase, page, search, selectedTagIds, tagsMap, t]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -256,7 +264,8 @@ export default function ContactsPage() {
     const { error } = await supabase
       .from('contacts')
       .delete()
-      .eq('id', deleteTarget.id);
+      .eq('id', deleteTarget.id)
+      .eq('account_id', accountId);
 
     if (error) {
       toast.error(t('toastFailedDelete'));
@@ -300,7 +309,11 @@ export default function ContactsPage() {
     if (ids.length === 0) return;
     setDeleting(true);
 
-    const { error } = await supabase.from('contacts').delete().in('id', ids);
+    const { error } = await supabase
+      .from('contacts')
+      .delete()
+      .in('id', ids)
+      .eq('account_id', accountId);
 
     if (error) {
       toast.error(t('toastBulkFailedDelete'));

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 import {
   loadStepsTree,
   replaceSteps,
@@ -70,7 +71,7 @@ export async function PATCH(
   // to compute the post-patch "effective" state for validation.
   const { data: existing } = await admin
     .from('automations')
-    .select('id, user_id, is_active, trigger_type, trigger_config')
+    .select('id, user_id, account_id, whatsapp_config_id, is_active, trigger_type, trigger_config')
     .eq('id', id)
     .maybeSingle()
   if (!existing || existing.user_id !== user.id) {
@@ -86,6 +87,13 @@ export async function PATCH(
     'is_active',
   ] as const) {
     if (k in body) update[k] = body[k]
+  }
+  if (typeof body.whatsapp_config_id === 'string') {
+    const connection = await resolveWhatsAppConnection(admin, {
+      accountId: existing.account_id,
+      connectionId: body.whatsapp_config_id,
+    })
+    update.whatsapp_config_id = connection.id
   }
 
   // If this PATCH leaves the automation active (either explicitly

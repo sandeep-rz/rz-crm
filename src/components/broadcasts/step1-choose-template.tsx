@@ -18,9 +18,10 @@ interface Step1Props {
   onSelect: (template: MessageTemplate) => void;
   onNext: () => void;
   onBack: () => void;
+  whatsappConfigId: string;
 }
 
-export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack }: Step1Props) {
+export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack, whatsappConfigId }: Step1Props) {
   const t = useTranslations('Broadcasts.wizard');
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +38,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
           .from('message_templates')
           .select('*')
           .eq('status', 'APPROVED')
+          .eq('whatsapp_config_id', whatsappConfigId)
           .order('created_at', { ascending: false });
 
         if (fetchError) throw fetchError;
@@ -49,7 +51,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
     }
 
     fetchTemplates();
-  }, []);
+  }, [whatsappConfigId, t]);
 
   if (loading) {
     return (

@@ -21,7 +21,7 @@ type SelectResult = {
 function makeSupabaseStub(
   selectResult: SelectResult = { data: [{ id: 'row-1' }], error: null },
   opts: {
-    configRows?: { account_id: string; user_id: string }[];
+    configRows?: { id: string; account_id: string; user_id: string }[];
     insertError?: { message: string; code?: string } | null;
     retrySelectResult?: SelectResult;
   } = {},
@@ -30,7 +30,7 @@ function makeSupabaseStub(
     table: string;
     update?: Record<string, unknown>;
     filter?: { column: string; value: unknown };
-    insert?: Record<string, unknown>;
+    insert?: Record<string, unknown> | Record<string, unknown>[];
     select?: string;
   }[] = [];
   let updateCount = 0;
@@ -70,7 +70,10 @@ function makeSupabaseStub(
           return {
             eq(column: string, value: unknown) {
               entry.filter = { column, value };
-              return {
+              const filtered = {
+                in() {
+                  return filtered;
+                },
                 select() {
                   return Promise.resolve(result);
                 },
@@ -85,6 +88,7 @@ function makeSupabaseStub(
                   );
                 },
               };
+              return filtered;
             },
           };
         },
@@ -225,7 +229,7 @@ describe('handleTemplateWebhookChange — status update', () => {
 });
 
 describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
-  const CONFIG = { account_id: 'acc-1', user_id: 'admin-1' };
+  const CONFIG = { id: 'connection-1', account_id: 'acc-1', user_id: 'admin-1' };
 
   beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -253,15 +257,17 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
     );
 
     expect(calls.map((c) => c.table)).toEqual([
+      'whatsapp_config', // collect every connection matching the WABA
       'message_templates', // the original UPDATE (0 rows)
       'whatsapp_config', // resolve the tenant
       'message_templates', // the stub INSERT
     ]);
-    expect(calls[1].select).toBe('account_id, user_id');
-    expect(calls[1].filter).toEqual({ column: 'waba_id', value: 'WABA-1' });
-    expect(calls[2].insert).toEqual({
+    expect(calls[2].select).toBe('id, account_id, user_id');
+    expect(calls[2].filter).toEqual({ column: 'waba_id', value: 'WABA-1' });
+    expect(calls[3].insert).toEqual([{
       account_id: 'acc-1',
       user_id: 'admin-1',
+      whatsapp_config_id: 'connection-1',
       meta_template_id: '555',
       name: 'created_in_meta',
       language: 'de',
@@ -269,7 +275,7 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
       status: 'APPROVED',
       rejection_reason: null,
       submission_error: null,
-    });
+    }]);
   });
 
   it('carries the rejection reason into the stub on REJECTED and defaults language to en_US', async () => {
@@ -290,7 +296,7 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
       },
       stub,
     );
-    expect(calls[2].insert).toMatchObject({
+    expect((calls[3].insert as Record<string, unknown>[])[0]).toMatchObject({
       status: 'REJECTED',
       rejection_reason: 'INVALID_FORMAT',
       language: 'en_US',
@@ -315,7 +321,7 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
       },
       stub,
     );
-    expect(calls).toHaveLength(2); // update + config lookup, no insert
+    expect(calls).toHaveLength(3); // WABA fan-out + update + tenant lookup, no insert
     expect(calls.some((c) => c.insert)).toBe(false);
     expect(warn).toHaveBeenCalledTimes(1);
     const message = String(warn.mock.calls[0][0]);
@@ -324,12 +330,12 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
     expect(message).toContain('no whatsapp_config rows');
   });
 
-  it('refuses to guess the tenant when several configs share the WABA id', async () => {
+  it('creates one connection-scoped stub per config when several configs share the WABA id', async () => {
     const warn = vi.spyOn(console, 'warn');
     const { stub, calls } = makeSupabaseStub(
       { data: [], error: null },
       {
-        configRows: [CONFIG, { account_id: 'acc-2', user_id: 'admin-2' }],
+        configRows: [CONFIG, { id: 'connection-2', account_id: 'acc-2', user_id: 'admin-2' }],
       },
     );
     await handleTemplateWebhookChange(
@@ -344,8 +350,12 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
       },
       stub,
     );
-    expect(calls.some((c) => c.insert)).toBe(false);
-    expect(String(warn.mock.calls[0][0])).toContain('2 whatsapp_config rows');
+    const inserted = calls.find((c) => c.insert)?.insert as Record<string, unknown>[];
+    expect(inserted.map((row) => row.whatsapp_config_id)).toEqual([
+      'connection-1',
+      'connection-2',
+    ]);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('inserts a stub with quality_score (and no status) for a 0-row quality update', async () => {
@@ -368,18 +378,19 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
       },
       stub,
     );
-    expect(calls[0].update).toEqual({ quality_score: 'RED' });
-    expect(calls[2].insert).toEqual({
+    expect(calls[1].update).toEqual({ quality_score: 'RED' });
+    expect(calls[3].insert).toEqual([{
       account_id: 'acc-1',
       user_id: 'admin-1',
+      whatsapp_config_id: 'connection-1',
       meta_template_id: '559',
       name: 'created_in_meta',
       language: 'en_US',
       body_text: '',
       quality_score: 'RED',
-    });
+    }]);
     // `status` is deliberately absent — the column default applies.
-    expect(calls[2].insert).not.toHaveProperty('status');
+    expect((calls[3].insert as Record<string, unknown>[])[0]).not.toHaveProperty('status');
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -452,7 +463,7 @@ describe('handleTemplateWebhookChange — unknown template stub (#534)', () => {
       },
       stub,
     );
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(String(warn.mock.calls[0][0])).toContain('no message_template_name');
   });
 });

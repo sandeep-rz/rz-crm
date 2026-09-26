@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 import { getFlowTemplate } from '@/lib/flows/templates'
 
 /**
@@ -90,6 +91,7 @@ export async function POST(request: Request) {
          * provided.
          */
         template_slug?: string
+        whatsapp_config_id?: string
       }
     | null
   if (!body) {
@@ -97,6 +99,10 @@ export async function POST(request: Request) {
   }
 
   const admin = supabaseAdmin()
+  const connection = await resolveWhatsAppConnection(admin, {
+    accountId,
+    connectionId: body.whatsapp_config_id ?? null,
+  })
 
   // -------- Template clone path --------
   if (body.template_slug) {
@@ -112,6 +118,7 @@ export async function POST(request: Request) {
       .insert({
         user_id: userId,
         account_id: accountId,
+        whatsapp_config_id: connection.id,
         name: body.name?.trim() || template.name,
         description: template.description,
         status: 'draft',
@@ -161,6 +168,7 @@ export async function POST(request: Request) {
     .insert({
       user_id: userId,
       account_id: accountId,
+      whatsapp_config_id: connection.id,
       name: body.name.trim(),
       description: body.description ?? null,
       status: 'draft',

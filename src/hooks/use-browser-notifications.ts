@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 import type { Message } from "@/types";
+import { useAuth } from "@/hooks/use-auth";
 import {
   DEFAULT_NOTIFICATION_LABELS,
   buildNotificationContent,
@@ -50,6 +51,7 @@ export function useBrowserNotifyPref(): boolean {
  */
 export function useBrowserNotifications(): void {
   const enabled = useBrowserNotifyPref();
+  const { accountId } = useAuth();
   const router = useRouter();
   const t = useTranslations("Settings.browserNotifications.labels");
 
@@ -74,7 +76,7 @@ export function useBrowserNotifications(): void {
   const seenRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !accountId) return;
     if (getNotificationPermission() === "unsupported") return;
 
     const supabase = createClient();
@@ -87,8 +89,10 @@ export function useBrowserNotifications(): void {
         .from("conversations")
         .select("contact:contacts(name, wa_username, phone)")
         .eq("id", msg.conversation_id)
+        .eq("account_id", accountId)
         .maybeSingle();
       if (cancelled) return;
+      if (!data) return;
 
       const contact = (data as {
         contact?: { name?: string | null; wa_username?: string | null; phone?: string | null } | null;
@@ -147,5 +151,5 @@ export function useBrowserNotifications(): void {
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, [enabled, router]);
+  }, [accountId, enabled, router]);
 }

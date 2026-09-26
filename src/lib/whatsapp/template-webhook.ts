@@ -158,11 +158,18 @@ async function handleStatusUpdate(
     submission_error: null,
   }
 
-  const { data, error } = await supabase
+  const { data: configs } = wabaId
+    ? await supabase.from('whatsapp_config').select('id').eq('waba_id', wabaId)
+    : { data: [] }
+  const connectionIds = (configs ?? []).map((row: { id: string }) => row.id)
+
+  const runUpdate = () => supabase
     .from('message_templates')
     .update(update)
     .eq('meta_template_id', metaTemplateId)
+    .in('whatsapp_config_id', connectionIds)
     .select('id')
+  const { data, error } = await runUpdate()
 
   if (error) {
     console.error(
@@ -180,12 +187,7 @@ async function handleStatusUpdate(
       language: value.message_template_language,
       wabaId,
       fields: update,
-      retryUpdate: () =>
-        supabase
-          .from('message_templates')
-          .update(update)
-          .eq('meta_template_id', metaTemplateId)
-          .select('id'),
+      retryUpdate: runUpdate,
       supabase,
     })
     return
@@ -221,11 +223,16 @@ async function handleQualityUpdate(
       : null
 
   const update = { quality_score: score }
+  const { data: configs } = wabaId
+    ? await supabase.from('whatsapp_config').select('id').eq('waba_id', wabaId)
+    : { data: [] }
+  const connectionIds = (configs ?? []).map((row: { id: string }) => row.id)
   const runUpdate = () =>
     supabase
       .from('message_templates')
       .update(update)
       .eq('meta_template_id', metaTemplateId)
+      .in('whatsapp_config_id', connectionIds)
       .select('id')
 
   const { data, error } = await runUpdate()
@@ -304,7 +311,7 @@ async function createStubForUnknownTemplate(p: StubParams): Promise<void> {
 
   const { data: configs, error: configError } = await supabase
     .from('whatsapp_config')
-    .select('account_id, user_id')
+    .select('id, account_id, user_id')
     .eq('waba_id', wabaId)
 
   if (configError) {
@@ -314,36 +321,32 @@ async function createStubForUnknownTemplate(p: StubParams): Promise<void> {
     )
     return
   }
-  const rows = (configs ?? []) as { account_id: string; user_id: string }[]
-  if (rows.length !== 1) {
+  const rows = (configs ?? []) as { id: string; account_id: string; user_id: string }[]
+  if (rows.length === 0) {
     console.warn(
-      `[template-webhook] ${kind} for unknown template ${where} — ${rows.length === 0 ? 'no' : rows.length} whatsapp_config rows match that WABA id; not creating a stub. Run "Sync from Meta" for the owning account.`,
+      `[template-webhook] ${kind} for unknown template ${where} — no whatsapp_config rows match that WABA id; run "Sync from Meta" for the owning account.`,
     )
     return
   }
 
-  const config = rows[0]
-  // account_id is tenancy; user_id is the NOT NULL audit FK — the
-  // config owner, same convention the webhook uses for inbound writes.
-  // `category` and `status` fall back to their column defaults unless
-  // the event supplied them (status events do, quality events don't).
-  const stub = {
-    account_id: config.account_id,
-    user_id: config.user_id,
-    meta_template_id: metaTemplateId,
-    name,
-    language: p.language || DEFAULT_TEMPLATE_LANGUAGE,
-    body_text: STUB_BODY_TEXT,
-    ...p.fields,
-  }
+  const stubs = rows.map((config) => ({
+      account_id: config.account_id,
+      user_id: config.user_id,
+      whatsapp_config_id: config.id,
+      meta_template_id: metaTemplateId,
+      name,
+      language: p.language || DEFAULT_TEMPLATE_LANGUAGE,
+      body_text: STUB_BODY_TEXT,
+      ...p.fields,
+    }))
 
   const { error: insertError } = await supabase
     .from('message_templates')
-    .insert(stub)
+    .insert(stubs)
 
   if (!insertError) {
     console.info(
-      `[template-webhook] ${kind} for unknown template ${where} — created stub row for account ${config.account_id}; run "Sync from Meta" to backfill components.`,
+      `[template-webhook] ${kind} for unknown template ${where} — created ${stubs.length} connection-scoped stub row(s); run "Sync from Meta" to backfill components.`,
     )
     return
   }

@@ -15,56 +15,58 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentAccount, toErrorResponse } from "@/lib/auth/account";
-import { canManageMembers, isAccountRole } from "@/lib/auth/roles";
-import type { AccountMember } from "@/types";
+import { canManageMembers } from "@/lib/auth/roles";
+import {
+  mergeAccountMemberRows,
+  type AccountMemberProfileRow,
+  type AccountMembershipRow,
+} from "@/lib/account/members";
 
-interface ProfileRow {
-  user_id: string;
-  full_name: string | null;
-  email: string | null;
-  avatar_url: string | null;
-  account_role: string;
-  created_at: string;
+interface MembershipRow extends AccountMembershipRow {
+  account_id: string;
 }
 
 export async function GET() {
   try {
     const ctx = await getCurrentAccount();
 
-    // RLS on profiles allows reading any row whose account matches
-    // the caller's, so this query is naturally account-scoped.
-    const { data, error } = await ctx.supabase
-      .from("profiles")
-      .select("user_id, full_name, email, avatar_url, account_role, created_at")
+    // account_members is authoritative. profiles.account_id may point at a
+    // different currently-active workspace for any member in this roster.
+    const { data: membershipData, error: membershipError } = await ctx.supabase
+      .from("account_members")
+      .select("account_id, user_id, role, joined_at")
       .eq("account_id", ctx.accountId)
-      .order("created_at", { ascending: true });
+      .order("joined_at", { ascending: true });
 
-    if (error) {
-      console.error("[GET /api/account/members] fetch error:", error);
+    if (membershipError) {
+      console.error("[GET /api/account/members] membership fetch error:", membershipError);
       return NextResponse.json(
         { error: "Failed to load members" },
         { status: 500 },
       );
     }
 
-    const canSeeEmails = canManageMembers(ctx.role);
+    const memberships = (membershipData ?? []) as MembershipRow[];
+    const userIds = memberships.map((row) => row.user_id);
+    if (userIds.length === 0) return NextResponse.json({ members: [] });
 
-    const members: AccountMember[] = (data as ProfileRow[]).flatMap((row) => {
-      // Defensive: the DB enum should never let an unknown role
-      // through, but if a migration ever broadens the enum without
-      // updating TS, skip the row rather than crash the page.
-      if (!isAccountRole(row.account_role)) return [];
-      return [
-        {
-          user_id: row.user_id,
-          full_name: row.full_name ?? "",
-          email: canSeeEmails ? row.email : null,
-          avatar_url: row.avatar_url,
-          role: row.account_role,
-          joined_at: row.created_at,
-        },
-      ];
-    });
+    const { data: profileData, error: profileError } = await ctx.supabase
+      .from("profiles")
+      .select("id, user_id, full_name, email, avatar_url")
+      .in("user_id", userIds);
+    if (profileError) {
+      console.error("[GET /api/account/members] profile fetch error:", profileError);
+      return NextResponse.json(
+        { error: "Failed to load members" },
+        { status: 500 },
+      );
+    }
+
+    const members = mergeAccountMemberRows(
+      memberships,
+      (profileData ?? []) as AccountMemberProfileRow[],
+      canManageMembers(ctx.role),
+    );
 
     return NextResponse.json({ members });
   } catch (err) {

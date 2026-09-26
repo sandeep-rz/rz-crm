@@ -33,18 +33,17 @@ export interface Profile {
    */
   beta_features?: string[];
   /**
-   * Account this profile is a member of. Added by
-   * `017_account_sharing.sql`; NOT NULL in the DB post-backfill.
-   * Optional on the type only because older serialised payloads
-   * (cached client state, test fixtures) may not have it yet.
+   * Currently active workspace. All memberships live in account_members.
+   * Migration 045 permits null while a newly invited user verifies their
+   * email and explicitly redeems the invitation.
    */
-  account_id?: string;
+  account_id?: string | null;
   /**
-   * Caller's role within their account. Source of truth for every
-   * role-gated UI / API check — call `hasMinRole` from
+   * Caller's role in their currently active workspace. account_members.role
+   * is the membership source of truth; call `hasMinRole` from
    * `@/lib/auth/roles` rather than comparing this string directly.
    */
-  account_role?: AccountRole;
+  account_role?: AccountRole | null;
   created_at: string;
 }
 
@@ -62,19 +61,29 @@ export interface Account {
 }
 
 /**
- * Hydrated member row for the Settings → Members tab. Combines
- * the profile and its account_role for a single member of the
- * caller's account. Sensitive fields (email) are populated only
+ * Hydrated member row for the Settings → Members tab. Combines profile
+ * identity with account_members.role for one member of the active workspace.
+ * Sensitive fields (email) are populated only
  * when the caller has admin+ — agents and viewers see name +
  * avatar + role only.
  */
 export interface AccountMember {
+  /** profiles.id; used by legacy relations such as deals.assigned_to. */
+  profile_id: string;
   user_id: string;
   full_name: string;
   email: string | null;
   avatar_url: string | null;
   role: AccountRole;
   joined_at: string;
+}
+
+/** One workspace the signed-in user may activate. */
+export interface AccountMembership {
+  account_id: string;
+  account_name: string;
+  role: AccountRole;
+  default_currency: string;
 }
 
 /**
@@ -170,8 +179,10 @@ export type ConversationStatus = 'open' | 'pending' | 'closed';
 
 export interface Conversation {
   id: string;
+  account_id?: string;
   user_id: string;
   contact_id: string;
+  whatsapp_config_id?: string | null;
   status: ConversationStatus;
   assigned_agent_id?: string;
   last_message_text?: string;
@@ -293,7 +304,10 @@ export interface MessageReaction {
 
 export interface WhatsAppConfig {
   id: string;
+  account_id: string;
   user_id: string;
+  display_name: string;
+  is_primary: boolean;
   phone_number_id: string;
   waba_id?: string;
   access_token: string;
@@ -346,7 +360,9 @@ export interface TemplateSampleValues {
 
 export interface MessageTemplate {
   id: string;
+  account_id?: string;
   user_id: string;
+  whatsapp_config_id?: string | null;
   name: string;
   category: 'Marketing' | 'Utility' | 'Authentication';
   language?: string;
@@ -415,7 +431,9 @@ export type RecipientStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'repli
 
 export interface Broadcast {
   id: string;
+  account_id: string;
   user_id: string;
+  whatsapp_config_id?: string | null;
   name: string;
   template_name: string;
   template_language: string;
@@ -636,6 +654,7 @@ export interface Automation {
   /** Original author. Used for log audit + outbound message
    *  sender-of-record, never for tenancy isolation. */
   user_id: string;
+  whatsapp_config_id?: string | null;
   name: string;
   description?: string;
   trigger_type: AutomationTriggerType;

@@ -46,6 +46,22 @@ vi.mock("./admin-client", () => {
       return { data: null, error: null };
     }
     if (table === "automations") return { data: state.automations, error: null };
+    if (table === "whatsapp_config") {
+      return {
+        data: {
+          id: "connection-primary",
+          account_id: ACCOUNT,
+          user_id: "u1",
+          display_name: "Main",
+          is_primary: true,
+          phone_number_id: "pn-1",
+          waba_id: "waba-1",
+          access_token: "encrypted-token",
+          status: "connected",
+        },
+        error: null,
+      };
+    }
     if (table === "automation_logs") {
       if (type === "insert") {
         state.logInserts.push(ops.payload as Record<string, unknown>);
@@ -78,7 +94,13 @@ vi.mock("./admin-client", () => {
       gte: () => b,
       is: () => b,
       order: () => b,
-      limit: () => b,
+      limit: () => {
+        if (table === "whatsapp_config") {
+          const result = resolve(ops) as { data: unknown; error: unknown };
+          return Promise.resolve({ data: result.data ? [result.data] : [], error: result.error });
+        }
+        return b;
+      },
       single: () => Promise.resolve(resolve(ops)),
       maybeSingle: () => Promise.resolve(resolve(ops)),
       then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
@@ -102,6 +124,10 @@ vi.mock("./meta-send", () => ({
   engineSendText: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
   engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
   engineSendInteractive: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
+}));
+
+vi.mock("@/lib/whatsapp/encryption", () => ({
+  decrypt: (value: string) => value,
 }));
 
 import { runAutomationsForTrigger, triggerMatches } from "./engine";

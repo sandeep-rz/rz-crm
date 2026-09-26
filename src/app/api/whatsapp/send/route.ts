@@ -6,6 +6,7 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 import {
   sendMessageToConversation,
   validateSendMessageParams,
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
       template_message_params,
       interactive_payload,
       reply_to_message_id,
+      whatsapp_config_id,
     } = body
 
     if ((!conversationIdInput && !contact_id) || !message_type) {
@@ -130,7 +132,8 @@ export async function POST(request: Request) {
         supabase,
         accountId,
         userId,
-        contact_id
+        contact_id,
+        typeof whatsapp_config_id === 'string' ? whatsapp_config_id : null,
       )
       if (!resolved) {
         return NextResponse.json(
@@ -155,6 +158,8 @@ export async function POST(request: Request) {
     try {
       const result = await sendMessageToConversation(supabase, accountId, {
         conversationId,
+        whatsappConfigId:
+          typeof whatsapp_config_id === 'string' ? whatsapp_config_id : null,
         messageType: message_type,
         contentText: content_text,
         mediaUrl: media_url,
@@ -203,12 +208,18 @@ async function findOrCreateConversation(
   accountId: string,
   userId: string,
   contactId: string,
+  connectionId?: string | null,
 ): Promise<string | null> {
+  const connection = await resolveWhatsAppConnection(supabase, {
+    accountId,
+    connectionId,
+  })
   const { data: existing } = await supabase
     .from('conversations')
     .select('id')
     .eq('account_id', accountId)
     .eq('contact_id', contactId)
+    .eq('whatsapp_config_id', connection.id)
     .maybeSingle()
 
   if (existing) return existing.id
@@ -219,6 +230,7 @@ async function findOrCreateConversation(
       account_id: accountId,
       user_id: userId,
       contact_id: contactId,
+      whatsapp_config_id: connection.id,
     })
     .select('id')
     .single()

@@ -34,7 +34,8 @@ import {
   interactivePayloadPreviewText,
   type InteractiveMessagePayload,
 } from '@/lib/whatsapp/interactive';
-import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import { encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   phoneVariants,
@@ -74,6 +75,7 @@ export class SendMessageError extends Error {
 
 export interface SendMessageParams {
   conversationId: string;
+  whatsappConfigId?: string | null;
   messageType: string;
   contentText?: string | null;
   mediaUrl?: string | null;
@@ -190,6 +192,7 @@ export async function sendMessageToConversation(
 ): Promise<SendMessageResult> {
   const {
     conversationId,
+    whatsappConfigId,
     messageType,
     contentText,
     mediaUrl,
@@ -254,25 +257,18 @@ export async function sendMessageToConversation(
   const hasValidPhone = resolvedTarget.isPhone;
   const sanitizedPhone = hasValidPhone ? sendTarget : '';
 
-  // WhatsApp config, account-scoped.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-
-  if (configError || !config) {
-    throw new SendMessageError(
-      'whatsapp_not_configured',
-      'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400
-    );
-  }
-
-  const accessToken = decrypt(config.access_token);
+  const config = await resolveWhatsAppConnection(db, {
+    accountId,
+    connectionId: whatsappConfigId,
+    conversationId,
+  }).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : 'WhatsApp not configured'
+    throw new SendMessageError('whatsapp_not_configured', message, 400)
+  });
+  const accessToken = config.accessToken;
 
   // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
-  if (isLegacyFormat(config.access_token)) {
+  if (isLegacyFormat(config.encryptedAccessToken)) {
     void db
       .from('whatsapp_config')
       .update({ access_token: encrypt(accessToken) })
@@ -326,7 +322,8 @@ export async function sendMessageToConversation(
       db,
       accountId,
       templateName,
-      templateLanguage
+      templateLanguage,
+      config.id,
     );
     if (resolved.malformed) {
       throw new SendMessageError(
@@ -342,7 +339,7 @@ export async function sendMessageToConversation(
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
-        phoneNumberId: config.phone_number_id,
+        phoneNumberId: config.phoneNumberId,
         accessToken,
         to: phone,
         templateName: templateName!,
@@ -356,7 +353,7 @@ export async function sendMessageToConversation(
     }
     if (isMediaKind) {
       const result = await sendMediaMessage({
-        phoneNumberId: config.phone_number_id,
+        phoneNumberId: config.phoneNumberId,
         accessToken,
         to: phone,
         kind: messageType as MediaKind,
@@ -371,7 +368,7 @@ export async function sendMessageToConversation(
       const p = interactivePayload!;
       if (p.kind === 'buttons') {
         const result = await sendInteractiveButtons({
-          phoneNumberId: config.phone_number_id,
+          phoneNumberId: config.phoneNumberId,
           accessToken,
           to: phone,
           bodyText: p.body,
@@ -383,7 +380,7 @@ export async function sendMessageToConversation(
         return result.messageId;
       }
       const result = await sendInteractiveList({
-        phoneNumberId: config.phone_number_id,
+        phoneNumberId: config.phoneNumberId,
         accessToken,
         to: phone,
         bodyText: p.body,
@@ -396,7 +393,7 @@ export async function sendMessageToConversation(
       return result.messageId;
     }
     const result = await sendTextMessage({
-      phoneNumberId: config.phone_number_id,
+      phoneNumberId: config.phoneNumberId,
       accessToken,
       to: phone,
       text: contentText!,

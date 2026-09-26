@@ -1,6 +1,4 @@
-import { defineConfig } from "vitest/config";
-
-export default defineConfig({
+const config = {
   resolve: {
     tsconfigPaths: true,
   },
@@ -18,4 +16,6 @@ export default defineConfig({
     },
     clearMocks: true,
   },
-});
+};
+
+export default config;

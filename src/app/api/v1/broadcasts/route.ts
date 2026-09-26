@@ -72,6 +72,10 @@ export async function POST(request: Request) {
         to: typeof r?.to === 'string' ? r.to : '',
         params: Array.isArray(r?.params) ? r.params : undefined,
       })),
+      whatsappConfigId:
+        typeof body.whatsapp_config_id === 'string'
+          ? body.whatsapp_config_id
+          : null,
     });
 
     // Fan out after the response is sent. Uses the same service-role

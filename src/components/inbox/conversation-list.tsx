@@ -6,6 +6,7 @@ import {
   CONVERSATION_SELECT,
   matchesContactFilters,
   normalizeConversations,
+  matchesConnectionFilter,
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
@@ -21,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useAuth } from "@/hooks/use-auth";
 
 interface ConversationListProps {
   activeConversationId: string | null;
@@ -34,6 +36,7 @@ interface ConversationListProps {
    * or the tab was throttled. Optional so existing callers keep working.
    */
   resyncToken?: number;
+  whatsappConnections?: Array<{ id: string; display_name: string }>;
 }
 
 const STATUS_COLORS: Record<ConversationStatus, string> = {
@@ -52,8 +55,10 @@ export function ConversationList({
   conversations,
   onConversationsLoaded,
   resyncToken = 0,
+  whatsappConnections = [],
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
+  const { accountId } = useAuth();
   
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
@@ -65,6 +70,7 @@ export function ConversationList({
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<InboxFilter>("all");
+  const [connectionFilter, setConnectionFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
@@ -91,6 +97,7 @@ export function ConversationList({
   });
 
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     let cancelled = false;
 
@@ -98,6 +105,7 @@ export function ConversationList({
       const { data, error } = await supabase
         .from("conversations")
         .select(CONVERSATION_SELECT)
+        .eq("account_id", accountId)
         .order("last_message_at", { ascending: false });
 
       if (cancelled) return;
@@ -124,21 +132,26 @@ export function ConversationList({
     // `resyncToken` is included so the parent can force a refetch when
     // the realtime channel reconnects or the tab regains focus — catches
     // up on any events sent while the WS was disconnected or throttled.
-  }, [resyncToken]);
+  }, [accountId, resyncToken]);
 
   // Tag definitions for the filter picker — loaded once so labels/colours
   // stay stable regardless of which conversations happen to be loaded.
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from("tags").select("*").order("name");
+      const { data } = await supabase
+        .from("tags")
+        .select("*")
+        .eq("account_id", accountId)
+        .order("name");
       if (!cancelled && data) setTags(data as Tag[]);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
 
   // Company options are derived from the loaded conversations — there's no
   // separate companies table, and only companies with a live conversation
@@ -166,6 +179,9 @@ export function ConversationList({
     } else if (filter !== "all") {
       result = result.filter((c) => c.status === filter);
     }
+    if (connectionFilter !== 'all') {
+      result = result.filter((c) => matchesConnectionFilter(c, connectionFilter));
+    }
 
     // Contact-based filters (tags via OR logic, exact company match).
     if (selectedTagIds.length > 0 || selectedCompany !== null) {
@@ -188,7 +204,7 @@ export function ConversationList({
     }
 
     return result;
-  }, [conversations, filter, search, selectedTagIds, selectedCompany]);
+  }, [conversations, filter, connectionFilter, search, selectedTagIds, selectedCompany]);
 
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
@@ -262,6 +278,25 @@ export function ConversationList({
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {whatsappConnections.length > 1 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
+                {connectionFilter === 'all'
+                  ? 'All numbers'
+                  : whatsappConnections.find((c) => c.id === connectionFilter)?.display_name ?? 'Number'}
+                <ChevronDown className="h-3 w-3" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="border-border bg-popover">
+                <DropdownMenuItem onClick={() => setConnectionFilter('all')}>All numbers</DropdownMenuItem>
+                {whatsappConnections.map((connection) => (
+                  <DropdownMenuItem key={connection.id} onClick={() => setConnectionFilter(connection.id)}>
+                    {connection.display_name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
           {tags.length > 0 && (
             <DropdownMenu>
@@ -414,6 +449,7 @@ export function ConversationList({
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
                 t={t}
+                connectionName={whatsappConnections.length > 1 ? whatsappConnections.find((c) => c.id === conv.whatsapp_config_id)?.display_name : undefined}
               />
             ))}
           </div>
@@ -428,6 +464,7 @@ interface ConversationItemProps {
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
   t: ReturnType<typeof useTranslations>;
+  connectionName?: string;
 }
 
 function ConversationItem({
@@ -435,6 +472,7 @@ function ConversationItem({
   isActive,
   onSelect,
   t,
+  connectionName,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || t("unknown");
@@ -498,6 +536,11 @@ function ConversationItem({
             />
           </div>
         </div>
+        {connectionName && (
+          <span className="mt-1 inline-flex rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {connectionName}
+          </span>
+        )}
       </div>
     </button>
   );

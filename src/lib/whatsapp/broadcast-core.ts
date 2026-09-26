@@ -19,7 +19,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
-import { decrypt } from '@/lib/whatsapp/encryption';
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import {
   parseInternationalPhone,
   phoneVariants,
@@ -53,6 +53,7 @@ export interface CreateBroadcastParams {
   templateName: string;
   templateLanguage?: string | null;
   recipients: BroadcastRecipientInput[];
+  whatsappConfigId?: string | null;
 }
 
 interface PlannedRecipient {
@@ -109,19 +110,18 @@ export async function createBroadcast(
 
   // Config (fail fast + provides the audit trail owner already resolved
   // by the caller). Meta send needs phone_number_id + decrypted token.
-  const { data: config, error: configError } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', accountId)
-    .single();
-  if (configError || !config) {
+  const config = await resolveWhatsAppConnection(db, {
+    accountId,
+    connectionId: params.whatsappConfigId,
+  }).catch(() => null);
+  if (!config) {
     throw new BroadcastError(
       'whatsapp_not_configured',
       'WhatsApp not configured. Please set up your WhatsApp integration first.',
       400
     );
   }
-  const accessToken = decrypt(config.access_token);
+  const accessToken = config.accessToken;
 
   // Template row (once) for header/button components; guard a
   // malformed local row rather than N identical opaque failures.
@@ -129,7 +129,8 @@ export async function createBroadcast(
     db,
     accountId,
     templateName,
-    params.templateLanguage
+    params.templateLanguage,
+    config.id,
   );
   if (resolvedTemplate.malformed) {
     throw new BroadcastError(
@@ -222,6 +223,14 @@ export async function createBroadcast(
   }
 
   const broadcastId = createdRows[0].broadcast_id as string;
+  const { error: connectionPersistError } = await db
+    .from('broadcasts')
+    .update({ whatsapp_config_id: config.id })
+    .eq('id', broadcastId)
+    .eq('account_id', accountId)
+  if (connectionPersistError) {
+    throw new BroadcastError('internal', 'Failed to persist broadcast connection', 500)
+  }
 
   // Pair each inserted recipient row back to its phone/params by
   // contact_id — unambiguous now that duplicates are collapsed.
@@ -237,7 +246,7 @@ export async function createBroadcast(
     broadcastId,
     templateName,
     templateLanguage: resolvedTemplate.language,
-    phoneNumberId: config.phone_number_id,
+    phoneNumberId: config.phoneNumberId,
     accessToken,
     templateRow,
     planned,

@@ -14,9 +14,10 @@ import type {
   Contact,
   ConversationStatus,
   MessageTemplate,
-  Profile,
+  AccountMember,
   InteractiveMessagePayload,
 } from "@/types";
+import { fetchAccountMembers, memberLabel } from "@/lib/account/members";
 import {
   MessageSquare,
   ChevronDown,
@@ -169,12 +170,12 @@ export function MessageThread({
   const tTimer = useTranslations("Inbox.sessionTimer");
   const tQuote = useTranslations("Inbox.replyQuote");
 
-  const { user } = useAuth();
+  const { user, accountId } = useAuth();
   const { getPresence, getRow, now } = usePresence();
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [members, setMembers] = useState<AccountMember[]>([]);
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   // Purely visual spin state for the manual-refresh button. The actual
   // refetch is fire-and-forget through `onRefresh` (which bumps the
@@ -209,28 +210,18 @@ export function MessageThread({
     messageId: string;
   } | null>(null);
 
-  // Profiles are bounded by RLS to rows the current user is allowed to
-  // see — today that's just the current user, but the dropdown keeps the
-  // shape ready for shared-team workspaces without a refactor.
+  // Resolve the active workspace roster from account_members. A profile's
+  // account_id is only that user's active-workspace pointer.
   useEffect(() => {
     let cancelled = false;
-    const supabase = createClient();
-    supabase
-      .from("profiles")
-      .select("*")
-      .order("full_name")
-      .then(({ data, error }) => {
+    fetchAccountMembers().then((data) => {
         if (cancelled) return;
-        if (error) {
-          console.error("Failed to fetch profiles:", error);
-          return;
-        }
-        setProfiles((data as Profile[]) ?? []);
+        setMembers(data);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accountId]);
 
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
@@ -887,9 +878,9 @@ export function MessageThread({
     (s) => s.value === conversation.status
   );
   const assignedAgentId = conversation.assigned_agent_id ?? null;
-  const currentAssignee = profiles.find((p) => p.user_id === assignedAgentId);
+  const currentAssignee = members.find((m) => m.user_id === assignedAgentId);
   const assignLabel = assignedAgentId
-    ? (currentAssignee?.full_name ?? t("assigned"))
+    ? (currentAssignee ? memberLabel(currentAssignee) : t("assigned"))
     : t("assign");
 
   return (
@@ -1032,18 +1023,18 @@ export function MessageThread({
               align="end"
               className="border-border bg-popover"
             >
-              {profiles.length === 0 ? (
+              {members.length === 0 ? (
                 <DropdownMenuItem disabled className="text-sm text-muted-foreground">
                   {t("noTeammates")}
                 </DropdownMenuItem>
               ) : (
-                profiles.map((p) => {
-                  const isSelected = p.user_id === assignedAgentId;
-                  const presence = getPresence(p.user_id);
+                members.map((member) => {
+                  const isSelected = member.user_id === assignedAgentId;
+                  const presence = getPresence(member.user_id);
                   return (
                     <DropdownMenuItem
-                      key={p.id}
-                      onClick={() => handleAssignChange(p.user_id)}
+                      key={member.user_id}
+                      onClick={() => handleAssignChange(member.user_id)}
                       className={cn(
                         "text-sm",
                         isSelected ? "text-primary" : "text-popover-foreground"
@@ -1053,14 +1044,14 @@ export function MessageThread({
                         status={presence}
                         label={presenceLabel(
                           presence,
-                          getRow(p.user_id)?.last_seen_at ?? null,
+                          getRow(member.user_id)?.last_seen_at ?? null,
                           now
                         )}
                         className="mr-2"
                       />
                       <span className="flex-1">
-                        {p.full_name}
-                        {p.user_id === user?.id ? t("me") : ""}
+                        {memberLabel(member)}
+                        {member.user_id === user?.id ? t("me") : ""}
                       </span>
                       {isSelected && <Check className="ml-2 h-3 w-3" />}
                     </DropdownMenuItem>
@@ -1189,6 +1180,7 @@ export function MessageThread({
       />
 
       <TemplatePicker
+        whatsappConfigId={conversation?.whatsapp_config_id}
         open={templateModalOpen}
         onOpenChange={setTemplateModalOpen}
         onSelect={handleSendTemplate}

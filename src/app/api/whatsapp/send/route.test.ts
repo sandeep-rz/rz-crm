@@ -91,9 +91,16 @@ function makeSupabaseMock() {
 
     const b: Record<string, unknown> = {}
     const chain = () => b
-    for (const m of ['select', 'eq', 'in', 'order', 'limit', 'update', 'delete']) {
+    for (const m of ['select', 'eq', 'in', 'order', 'update', 'delete']) {
       b[m] = vi.fn(chain)
     }
+    b.limit = vi.fn(() => {
+      if (table === 'whatsapp_config') {
+        const result = selectResult()
+        return Promise.resolve({ data: result.data ? [result.data] : [], error: result.error })
+      }
+      return b
+    })
     b.insert = vi.fn((payload: Record<string, unknown>) => {
       didInsert = true
       if (table === 'conversations') {

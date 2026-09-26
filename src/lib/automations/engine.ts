@@ -24,6 +24,7 @@ import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from '@/lib/contacts/tag-chain'
 import { engineSendText, engineSendTemplate, engineSendInteractive } from './meta-send'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 
 // ------------------------------------------------------------
 // Public API
@@ -485,15 +486,14 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('assign_conversation needs a contact')
       let agentId = cfg.agent_id
       if (cfg.mode === 'round_robin') {
-        // Pick any member of the account. The existing implementation
-        // only ever returned the automation's author; preserving that
-        // shape until a real round-robin algorithm replaces it.
-        const { data: profiles } = await db
-          .from('profiles')
+        // profiles.account_id is only an active-workspace pointer;
+        // account_members is the membership source of truth.
+        const { data: memberships } = await db
+          .from('account_members')
           .select('user_id')
           .eq('account_id', args.automation.account_id)
           .limit(1)
-        agentId = profiles?.[0]?.user_id
+        agentId = memberships?.[0]?.user_id
       }
       if (!agentId) return 'no agent resolved'
       await db
@@ -639,11 +639,17 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   const fromCtx = args.context.conversation_id
   if (fromCtx) return fromCtx
   if (!args.contactId) throw new Error('cannot resolve conversation: no contact')
+  const connection = await resolveWhatsAppConnection(supabaseAdmin(), {
+    accountId: args.automation.account_id,
+    connectionId: args.automation.whatsapp_config_id,
+    entity: { type: 'automation', id: args.automation.id },
+  })
   const { data, error } = await supabaseAdmin()
     .from('conversations')
     .select('id')
     .eq('account_id', args.automation.account_id)
     .eq('contact_id', args.contactId)
+    .eq('whatsapp_config_id', connection.id)
     .maybeSingle()
   if (error) throw new Error(`conversation lookup failed: ${error.message}`)
   if (!data?.id) {

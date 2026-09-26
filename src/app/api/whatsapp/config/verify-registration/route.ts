@@ -28,7 +28,7 @@ import {
  * rather than a generic error toast. The combined `live` flag is
  * what the UI badges on.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const supabase = await createClient()
   const {
     data: { user },
@@ -38,9 +38,9 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // whatsapp_config is one-row-per-account post-017. Resolve the
-  // caller's account_id so a teammate who joined an existing account
-  // sees the same registration state as the admin who set it up.
+  // A workspace may have zero or more WhatsApp connections. Resolve the
+  // caller's active account first, then select an explicit connection or
+  // intentionally fall back to that workspace's primary connection.
   const { data: profile } = await supabase
     .from('profiles')
     .select('account_id')
@@ -55,11 +55,15 @@ export async function GET() {
     })
   }
 
-  const { data: config } = await supabase
+  const connectionId = new URL(request.url).searchParams.get('id')
+  let configQuery = supabase
     .from('whatsapp_config')
     .select('*')
     .eq('account_id', accountId)
-    .maybeSingle()
+  configQuery = connectionId
+    ? configQuery.eq('id', connectionId)
+    : configQuery.eq('is_primary', true)
+  const { data: config } = await configQuery.maybeSingle()
 
   if (!config) {
     return NextResponse.json({

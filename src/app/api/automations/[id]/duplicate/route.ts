@@ -41,6 +41,7 @@ export async function POST(
       // NULL post-017, so the INSERT fails the constraint without it.
       account_id: original.account_id,
       user_id: user.id,
+      whatsapp_config_id: original.whatsapp_config_id,
       name: `${original.name} (Copy)`,
       description: original.description,
       trigger_type: original.trigger_type,

@@ -28,7 +28,6 @@ import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { useTranslations } from 'next-intl';
 import {
-  AlertTriangle,
   CheckCircle,
   Loader2,
   MailX,
@@ -44,14 +43,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { createClient } from '@/lib/supabase/client';
 
 interface PeekOk {
@@ -92,12 +83,6 @@ export default function JoinPage() {
     undefined, // undefined = unknown / still loading; null = signed out
   );
   const [accepting, setAccepting] = useState(false);
-  // `redeem_invitation` returns 409 when the caller's current account
-  // has domain data, or they're already a member of a shared account.
-  // A transient toast wasn't enough — the user has no actionable next
-  // step. Surface a blocking modal that walks them through it.
-  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
-  const [signingOut, setSigningOut] = useState(false);
 
   // Extracted so the "Try again" button on the server_error card
   // can re-run the same logic without remounting the component.
@@ -165,16 +150,9 @@ export default function JoinPage() {
         const payload = (await res.json().catch(() => ({}))) as {
           error?: string;
         };
-        // 409 = caller already has data / is in another shared
-        // account. The redeem RPC's error message is descriptive
-        // enough to show directly; we open a modal so the user has
-        // a clear next-action (sign out → use different email)
-        // rather than a 3-second toast.
-        if (res.status === 409) {
-          setConflictMessage(payload.error || t('conflictDefault'));
-        } else {
-          toast.error(payload.error || t('acceptFailed'));
-        }
+        // Under migration 043, a conflict only means this same user already
+        // belongs to the invited workspace; other memberships are allowed.
+        toast.error(payload.error || t('acceptFailed'));
         setAccepting(false);
         return;
       }
@@ -188,21 +166,6 @@ export default function JoinPage() {
       setAccepting(false);
     }
   }, [token, t]);
-
-  const handleSignOutAndRetry = useCallback(async () => {
-    setSigningOut(true);
-    try {
-      await createClient().auth.signOut();
-      // Hard reload so the new auth state propagates everywhere
-      // (middleware, AuthProvider). Preserves the invite token in
-      // the URL so the rebuilt page renders the signed-out CTA path.
-      window.location.reload();
-    } catch (err) {
-      console.error('[join] sign-out error:', err);
-      toast.error(t('signOutFailed'));
-      setSigningOut(false);
-    }
-  }, [t]);
 
   // ----- Loading state (peek pending OR auth not yet resolved) -----
   if (peek === null || authedUserId === undefined) {
@@ -340,61 +303,6 @@ export default function JoinPage() {
           </CardContent>
         </Card>
 
-        {/* Conflict modal — opens when the redeem endpoint returns 409
-            (caller already in a shared account or has domain data).
-            Blocks the flow until the user picks a recovery action so
-            they aren't stuck retrying an inevitable failure. */}
-        <Dialog
-          open={conflictMessage !== null}
-          onOpenChange={(open) => {
-            if (!open) setConflictMessage(null);
-          }}
-        >
-          <DialogContent className="bg-popover border-border sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-popover-foreground">
-                <AlertTriangle className="size-4 text-amber-400" />
-                {t('conflictTitle', { name: peek.account_name })}
-              </DialogTitle>
-              <DialogDescription className="text-muted-foreground">
-                {conflictMessage}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-2 py-2 text-xs text-muted-foreground">
-              <p>
-                {t.rich('conflictBody', {
-                  name: peek.account_name,
-                  account: (chunks) => (
-                    <span className="text-popover-foreground">{chunks}</span>
-                  ),
-                })}
-              </p>
-            </div>
-            <DialogFooter className="bg-popover border-border">
-              <Button
-                variant="outline"
-                onClick={() => setConflictMessage(null)}
-                className="border-border text-popover-foreground hover:bg-muted"
-              >
-                {t('staySignedIn')}
-              </Button>
-              <Button
-                onClick={handleSignOutAndRetry}
-                disabled={signingOut}
-                className="bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                {signingOut ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    {t('signingOut')}
-                  </>
-                ) : (
-                  t('signOutSwitch')
-                )}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </>
     );
   }

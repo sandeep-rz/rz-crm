@@ -6,7 +6,7 @@ import {
   requireRole,
   toErrorResponse,
 } from '@/lib/auth/account'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 import { submitMessageTemplate } from '@/lib/whatsapp/meta-api'
 import {
   validateTemplatePayload,
@@ -24,6 +24,7 @@ import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
 function buildUpsertRow(
   accountId: string,
   userId: string,
+  connectionId: string,
   payload: TemplatePayload,
   extras: {
     status: 'DRAFT' | string
@@ -40,6 +41,7 @@ function buildUpsertRow(
     // still on (user_id, name, language) — see the upsert helper
     // for the cross-teammate dedup follow-up.
     user_id: userId,
+    whatsapp_config_id: connectionId,
     name: payload.name,
     category: payload.category,
     language: payload.language,
@@ -65,16 +67,18 @@ async function upsertTemplateRow(
   supabase: SupabaseClient,
   row: ReturnType<typeof buildUpsertRow>,
 ) {
-  // TODO(account-sharing): conflict target is still scoped to
-  // user_id. Once a follow-up migration drops the legacy unique
-  // index on (user_id, name, language) and adds (account_id,
-  // name, language), switch `onConflict` here so two teammates
-  // can't shadow each other's same-named template.
-  return supabase
+  const { data: existing } = await supabase
     .from('message_templates')
-    .upsert(row, { onConflict: 'user_id,name,language' })
-    .select()
-    .single()
+    .select('id')
+    .eq('account_id', row.account_id)
+    .eq('whatsapp_config_id', row.whatsapp_config_id)
+    .eq('name', row.name)
+    .eq('language', row.language)
+    .maybeSingle()
+  if (existing) {
+    return supabase.from('message_templates').update(row).eq('id', existing.id).select().single()
+  }
+  return supabase.from('message_templates').insert(row).select().single()
 }
 
 /**
@@ -131,6 +135,15 @@ export async function POST(request: Request) {
       process.env.WHATSAPP_TEMPLATES_DRY_RUN === 'true' ||
       process.env.WHATSAPP_TEMPLATES_DRY_RUN === '1'
 
+    const requestedConnectionId =
+      typeof (payload as TemplatePayload & { whatsapp_config_id?: unknown }).whatsapp_config_id === 'string'
+        ? (payload as TemplatePayload & { whatsapp_config_id: string }).whatsapp_config_id
+        : null
+    const config = await resolveWhatsAppConnection(supabase, {
+      accountId,
+      connectionId: requestedConnectionId,
+    })
+
     let metaTemplateId: string
     let metaStatus: string
 
@@ -138,21 +151,7 @@ export async function POST(request: Request) {
       metaTemplateId = `dry-run-${crypto.randomUUID()}`
       metaStatus = 'PENDING'
     } else {
-      const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
-        .select('*')
-        .eq('account_id', accountId)
-        .single()
-      if (configError || !config) {
-        return NextResponse.json(
-          {
-            error:
-              'WhatsApp not configured. Connect your WhatsApp Business account in Settings first.',
-          },
-          { status: 400 },
-        )
-      }
-      if (!config.waba_id) {
+      if (!config.wabaId) {
         return NextResponse.json(
           {
             error:
@@ -162,7 +161,7 @@ export async function POST(request: Request) {
         )
       }
 
-      const accessToken = decrypt(config.access_token)
+      const accessToken = config.accessToken
 
       // Media headers (image/video/document) need a Resumable-Upload
       // handle (Meta rejects a plain URL at creation). Derive it from
@@ -181,7 +180,7 @@ export async function POST(request: Request) {
       const metaPayload = buildMetaTemplatePayload(payload)
       try {
         const meta = await submitMessageTemplate({
-          wabaId: config.waba_id,
+          wabaId: config.wabaId,
           accessToken,
           payload: metaPayload,
         })
@@ -193,7 +192,7 @@ export async function POST(request: Request) {
         // until they fix and re-submit.
         await upsertTemplateRow(
           supabase,
-          buildUpsertRow(accountId, userId, payload, {
+          buildUpsertRow(accountId, userId, config.id, payload, {
             status: 'DRAFT',
             metaTemplateId: null,
             submissionError: message,
@@ -213,7 +212,7 @@ export async function POST(request: Request) {
 
     const { data: row, error: upsertErr } = await upsertTemplateRow(
       supabase,
-      buildUpsertRow(accountId, userId, payload, {
+      buildUpsertRow(accountId, userId, config.id, payload, {
         status: normalizeStatus(metaStatus),
         metaTemplateId,
         submissionError: null,

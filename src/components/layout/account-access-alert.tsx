@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Loader2, TriangleAlert } from "lucide-react";
+import { Building2, Loader2, Plus, TriangleAlert } from "lucide-react";
 
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   AlertDescription,
   AlertTitle,
 } from "@/components/ui/alert";
+import { CreateWorkspaceDialog } from "@/components/layout/create-workspace-dialog";
 
 /**
  * Tells the user when their account context didn't resolve.
@@ -26,9 +27,11 @@ import {
  * Renders nothing on the happy path.
  */
 export function AccountAccessAlert() {
-  const { accountStatus, accountStatusDetail, refreshProfile } = useAuth();
+  const { accountStatus, accountStatusDetail, accounts, refreshProfile } =
+    useAuth();
   const t = useTranslations("AccountAccess");
   const [retrying, setRetrying] = useState(false);
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
 
   if (accountStatus === "loading" || accountStatus === "ready") return null;
 
@@ -40,6 +43,44 @@ export function AccountAccessAlert() {
       setRetrying(false);
     }
   };
+
+  if (accountStatus === "unlinked" && accounts.length === 0) {
+    return (
+      <>
+        <Alert className="mb-4">
+          <Building2 />
+          <AlertTitle>{t("noWorkspaceTitle")}</AlertTitle>
+          <AlertDescription>
+            <p>{t("noWorkspaceBody")}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                onClick={() => setCreateWorkspaceOpen(true)}
+              >
+                <Plus className="size-3.5" />
+                {t("createWorkspace")}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={retry}
+                disabled={retrying}
+              >
+                {retrying ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : null}
+                {t("retry")}
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+        <CreateWorkspaceDialog
+          open={createWorkspaceOpen}
+          onOpenChange={setCreateWorkspaceOpen}
+        />
+      </>
+    );
+  }
 
   return (
     <Alert variant="destructive" className="mb-4">

@@ -64,6 +64,7 @@ vi.mock('@supabase/supabase-js', () => ({
                 Promise.resolve({
                   data: [
                     {
+                      id: 'config-1',
                       account_id: 'acc-1',
                       user_id: 'user-1',
                       access_token: 'enc',
@@ -75,17 +76,19 @@ vi.mock('@supabase/supabase-js', () => ({
             }),
           }
         case 'conversations':
-          // findOrCreateConversation: select().eq().eq().order().limit()
+          // findOrCreateConversation: select().eq().eq().eq().order().limit()
           return {
             select: () => ({
               eq: () => ({
                 eq: () => ({
-                  order: () => ({
-                    limit: () =>
-                      Promise.resolve({
-                        data: [h.state.conversation],
-                        error: null,
-                      }),
+                  eq: () => ({
+                    order: () => ({
+                      limit: () =>
+                        Promise.resolve({
+                          data: [h.state.conversation],
+                          error: null,
+                        }),
+                    }),
                   }),
                 }),
               }),
@@ -548,7 +551,7 @@ describe('inbound webhook: inbound media is mirrored (#466)', () => {
     // the mirror failing must never cost us the message.
     expect(h.state.upsertCalls).toHaveLength(1)
     expect(h.state.upsertCalls[0].row).toMatchObject({
-      media_url: '/api/whatsapp/media/1234567890123456',
+      media_url: '/api/whatsapp/media/1234567890123456?whatsapp_config_id=config-1',
       media_type: 'image/jpeg',
     })
   })
@@ -559,7 +562,7 @@ describe('inbound webhook: inbound media is mirrored (#466)', () => {
     await runWebhook(IMAGE_MESSAGE)
 
     expect(h.state.upsertCalls[0].row).toMatchObject({
-      media_url: '/api/whatsapp/media/1234567890123456',
+      media_url: '/api/whatsapp/media/1234567890123456?whatsapp_config_id=config-1',
     })
   })
 
@@ -585,7 +588,7 @@ describe('inbound webhook: inbound media is mirrored (#466)', () => {
     expect(mockDownloadMedia).not.toHaveBeenCalled()
     expect(h.state.storageUploads).toHaveLength(0)
     expect(h.state.upsertCalls[0].row).toMatchObject({
-      media_url: '/api/whatsapp/media/999',
+      media_url: '/api/whatsapp/media/999?whatsapp_config_id=config-1',
       media_type: 'application/pdf',
     })
   })
@@ -627,7 +630,7 @@ describe('inbound webhook: inbound media is mirrored (#466)', () => {
     expect(mockDownloadMedia).not.toHaveBeenCalled()
     expect(h.state.storageUploads).toHaveLength(0)
     expect(h.state.upsertCalls[0].row).toMatchObject({
-      media_url: '/api/whatsapp/media/1234567890123456',
+      media_url: '/api/whatsapp/media/1234567890123456?whatsapp_config_id=config-1',
       // Still recorded — the MIME type costs nothing and makes the
       // download name right even for proxied media.
       media_type: 'image/jpeg',

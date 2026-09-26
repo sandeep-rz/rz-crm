@@ -52,6 +52,11 @@
     "settings": "Configuración",
     "openMenu": "Abrir menú",
     "openAccountMenu": "Abrir menú de la cuenta",
+    "openWorkspaceMenu": "Abrir menú de espacios de trabajo",
+    "workspaces": "Espacios de trabajo",
+    "createWorkspace": "Crear espacio de trabajo",
+    "workspaceFallback": "Espacio de trabajo",
+    "workspaceSwitchFailed": "No se pudo cambiar de espacio de trabajo",
     "defaultUser": "Usuario",
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
@@ -62,11 +67,26 @@
     "switchMode": "Cambiar al modo {mode}"
   },
   "AccountAccess": {
+    "noWorkspaceTitle": "Aún no tienes un espacio de trabajo",
+    "noWorkspaceBody": "Todavía no te has unido a un espacio de trabajo. Completa tu invitación o crea tu propio espacio.",
+    "createWorkspace": "Crear espacio de trabajo",
     "unlinkedTitle": "Este usuario no está vinculado a una cuenta",
     "unlinkedBody": "Nada de lo que cambies se guardará mientras esto no se resuelva: la base de datos rechaza toda escritura de un usuario sin cuenta ni rol. Si te invitaron a un equipo, pide al propietario que reenvíe la invitación. En una instalación propia, verifica que la migración de bootstrap de la cuenta se haya ejecutado para este usuario.",
     "errorTitle": "No se pudieron cargar tus permisos",
     "errorBody": "El rol de tu cuenta no se cargó, así que toda acción se trata como de solo lectura y los cambios no se guardarán. Revisa tu conexión e inténtalo de nuevo.",
     "retry": "Reintentar"
+  },
+  "CreateWorkspace": {
+    "title": "Crear espacio de trabajo",
+    "description": "Crea un nuevo espacio para tu equipo, contactos y conversaciones de WhatsApp.",
+    "nameLabel": "Nombre del espacio de trabajo",
+    "namePlaceholder": "One Tree",
+    "nameRequired": "El nombre del espacio de trabajo es obligatorio",
+    "nameTooLong": "El nombre debe tener {max} caracteres o menos",
+    "createFailed": "No se pudo crear el espacio de trabajo",
+    "success": "{name} es ahora tu espacio de trabajo activo",
+    "cancel": "Cancelar",
+    "submit": "Crear espacio de trabajo"
   },
   "Dashboard": {
     "page": {
@@ -1885,6 +1905,7 @@
     }
   },
   "SignupPage": {
+    "signupFailed": "No se pudo crear la cuenta",
     "passwordsMismatch": "Las contraseñas no coinciden",
     "passwordTooShort": "La contraseña debe tener al menos 6 caracteres",
     "checkEmailTitle": "Revisa tu correo",
@@ -1929,11 +1950,9 @@
       "serverErrorTitle": "Algo salió mal",
       "serverErrorBody": "No pudimos verificar esta invitación en este momento. Intenta recargar la página en un momento."
     },
-    "conflictDefault": "Ya perteneces a otra cuenta. Inicia sesión con un correo distinto para unirte a esta.",
     "acceptFailed": "Error al aceptar la invitación",
     "welcome": "Bienvenido al equipo",
     "serverUnreachable": "No se pudo conectar con el servidor",
-    "signOutFailed": "No se pudo cerrar sesión. Intenta recargar la página.",
     "verifying": "Verificando invitación…",
     "tryAgain": "Intentar de nuevo",
     "createNewAccount": "Crear una cuenta nueva en su lugar",
@@ -1942,12 +1961,7 @@
     "joinAs": "Te unirás como <badge>{role}</badge>. Enlace válido hasta {date}.",
     "accepting": "Aceptando…",
     "acceptInvitation": "Aceptar invitación",
-    "acceptNote": "Al aceptar, tu acceso pasa a {name}. La cuenta personal vacía que se creó al registrarte se eliminará.",
-    "conflictTitle": "No puedes unirte a {name} con esta cuenta",
-    "conflictBody": "Para unirte a <account>{name}</account>, cierra sesión y regístrate de nuevo con otra dirección de correo. El enlace de invitación sigue siendo válido mientras no haya expirado.",
-    "staySignedIn": "Seguir con la sesión iniciada",
-    "signingOut": "Cerrando sesión…",
-    "signOutSwitch": "Cerrar sesión y usar otro correo",
+    "acceptNote": "Al aceptar, {name} se añade a tus espacios de trabajo y queda activo. Tus espacios actuales seguirán disponibles.",
     "createAndJoin": "Crear cuenta y unirse",
     "haveAccount": "Ya tengo una cuenta"
   },

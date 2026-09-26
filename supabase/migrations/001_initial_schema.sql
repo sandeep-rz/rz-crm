@@ -4,8 +4,15 @@
 -- for policies/triggers (Postgres has no CREATE POLICY IF NOT EXISTS).
 -- ============================================================
 
--- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Enable UUID extension (Supabase installs extensions into the
+-- `extensions` schema, which is not always on the migration role's
+-- search_path — so unqualified uuid_generate_v4() would fail).
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
+CREATE OR REPLACE FUNCTION public.uuid_generate_v4()
+RETURNS uuid
+LANGUAGE sql
+VOLATILE
+AS $$ SELECT extensions.uuid_generate_v4() $$;
 
 -- ============================================================
 -- PROFILES

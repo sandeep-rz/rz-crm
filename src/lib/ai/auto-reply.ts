@@ -119,7 +119,7 @@ export async function dispatchInboundToAiReply(
     // nothing to undo on the handoff / no-text path. Strictly
     // best-effort: a failed indicator must never cost us the reply.
     if (inboundMessageId) {
-      await showTypingIndicator(db, accountId, inboundMessageId)
+      await showTypingIndicator(db, accountId, inboundMessageId, conversationId)
     }
 
     // Ground the reply in the account's knowledge base (best-effort).
@@ -225,11 +225,13 @@ async function showTypingIndicator(
   db: ReturnType<typeof supabaseAdmin>,
   accountId: string,
   inboundMessageId: string,
+  conversationId: string,
 ): Promise<void> {
   try {
     const { phoneNumberId, accessToken } = await loadAccountMetaCredentials(
       db,
       accountId,
+      conversationId,
     )
     await sendTypingIndicator({
       phoneNumberId,

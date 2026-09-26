@@ -92,14 +92,17 @@ export default function FlowsPage() {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [connections, setConnections] = useState<Array<{ id: string; display_name: string; is_primary: boolean }>>([]);
+  const [whatsappConfigId, setWhatsappConfigId] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [flowsRes, tmplRes] = await Promise.all([
+        const [flowsRes, tmplRes, connectionsRes] = await Promise.all([
           fetch("/api/flows"),
           fetch("/api/flows/templates"),
+          fetch('/api/whatsapp/config'),
         ]);
         if (!flowsRes.ok) {
           throw new Error(`Failed to load flows: ${flowsRes.status}`);
@@ -113,6 +116,14 @@ export default function FlowsPage() {
             templates: TemplateSummary[];
           };
           if (!cancelled) setTemplates(tmplJson.templates ?? []);
+        }
+        if (connectionsRes.ok) {
+          const payload = await connectionsRes.json();
+          const rows = payload.connections ?? [];
+          if (!cancelled) {
+            setConnections(rows);
+            setWhatsappConfigId(rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ?? rows[0]?.id ?? '');
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -139,6 +150,7 @@ export default function FlowsPage() {
           name: newName.trim(),
           trigger_type: "keyword",
           trigger_config: { keywords: [] },
+          whatsapp_config_id: whatsappConfigId,
         }),
       });
       if (!res.ok) throw new Error(`Create failed: ${res.status}`);
@@ -160,7 +172,7 @@ export default function FlowsPage() {
       const res = await fetch("/api/flows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template_slug: slug }),
+        body: JSON.stringify({ template_slug: slug, whatsapp_config_id: whatsappConfigId }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -290,6 +302,18 @@ export default function FlowsPage() {
           )}
 
           <div className="space-y-2 border-t border-border pt-4">
+            {connections.length > 1 && (
+              <select
+                value={whatsappConfigId}
+                onChange={(event) => setWhatsappConfigId(event.target.value)}
+                className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm"
+                aria-label="WhatsApp connection"
+              >
+                {connections.map((connection) => (
+                  <option key={connection.id} value={connection.id}>{connection.display_name}</option>
+                ))}
+              </select>
+            )}
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               {t("startBlank")}
             </p>

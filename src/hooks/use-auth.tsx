@@ -12,6 +12,7 @@ import {
 } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
+import type { AccountMembership } from "@/types";
 import { DEFAULT_CURRENCY } from "@/lib/currency";
 import {
   canEditSettings as canEditSettingsFor,
@@ -48,18 +49,16 @@ interface AccountSummary {
 /**
  * Whether we managed to establish what this user may do.
  *
- * `unlinked` and `error` are the states worth surfacing: every RLS
- * policy checks `is_account_member(account_id, …)` and every `useCan`
- * gate returns false without a role, so in both the app silently
- * becomes read-only — the whole UI renders, and nothing saves. That is
- * indistinguishable from a bug unless we say so (issue #471).
+ * `unlinked` can be a legitimate temporary onboarding state after an
+ * invitation-origin signup (migration 045), while `error` means the profile
+ * lookup itself failed. The dashboard surfaces a recovery path for both.
  */
 export type AccountStatus =
   /** Profile row still in flight. */
   | "loading"
   /** Account + role resolved; normal operation. */
   | "ready"
-  /** Signed in, but no profile row / no account / no role on it. */
+  /** Signed in with a profile, but no active workspace/role yet. */
   | "unlinked"
   /** The profile lookup itself failed after retrying. */
   | "error";
@@ -91,27 +90,30 @@ interface AuthContextValue {
   // ----------------------------------------------------------
   // Account-scoped context (added by the account-sharing series)
   //
-  // All of these are nullable until `profileLoading` is false.
-  // After the profile resolves they're guaranteed to be set,
-  // because migration 017 made `account_id` / `account_role`
-  // NOT NULL on `profiles`.
+  // These remain nullable after profile loading for a new invited user until
+  // they explicitly redeem the invitation (migration 045).
   // ----------------------------------------------------------
 
   /**
-   * Outcome of resolving this user's account + role. Anything other
-   * than `ready` means writes will be rejected — render
-   * `<AccountAccessAlert />` (already mounted in the dashboard shell)
-   * rather than letting the user discover it one failed save at a time.
+   * Outcome of resolving this user's account + role. Normal tenant writes
+   * require `ready`; `unlinked` may use the migration-045 first-workspace
+   * recovery path. `<AccountAccessAlert />` explains either state.
    */
   accountStatus: AccountStatus;
   /** Underlying message when `accountStatus` is 'error' / 'unlinked'. */
   accountStatusDetail: string | null;
-  /** Account id the current user belongs to. Null while loading. */
+  /** Currently active workspace id. Null while loading. */
   accountId: string | null;
-  /** Role within that account. Null while loading. */
+  /** Role within the active workspace. Null while loading. */
   accountRole: AccountRole | null;
   /** Lightweight account meta — id + name + default_currency. Null while loading. */
   account: AccountSummary | null;
+  /** Every workspace membership available to the signed-in user. */
+  accounts: AccountMembership[];
+  switchAccount: (accountId: string) => Promise<void>;
+  switchingAccount: boolean;
+  createWorkspace: (name: string) => Promise<void>;
+  creatingWorkspace: boolean;
   /** Account default deal currency. Falls back to DEFAULT_CURRENCY
    *  while loading or when no account is resolved, so callers can use
    *  it unconditionally. */
@@ -154,6 +156,18 @@ interface ProfileRow {
   account_role: string | null;
 }
 
+interface MembershipAccountRow {
+  id: string;
+  name: string;
+  default_currency: string | null;
+}
+
+interface MembershipWithAccountRow {
+  account_id: string;
+  role: string;
+  account: MembershipAccountRow | MembershipAccountRow[] | null;
+}
+
 /**
  * AuthProvider — wrap this around the dashboard layout.
  * Makes ONE getSession() call for the whole tree instead of one per
@@ -163,6 +177,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  const [accounts, setAccounts] = useState<AccountMembership[]>([]);
+  const [switchingAccount, setSwitchingAccount] = useState(false);
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [loading, setLoading] = useState(true);
   // Why the account/role couldn't be established, when it couldn't.
   // Null on the happy path.
@@ -258,6 +275,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
 
+        let availableAccounts: AccountMembership[] = [];
+        const { data: membershipData, error: membershipError } = await supabase
+          .from("account_members")
+          .select(
+            "account_id, role, account:accounts!account_members_account_id_fkey(id, name, default_currency)",
+          )
+          .eq("user_id", userId);
+
+        if (membershipError) {
+          console.error("[AuthProvider] fetchMemberships error:", membershipError);
+          setAccounts([]);
+        } else {
+          availableAccounts = (
+            (membershipData ?? []) as MembershipWithAccountRow[]
+          ).flatMap((membership) => {
+            const relatedAccount = Array.isArray(membership.account)
+              ? membership.account[0]
+              : membership.account;
+            if (!relatedAccount || !isAccountRole(membership.role)) return [];
+            return [{
+              account_id: membership.account_id,
+              account_name: relatedAccount.name,
+              role: membership.role,
+              default_currency:
+                relatedAccount.default_currency ?? DEFAULT_CURRENCY,
+            }];
+          });
+          setAccounts(availableAccounts);
+        }
+
         // Narrow the DB enum into our AccountRole union. The DB
         // constraint should make this unconditional, but a future
         // migration that broadens the enum without updating TS would
@@ -282,18 +329,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           account_role: accountRole,
         });
         setAccount(accountRow);
-        if (!data.account_id || !accountRole) {
-          // The row exists but carries no tenancy. Migration 017 made
-          // both columns NOT NULL for new signups, so this is a user
-          // whose bootstrap didn't complete (handle_new_user swallows a
-          // failure as a WARNING) or one predating that migration.
-          // Every insert and update they attempt will be denied by RLS.
+        if ((!data.account_id && accountRole) || (data.account_id && !accountRole)) {
+          // A half-populated active-workspace pointer is always inconsistent.
           setStatusDetail(
             `profile ${data.id} has no ${!data.account_id ? "account_id" : "account_role"}`,
+          );
+        } else if (!data.account_id && availableAccounts.length > 0) {
+          // Null/null with no memberships is valid while an invited user is
+          // completing onboarding. Memberships with no active pointer are not.
+          setStatusDetail(
+            `profile ${data.id} has memberships but no active workspace`,
           );
         }
       } else {
         lastFetchedUserIdRef.current = null;
+        setAccounts([]);
         setStatusDetail("no profiles row for the signed-in user");
       }
     } catch (err) {
@@ -367,6 +417,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         lastFetchedUserIdRef.current = null;
         setProfile(null);
         setAccount(null);
+        setAccounts([]);
         setProfileLoading(false);
       }
 
@@ -386,13 +437,76 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setProfile(null);
     setAccount(null);
+    setAccounts([]);
     window.location.href = "/login";
   }, []);
 
   const refreshProfile = useCallback(async () => {
     if (!user?.id) return;
     await fetchProfile(user.id);
-  }, [user?.id, fetchProfile]);
+  }, [user, fetchProfile]);
+
+  const switchAccount = useCallback(
+    async (nextAccountId: string) => {
+      if (!user?.id || switchingAccount || nextAccountId === profile?.account_id) return;
+
+      setSwitchingAccount(true);
+      try {
+        const response = await fetch("/api/account/switch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ accountId: nextAccountId }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to switch workspace");
+        }
+
+        // Refresh the compatibility pointer, then reload the document to
+        // discard every tenant-scoped client cache and realtime subscription.
+        await fetchProfile(user.id);
+        window.location.reload();
+      } finally {
+        setSwitchingAccount(false);
+      }
+    },
+    [fetchProfile, profile?.account_id, switchingAccount, user?.id],
+  );
+
+  const createWorkspace = useCallback(
+    async (name: string) => {
+      if (!user?.id) throw new Error("Authentication required");
+      if (creatingWorkspace) return;
+
+      setCreatingWorkspace(true);
+      try {
+        const response = await fetch("/api/account/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ name: name.trim() }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        if (!response.ok) {
+          throw new Error(payload.error || "Unable to create workspace");
+        }
+
+        // The RPC made the new workspace active. Refresh the compatibility
+        // pointer, then discard all tenant-scoped caches/subscriptions exactly
+        // as switchAccount does.
+        await fetchProfile(user.id);
+        window.location.reload();
+      } finally {
+        setCreatingWorkspace(false);
+      }
+    },
+    [creatingWorkspace, fetchProfile, user?.id],
+  );
 
   // Derive the role booleans once per profile change rather than on
   // every consumer render. Cheap regardless, but the memo also gives
@@ -435,6 +549,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         refreshProfile,
         account,
+        accounts,
+        switchAccount,
+        switchingAccount,
+        createWorkspace,
+        creatingWorkspace,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
         accountStatus,
         accountStatusDetail: statusDetail,
@@ -467,6 +586,11 @@ export function useAuth(): AuthContextValue {
       },
       refreshProfile: async () => {},
       account: null,
+      accounts: [],
+      switchAccount: async () => {},
+      switchingAccount: false,
+      createWorkspace: async () => {},
+      creatingWorkspace: false,
       defaultCurrency: DEFAULT_CURRENCY,
       // Outside the provider there is nothing to resolve yet — 'loading'
       // keeps the access alert from firing on, say, the login page.

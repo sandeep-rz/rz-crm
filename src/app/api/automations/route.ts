@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 import { getTemplate } from '@/lib/automations/templates'
 import { insertSteps, type BuilderStepInput } from '@/lib/automations/steps-tree'
 import {
@@ -105,11 +106,16 @@ export async function POST(request: Request) {
   }
 
   const admin = supabaseAdmin()
+  const connection = await resolveWhatsAppConnection(admin, {
+    accountId,
+    connectionId: typeof body.whatsapp_config_id === 'string' ? body.whatsapp_config_id : null,
+  })
   const { data: automation, error: insertErr } = await admin
     .from('automations')
     .insert({
       user_id: user.id,
       account_id: accountId,
+      whatsapp_config_id: connection.id,
       name: effectiveName,
       description: effectiveDescription ?? null,
       trigger_type: effectiveTriggerType,

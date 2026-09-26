@@ -13,6 +13,7 @@ interface RealtimeEvent<T> {
 
 interface UseRealtimeOptions {
   channelName: string;
+  accountId?: string | null;
   onMessageEvent?: (event: RealtimeEvent<Message>) => void;
   onConversationEvent?: (event: RealtimeEvent<Conversation>) => void;
   enabled?: boolean;
@@ -20,6 +21,7 @@ interface UseRealtimeOptions {
 
 export function useRealtime({
   channelName,
+  accountId,
   onMessageEvent,
   onConversationEvent,
   enabled = true,
@@ -40,7 +42,7 @@ export function useRealtime({
   });
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !accountId) return;
 
     const supabase = createClient();
 
@@ -59,7 +61,12 @@ export function useRealtime({
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "conversations" },
+        {
+          event: "*",
+          schema: "public",
+          table: "conversations",
+          filter: `account_id=eq.${accountId}`,
+        },
         (payload) => {
           onConversationRef.current?.({
             eventType: payload.eventType as RealtimeEvent<Conversation>["eventType"],
@@ -79,7 +86,7 @@ export function useRealtime({
       channelRef.current = null;
       setIsConnected(false);
     };
-  }, [channelName, enabled]);
+  }, [accountId, channelName, enabled]);
 
   const unsubscribe = useCallback(() => {
     if (channelRef.current) {

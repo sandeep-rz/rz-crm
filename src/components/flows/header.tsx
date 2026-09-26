@@ -23,6 +23,7 @@
  */
 
 import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   ArrowLeft,
@@ -58,6 +59,13 @@ export function EditorHeader() {
     setStatus,
     deleteFlow,
   } = useFlowEditor();
+  const [connections, setConnections] = useState<Array<{ id: string; display_name: string }>>([]);
+  useEffect(() => {
+    fetch('/api/whatsapp/config')
+      .then((response) => response.json())
+      .then((payload) => setConnections(payload.connections ?? []))
+      .catch(() => undefined);
+  }, []);
 
   return (
     <div className="flex flex-col gap-1.5 px-6 pt-5">
@@ -95,6 +103,18 @@ export function EditorHeader() {
           </span>
         )}
 
+        {connections.length > 1 && (
+          <select
+            value={state.whatsapp_config_id ?? ''}
+            onChange={(event) => setState((current) => ({ ...current, whatsapp_config_id: event.target.value }))}
+            className="h-9 max-w-36 rounded-md border border-border bg-background px-2 text-xs md:max-w-44"
+            aria-label="WhatsApp connection"
+          >
+            {connections.map((connection) => (
+              <option key={connection.id} value={connection.id}>{connection.display_name}</option>
+            ))}
+          </select>
+        )}
         {/* ---- right: runs · delete · activate · save ---- */}
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <Button

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Conversation } from "@/types";
+import { useAuth } from "@/hooks/use-auth";
 
 /**
  * Count of conversations with at least one unread inbound message for
@@ -13,6 +14,7 @@ import type { Conversation } from "@/types";
  * "inbox-realtime") so both can coexist without sharing state.
  */
 export function useTotalUnread(): number {
+  const { accountId } = useAuth();
   const [total, setTotal] = useState(0);
 
   // Keep a live local mirror of {id: unread_count} so INSERT/UPDATE/DELETE
@@ -20,6 +22,7 @@ export function useTotalUnread(): number {
   const countsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     let cancelled = false;
 
@@ -28,7 +31,8 @@ export function useTotalUnread(): number {
     (async () => {
       const { data, error } = await supabase
         .from("conversations")
-        .select("id, unread_count");
+        .select("id, unread_count")
+        .eq("account_id", accountId);
       if (cancelled || error || !data) return;
 
       const map = new Map<string, number>();
@@ -46,7 +50,12 @@ export function useTotalUnread(): number {
       .channel("total-unread-realtime")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "conversations" },
+        {
+          event: "*",
+          schema: "public",
+          table: "conversations",
+          filter: `account_id=eq.${accountId}`,
+        },
         (payload) => {
           const map = countsRef.current;
           if (payload.eventType === "DELETE") {
@@ -68,7 +77,7 @@ export function useTotalUnread(): number {
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [accountId]);
 
   return total;
 }

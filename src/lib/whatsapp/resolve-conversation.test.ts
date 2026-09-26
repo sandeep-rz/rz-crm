@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+
+vi.mock('@/lib/whatsapp/encryption', () => ({
+  decrypt: (value: string) => value,
+}));
 
 import { resolveConversationByPhone } from './resolve-conversation';
 import { SendMessageError } from './send-message';
@@ -27,6 +31,8 @@ interface Script {
   existingConversationByCall?: (({ id: string } | null))[];
   insertedConversationId?: string; // conversations insert -> single
   insertConversationError?: { code?: string } | null;
+  conversationConnectionFilters?: string[];
+  insertedConversationRows?: Array<Record<string, unknown>>;
 }
 
 function makeDb(script: Script): SupabaseClient {
@@ -34,20 +40,47 @@ function makeDb(script: Script): SupabaseClient {
   let mode: 'select' | 'insert' | 'update' = 'select';
   let likeCalls = 0;
   let convLookupCalls = 0;
+  let selectedConnectionId = 'connection-primary';
 
   const builder: Record<string, unknown> = {
     select: () => builder,
-    insert: () => {
+    insert: (row: Record<string, unknown>) => {
       mode = 'insert';
+      if (table === 'conversations') script.insertedConversationRows?.push(row);
       return builder;
     },
     update: () => {
       mode = 'update';
       return builder;
     },
-    eq: () => builder,
+    eq: (column: string, value: unknown) => {
+      if (table === 'whatsapp_config' && column === 'id') {
+        selectedConnectionId = String(value);
+      }
+      if (table === 'conversations' && column === 'whatsapp_config_id') {
+        script.conversationConnectionFilters?.push(String(value));
+      }
+      return builder;
+    },
     order: () => builder,
     limit: () => {
+      if (table === 'whatsapp_config' && mode === 'select') {
+        if (!script.config) return Promise.resolve({ data: [], error: null });
+        return Promise.resolve({
+          data: [{
+            id: selectedConnectionId,
+            account_id: 'acct',
+            user_id: script.config.user_id,
+            display_name: 'Main',
+            is_primary: selectedConnectionId === 'connection-primary',
+            phone_number_id: '1234567890',
+            waba_id: 'waba-1',
+            access_token: 'encrypted-token',
+            status: 'connected',
+          }],
+          error: null,
+        });
+      }
       // Only the conversation lookup terminates on `.limit(1)`.
       if (table === 'conversations' && mode === 'select') {
         const row = script.existingConversationByCall
@@ -189,6 +222,33 @@ describe('resolveConversationByPhone', () => {
       contactId: 'c2',
       contactCreated: true,
     });
+  });
+
+  it('scopes the same contact to separate conversations for connections A and B', async () => {
+    const filters: string[] = [];
+    const inserts: Array<Record<string, unknown>> = [];
+    for (const connectionId of ['connection-a', 'connection-b']) {
+      await resolveConversationByPhone(
+        makeDb({
+          config: { user_id: 'owner-1' },
+          contactCandidates: [{ id: 'same-contact', phone: '14155550123' }],
+          existingConversation: null,
+          insertedConversationId: `conversation-${connectionId}`,
+          conversationConnectionFilters: filters,
+          insertedConversationRows: inserts,
+        }),
+        'acct',
+        '+14155550123',
+        null,
+        connectionId,
+      );
+    }
+
+    expect(filters).toEqual(['connection-a', 'connection-b']);
+    expect(inserts.map((row) => row.whatsapp_config_id)).toEqual([
+      'connection-a',
+      'connection-b',
+    ]);
   });
 
   it('re-resolves an existing contact when the insert loses a unique race', async () => {

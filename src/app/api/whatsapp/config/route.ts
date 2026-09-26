@@ -80,6 +80,19 @@ function metaFailure(err: unknown, step: MetaConnectStep, ctx: MetaErrorContext)
   )
 }
 
+function deleteConnectionError(error: { code?: string } | null) {
+  if (error?.code === 'P0002') {
+    return NextResponse.json({ error: 'WhatsApp connection not found' }, { status: 404 })
+  }
+  if (error?.code === '42501') {
+    return NextResponse.json(
+      { error: 'You do not have permission to delete this WhatsApp connection' },
+      { status: 403 },
+    )
+  }
+  return NextResponse.json({ error: 'Failed to delete WhatsApp connection' }, { status: 500 })
+}
+
 /**
  * GET /api/whatsapp/config
  *
@@ -95,7 +108,7 @@ function metaFailure(err: unknown, step: MetaConnectStep, ctx: MetaErrorContext)
  *   { connected: false, reason: 'meta_api_error',   message: '...',
  *     meta: { code, subcode, fbtrace_id, step, field, message } }
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -120,11 +133,12 @@ export async function GET() {
       )
     }
 
-    const { data: config, error: configError } = await supabase
+    const { data: configs, error: configError } = await supabase
       .from('whatsapp_config')
-      .select('phone_number_id, waba_id, access_token, status')
+      .select('id, display_name, is_primary, phone_number_id, waba_id, access_token, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, mirror_inbound_media, created_at, updated_at')
       .eq('account_id', accountId)
-      .maybeSingle()
+      .order('is_primary', { ascending: false })
+      .order('created_at', { ascending: true })
 
     if (configError) {
       console.error('Error fetching whatsapp_config:', configError)
@@ -134,14 +148,43 @@ export async function GET() {
       )
     }
 
-    if (!config) {
+    const safeConnections = (configs ?? []).map((config) => ({
+      id: config.id,
+      display_name: config.display_name || 'WhatsApp connection',
+      is_primary: config.is_primary,
+      phone_number_id: config.phone_number_id,
+      waba_id: config.waba_id,
+      status: config.status,
+      connected_at: config.connected_at,
+      registered_at: config.registered_at,
+      subscribed_apps_at: config.subscribed_apps_at,
+      last_registration_error: config.last_registration_error,
+      mirror_inbound_media: config.mirror_inbound_media,
+      created_at: config.created_at,
+      updated_at: config.updated_at,
+    }))
+    if (!configs || configs.length === 0) {
       return NextResponse.json(
         {
+          connections: [],
           connected: false,
           reason: 'no_config',
           message: 'No WhatsApp configuration saved yet. Fill in the form and click Save Configuration.',
         },
         { status: 200 }
+      )
+    }
+
+    const requestedId = new URL(request.url).searchParams.get('id')
+    const config = requestedId
+      ? configs.find((row) => row.id === requestedId)
+      : configs.find((row) => row.is_primary) ?? (configs.length === 1 ? configs[0] : undefined)
+    if (!config) {
+      return NextResponse.json(
+        requestedId
+          ? { error: 'WhatsApp connection not found', connections: safeConnections }
+          : { error: 'No primary WhatsApp connection is configured', connections: safeConnections },
+        { status: requestedId ? 404 : 409 },
       )
     }
 
@@ -155,6 +198,7 @@ export async function GET() {
       return NextResponse.json(
         {
           connected: false,
+          connections: safeConnections,
           reason: 'token_corrupted',
           needs_reset: true,
           message:
@@ -180,6 +224,7 @@ export async function GET() {
       return NextResponse.json(
         {
           connected: false,
+          connections: safeConnections,
           reason: 'meta_api_error',
           message: explained.summary,
           meta: metaErrorPayload(explained),
@@ -219,8 +264,20 @@ export async function GET() {
       }
     }
 
+    const displayPhoneNumber =
+      typeof phoneInfo?.display_phone_number === 'string' && phoneInfo.display_phone_number.trim()
+        ? phoneInfo.display_phone_number.trim()
+        : null
+    const responseConnections = safeConnections.map((connection) =>
+      connection.id === config.id && !config.display_name && displayPhoneNumber
+        ? { ...connection, display_name: displayPhoneNumber }
+        : connection,
+    )
+
     return NextResponse.json({
       connected: true,
+      connections: responseConnections,
+      selected_connection_id: config.id,
       phone_info: phoneInfo,
       waba_subscription: wabaSubscription,
     })
@@ -266,7 +323,15 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token, pin } = body
+    const {
+      id: connectionId,
+      display_name,
+      phone_number_id,
+      waba_id,
+      access_token,
+      verify_token,
+      pin,
+    } = body
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
@@ -311,12 +376,10 @@ export async function POST(request: Request) {
     }
 
     // Reject if another account has already claimed this phone_number_id.
-    // wacrm is single-tenant-per-WhatsApp-number — letting two accounts
-    // bind the same number causes the webhook's `.single()` lookup to
-    // throw PGRST116 ("multiple rows"), silently dropping every
-    // inbound message. See issue #136. Post-multi-user we key on
-    // account_id (not user_id) since teammates inside the same account
-    // all share one config; the conflict is between accounts.
+    // The webhook resolves inbound traffic by this globally unique Meta id;
+    // allowing a second workspace to claim it would make tenant routing
+    // ambiguous. Teammates share the workspace's connection collection, so
+    // ownership is compared by account_id rather than author user_id.
     const { data: claimed, error: claimedError } = await supabaseAdmin()
       .from('whatsapp_config')
       .select('account_id')
@@ -407,11 +470,18 @@ export async function POST(request: Request) {
     // Look up any pre-existing row for this account so we know whether
     // this number is already registered with Meta — if so we can skip
     // /register when the user didn't provide a PIN this time around.
-    const { data: existing } = await supabase
+    let existingQuery = supabase
       .from('whatsapp_config')
       .select('id, registered_at, phone_number_id')
       .eq('account_id', accountId)
-      .maybeSingle()
+    existingQuery = connectionId
+      ? existingQuery.eq('id', connectionId)
+      : existingQuery.eq('phone_number_id', phone_number_id)
+    const { data: existing } = await existingQuery.maybeSingle()
+
+    if (connectionId && !existing) {
+      return NextResponse.json({ error: 'WhatsApp connection not found' }, { status: 404 })
+    }
 
     const sameNumber =
       existing?.phone_number_id === phone_number_id &&
@@ -494,6 +564,10 @@ export async function POST(request: Request) {
     // store the credentials and the error so the UI can guide the
     // user through a retry.
     const baseRow = {
+      display_name:
+        typeof display_name === 'string' && display_name.trim()
+          ? display_name.trim().slice(0, 80)
+          : phoneInfo?.display_phone_number || 'WhatsApp connection',
       phone_number_id,
       waba_id: waba_id || null,
       access_token: encryptedAccessToken,
@@ -510,6 +584,7 @@ export async function POST(request: Request) {
       const { error: updateError } = await supabase
         .from('whatsapp_config')
         .update(baseRow)
+        .eq('id', existing.id)
         .eq('account_id', accountId)
 
       if (updateError) {
@@ -520,17 +595,24 @@ export async function POST(request: Request) {
         )
       }
     } else {
-      // Insert with both columns: `account_id` is the tenancy key
-      // (NOT NULL post-017, UNIQUE so duplicates trip the constraint
-      // up-front), `user_id` is the audit column identifying which
-      // member of the account saved the config.
-      const { error: insertError } = await supabase
+      // Insert with both columns: `account_id` is the tenancy key and
+      // `user_id` is the audit column identifying which member of the
+      // workspace saved this connection.
+      const { count } = await supabase
+        .from('whatsapp_config')
+        .select('id', { count: 'exact', head: true })
+        .eq('account_id', accountId)
+      const shouldBePrimary = (count ?? 0) === 0
+      const { data: inserted, error: insertError } = await supabase
         .from('whatsapp_config')
         .insert({
           account_id: accountId,
           user_id: user.id,
+          is_primary: shouldBePrimary,
           ...baseRow,
         })
+        .select('id')
+        .single()
 
       if (insertError) {
         console.error('Error inserting whatsapp_config:', insertError)
@@ -538,6 +620,15 @@ export async function POST(request: Request) {
           { error: 'Failed to save configuration' },
           { status: 500 }
         )
+      }
+      if (!shouldBePrimary && body.is_primary === true && inserted) {
+        const { error: primaryError } = await supabase.rpc(
+          'set_primary_whatsapp_connection',
+          { connection_id: inserted.id },
+        )
+        if (primaryError) {
+          return NextResponse.json({ error: 'Saved, but failed to set primary connection' }, { status: 500 })
+        }
       }
     }
 
@@ -573,14 +664,62 @@ export async function POST(request: Request) {
   }
 }
 
+export async function PATCH(request: Request) {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const accountId = await resolveAccountId(supabase, user.id)
+    if (!accountId) return NextResponse.json({ error: 'No active workspace' }, { status: 403 })
+    const body = await request.json()
+    const id = typeof body.id === 'string' ? body.id : ''
+    if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
+
+    const { data: owned } = await supabase
+      .from('whatsapp_config')
+      .select('id')
+      .eq('id', id)
+      .eq('account_id', accountId)
+      .maybeSingle()
+    if (!owned) return NextResponse.json({ error: 'WhatsApp connection not found' }, { status: 404 })
+
+    if (body.action === 'set_primary' || body.is_primary === true) {
+      const { error } = await supabase.rpc('set_primary_whatsapp_connection', {
+        connection_id: id,
+      })
+      if (error) return NextResponse.json({ error: 'Failed to set primary connection' }, { status: 500 })
+      return NextResponse.json({ success: true })
+    }
+
+    const changes: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    if (typeof body.display_name === 'string' && body.display_name.trim()) {
+      changes.display_name = body.display_name.trim().slice(0, 80)
+    }
+    if (typeof body.mirror_inbound_media === 'boolean') {
+      changes.mirror_inbound_media = body.mirror_inbound_media
+    }
+    const { error } = await supabase
+      .from('whatsapp_config')
+      .update(changes)
+      .eq('id', id)
+      .eq('account_id', accountId)
+    if (error) return NextResponse.json({ error: 'Failed to update connection' }, { status: 500 })
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Error in WhatsApp config PATCH:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+export const PUT = POST
+
 /**
  * DELETE /api/whatsapp/config
  *
- * Removes the authenticated user's WhatsApp configuration row.
- * Used by the "Reset Configuration" button to recover from a corrupted
- * encrypted token (mismatched ENCRYPTION_KEY across environments).
+ * Removes one connection from the authenticated user's active workspace.
+ * Migration 047 owns primary replacement and deletion atomically.
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
   try {
     const supabase = await createClient()
 
@@ -601,20 +740,36 @@ export async function DELETE() {
       )
     }
 
-    const { error: deleteError } = await supabase
+    const connectionId = new URL(request.url).searchParams.get('id')
+    if (!connectionId) {
+      return NextResponse.json({ error: 'id is required' }, { status: 400 })
+    }
+    const { data: target, error: targetError } = await supabase
       .from('whatsapp_config')
-      .delete()
+      .select('id')
+      .eq('id', connectionId)
       .eq('account_id', accountId)
+      .maybeSingle()
+    if (targetError) {
+      console.error('[whatsapp/config DELETE] Ownership check failed:', targetError)
+      return NextResponse.json({ error: 'Failed to verify WhatsApp connection' }, { status: 500 })
+    }
+    if (!target) return NextResponse.json({ error: 'WhatsApp connection not found' }, { status: 404 })
+
+    const { data: promotedConnectionId, error: deleteError } = await supabase.rpc(
+      'delete_whatsapp_connection',
+      { connection_id: connectionId },
+    )
 
     if (deleteError) {
-      console.error('Error deleting whatsapp_config:', deleteError)
-      return NextResponse.json(
-        { error: 'Failed to delete configuration' },
-        { status: 500 }
-      )
+      console.error('[whatsapp/config DELETE] Atomic deletion failed:', deleteError)
+      return deleteConnectionError(deleteError)
     }
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({
+      success: true,
+      promoted_connection_id: promotedConnectionId ?? null,
+    })
   } catch (error) {
     console.error('Error in WhatsApp config DELETE:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

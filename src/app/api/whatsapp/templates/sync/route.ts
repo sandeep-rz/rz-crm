@@ -5,8 +5,8 @@ import {
   requireRole,
   toErrorResponse,
 } from '@/lib/auth/account'
-import { decrypt } from '@/lib/whatsapp/encryption'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 import type { TemplateButton, TemplateSampleValues } from '@/types'
 
 /**
@@ -127,7 +127,7 @@ function extractSampleValues(
   return sv
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     // Syncing rewrites the account-wide template catalog, which is
     // settings-class data: `canEditSettings` and the message_templates
@@ -135,13 +135,14 @@ export async function POST() {
     // Resolving account_id off the profile only proved membership.
     const { supabase, accountId, userId } = await requireRole('admin')
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    const raw = await request.json().catch(() => ({})) as { whatsapp_config_id?: unknown }
+    const config = await resolveWhatsAppConnection(supabase, {
+      accountId,
+      connectionId:
+        typeof raw.whatsapp_config_id === 'string' ? raw.whatsapp_config_id : null,
+    }).catch(() => null)
 
-    if (configError || !config) {
+    if (!config) {
       return NextResponse.json(
         {
           error:
@@ -151,7 +152,7 @@ export async function POST() {
       )
     }
 
-    if (!config.waba_id) {
+    if (!config.wabaId) {
       return NextResponse.json(
         {
           error:
@@ -161,12 +162,12 @@ export async function POST() {
       )
     }
 
-    const accessToken = decrypt(config.access_token)
+    const accessToken = config.accessToken
 
     const metaTemplates: MetaTemplate[] = []
     let nextUrl:
       | string
-      | null = `${META_API_BASE}/${config.waba_id}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score`
+      | null = `${META_API_BASE}/${config.wabaId}/message_templates?limit=100&fields=id,name,language,status,category,components,quality_score`
     const PAGE_CAP = 20
     let pageCount = 0
 
@@ -223,6 +224,7 @@ export async function POST() {
         // post-017, so an INSERT without it errors.
         account_id: accountId,
         user_id: userId,
+        whatsapp_config_id: config.id,
         name: t.name,
         category: normalizeCategory(t.category),
         language: t.language,
@@ -243,6 +245,7 @@ export async function POST() {
         .from('message_templates')
         .select('id')
         .eq('account_id', accountId)
+        .eq('whatsapp_config_id', config.id)
         .eq('name', t.name)
         .eq('language', t.language)
         .maybeSingle()

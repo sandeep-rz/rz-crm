@@ -231,6 +231,7 @@ export interface FlowRow {
   /** Author. Used as a default sender-of-record on engine sends and
    *  preserved on flow_runs for log/audit display. */
   user_id: string;
+  whatsapp_config_id?: string | null;
   name: string;
   description: string | null;
   status: "draft" | "active" | "archived";

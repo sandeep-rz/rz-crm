@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 import {
   deleteMessageTemplate,
   editMessageTemplate,
@@ -91,7 +91,7 @@ export async function PATCH(
     // meta_template_id and status — fetch explicitly.
     const { data: existing, error: lookupErr } = await supabase
       .from('message_templates')
-      .select('id, name, status, meta_template_id, language')
+      .select('id, name, status, meta_template_id, language, whatsapp_config_id')
       .eq('id', id)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -138,18 +138,12 @@ export async function PATCH(
     }
 
     if (!isDryRun()) {
-      const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
-        .select('*')
-        .eq('account_id', accountId)
-        .single()
-      if (configError || !config) {
-        return NextResponse.json(
-          { error: 'WhatsApp not configured.' },
-          { status: 400 },
-        )
-      }
-      const accessToken = decrypt(config.access_token)
+      const config = await resolveWhatsAppConnection(supabase, {
+        accountId,
+        connectionId: existing.whatsapp_config_id,
+        entity: { type: 'template', id },
+      })
+      const accessToken = config.accessToken
 
       // Media headers (image/video/document) need a fresh Resumable-Upload
       // handle on every edit (Meta replaces components wholesale). Derive
@@ -252,9 +246,9 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Same account-scoping rationale as the PATCH handler above —
-    // teammates need to be able to operate on shared templates +
-    // the shared whatsapp_config.
+    // Same account-scoping rationale as the PATCH handler above: teammates
+    // operate on workspace templates, while the template's persisted
+    // whatsapp_config_id selects the intended connection.
     const { data: profile } = await supabase
       .from('profiles')
       .select('account_id')
@@ -270,7 +264,7 @@ export async function DELETE(
 
     const { data: existing, error: lookupErr } = await supabase
       .from('message_templates')
-      .select('id, name, meta_template_id')
+      .select('id, name, meta_template_id, whatsapp_config_id')
       .eq('id', id)
       .eq('account_id', accountId)
       .maybeSingle()
@@ -279,21 +273,21 @@ export async function DELETE(
     }
 
     if (existing.meta_template_id && !isDryRun()) {
-      const { data: config, error: configError } = await supabase
-        .from('whatsapp_config')
-        .select('*')
-        .eq('account_id', accountId)
-        .single()
-      if (configError || !config || !config.waba_id) {
+      const config = await resolveWhatsAppConnection(supabase, {
+        accountId,
+        connectionId: existing.whatsapp_config_id,
+        entity: { type: 'template', id },
+      }).catch(() => null)
+      if (!config || !config.wabaId) {
         return NextResponse.json(
           { error: 'WhatsApp not configured — cannot delete on Meta.' },
           { status: 400 },
         )
       }
-      const accessToken = decrypt(config.access_token)
+      const accessToken = config.accessToken
       try {
         await deleteMessageTemplate({
-          wabaId: config.waba_id,
+          wabaId: config.wabaId,
           accessToken,
           name: existing.name,
           metaTemplateId: existing.meta_template_id,

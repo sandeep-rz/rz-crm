@@ -51,6 +51,7 @@ interface BroadcastPayload {
    * falls back to the template's stored URL only when this is empty.
    */
   headerMediaUrl?: string;
+  whatsappConfigId: string;
 }
 
 interface UseBroadcastSendingReturn {
@@ -382,6 +383,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         .insert({
           user_id: user.id,
           account_id: accountId,
+          whatsapp_config_id: payload.whatsappConfigId,
           name: payload.name,
           template_name: payload.template.name,
           template_language: payload.template.language ?? 'en_US',
@@ -518,6 +520,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
                 recipients: apiRecipients,
                 template_name: payload.template.name,
                 template_language: payload.template.language ?? 'en_US',
+                whatsapp_config_id: payload.whatsappConfigId,
               }),
             });
 

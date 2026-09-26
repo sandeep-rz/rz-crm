@@ -93,6 +93,7 @@ export interface BuilderInitial {
   trigger_config: Record<string, unknown>
   is_active: boolean
   steps: BuilderStep[]
+  whatsapp_config_id?: string | null
 }
 
 // ------------------------------------------------------------
@@ -246,7 +247,7 @@ function useResources(): AutomationResources {
   return useContext(ResourcesContext)
 }
 
-function ResourcesProvider({ children }: { children: ReactNode }) {
+function ResourcesProvider({ children, whatsappConfigId }: { children: ReactNode; whatsappConfigId?: string | null }) {
   const [tags, setTags] = useState<TagRecord[]>([])
   const [members, setMembers] = useState<AccountMember[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
@@ -263,14 +264,15 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
     // actually be sent (anything else 400s at send time), matching the
     // broadcast picker.
     void (async () => {
+      let templateQuery = supabase
+        .from("message_templates")
+        .select("*")
+        .eq("status", "APPROVED")
+      if (whatsappConfigId) templateQuery = templateQuery.eq('whatsapp_config_id', whatsappConfigId)
       const [tagsRes, templatesRes, customFieldsRes, pipelinesRes, stagesRes] =
         await Promise.all([
           supabase.from("tags").select("*").order("name"),
-          supabase
-            .from("message_templates")
-            .select("*")
-            .eq("status", "APPROVED")
-            .order("name"),
+          templateQuery.order("name"),
           supabase.from("custom_fields").select("*").order("field_name"),
           supabase.from("pipelines").select("id, name").order("name"),
           supabase
@@ -303,7 +305,7 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [whatsappConfigId])
 
   return (
     <ResourcesContext.Provider
@@ -639,6 +641,22 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
   const [state, setState] = useState<BuilderInitial>(initial)
   const [saving, setSaving] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [connections, setConnections] = useState<Array<{ id: string; display_name: string; is_primary: boolean }>>([])
+
+  useEffect(() => {
+    fetch('/api/whatsapp/config')
+      .then((res) => res.json())
+      .then((body) => {
+        const rows = body.connections ?? []
+        setConnections(rows)
+        if (!state.whatsapp_config_id) {
+          patchTop('whatsapp_config_id', rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ?? rows[0]?.id ?? null)
+        }
+      })
+      .catch(() => undefined)
+    // Initial connection is chosen once; changing it remains user-controlled.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function patchTop<K extends keyof BuilderInitial>(key: K, value: BuilderInitial[K]) {
     setState((s) => ({ ...s, [key]: value }))
@@ -678,6 +696,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         trigger_type: state.trigger_type,
         trigger_config: state.trigger_config,
         is_active: state.is_active,
+        whatsapp_config_id: state.whatsapp_config_id,
         steps: toApiSteps(state.steps),
       }
 
@@ -738,6 +757,18 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
           placeholder={t("untitled")}
           className="min-w-0 flex-1 rounded-md bg-transparent px-2 py-1 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:bg-muted focus:outline-none sm:text-base"
         />
+        {connections.length > 1 && (
+          <select
+            value={state.whatsapp_config_id ?? ''}
+            onChange={(event) => patchTop('whatsapp_config_id', event.target.value)}
+            className="h-9 max-w-36 rounded-md border border-border bg-background px-2 text-xs sm:max-w-44"
+            aria-label="WhatsApp connection"
+          >
+            {connections.map((connection) => (
+              <option key={connection.id} value={connection.id}>{connection.display_name}</option>
+            ))}
+          </select>
+        )}
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="hidden sm:inline">{t("active")}</span>
           <Switch
@@ -760,7 +791,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
       <div className="relative flex-1 overflow-y-auto">
         <div className="absolute inset-0 bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none" />
         <div className="relative mx-auto flex max-w-2xl flex-col items-center gap-0 px-4 py-10">
-          <ResourcesProvider>
+          <ResourcesProvider whatsappConfigId={state.whatsapp_config_id}>
             <TriggerCard
               type={state.trigger_type}
               config={state.trigger_config}

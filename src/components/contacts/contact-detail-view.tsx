@@ -100,13 +100,14 @@ export function ContactDetailView({
   const [loadingDeals, setLoadingDeals] = useState(false);
 
   const fetchContact = useCallback(async () => {
-    if (!contactId) return;
+    if (!contactId || !accountId) return;
     setLoading(true);
 
     const { data } = await supabase
       .from('contacts')
       .select('*')
       .eq('id', contactId)
+      .eq('account_id', accountId)
       .single();
 
     if (data) {
@@ -117,13 +118,17 @@ export function ContactDetailView({
       setEditCompany(data.company ?? '');
     }
     setLoading(false);
-  }, [contactId, supabase]);
+  }, [accountId, contactId, supabase]);
 
   const fetchTags = useCallback(async () => {
-    if (!contactId) return;
+    if (!contactId || !accountId) return;
 
     const [tagsRes, contactTagsRes] = await Promise.all([
-      supabase.from('tags').select('*').order('name'),
+      supabase
+        .from('tags')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('name'),
       supabase.from('contact_tags').select('tag_id').eq('contact_id', contactId),
     ]);
 
@@ -131,10 +136,10 @@ export function ContactDetailView({
     if (contactTagsRes.data) {
       setContactTagIds(contactTagsRes.data.map((ct) => ct.tag_id));
     }
-  }, [contactId, supabase]);
+  }, [accountId, contactId, supabase]);
 
   const fetchNotes = useCallback(async () => {
-    if (!contactId) return;
+    if (!contactId || !accountId) return;
     setLoadingNotes(true);
 
     const { data } = await supabase
@@ -152,7 +157,11 @@ export function ContactDetailView({
     setLoadingCustom(true);
 
     const [fieldsRes, valuesRes] = await Promise.all([
-      supabase.from('custom_fields').select('*').order('field_name'),
+      supabase
+        .from('custom_fields')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('field_name'),
       supabase
         .from('contact_custom_values')
         .select('*')
@@ -168,19 +177,20 @@ export function ContactDetailView({
       setCustomValues(map);
     }
     setLoadingCustom(false);
-  }, [contactId, supabase]);
+  }, [accountId, contactId, supabase]);
 
   const fetchDeals = useCallback(async () => {
-    if (!contactId) return;
+    if (!contactId || !accountId) return;
     setLoadingDeals(true);
     const { data } = await supabase
       .from('deals')
       .select('*, stage:pipeline_stages(*)')
       .eq('contact_id', contactId)
+      .eq('account_id', accountId)
       .order('created_at', { ascending: false });
     setDeals((data ?? []) as Deal[]);
     setLoadingDeals(false);
-  }, [contactId, supabase]);
+  }, [accountId, contactId, supabase]);
 
   useEffect(() => {
     if (open && contactId) {
@@ -225,7 +235,8 @@ export function ContactDetailView({
         company: editCompany.trim() || null,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', contactId);
+      .eq('id', contactId)
+      .eq('account_id', accountId);
 
     if (error) {
       toast.error(t('toastUpdateFailed'));

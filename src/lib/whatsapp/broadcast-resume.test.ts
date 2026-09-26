@@ -141,6 +141,21 @@ function planDb(fx: PlanFixture, writes: PlanWrites = {}): SupabaseClient {
           writes.failedUpdate = row;
           return b;
         },
+        limit: async () => ({
+          data: table === 'whatsapp_config' && fx.config
+            ? [{
+                id: 'connection-b',
+                account_id: 'acct-1',
+                user_id: 'user-1',
+                display_name: 'Broadcasts',
+                is_primary: false,
+                waba_id: 'waba-1',
+                status: 'connected',
+                ...fx.config,
+              }]
+            : [],
+          error: null,
+        }),
         maybeSingle: async () => ({
           data: fx.broadcast === undefined ? null : fx.broadcast,
           error: null,
@@ -168,6 +183,7 @@ const BROADCAST = {
   id: 'bc-1',
   template_name: 'order_update',
   template_language: 'en_US',
+  whatsapp_config_id: 'connection-b',
 };
 
 const CONFIG = { phone_number_id: 'pn-1', access_token: 'tok' };

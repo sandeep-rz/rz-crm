@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
+import { buildSignupMetadata } from "@/lib/auth/invitation-token-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,25 +71,35 @@ function SignupPageInner() {
       ? `${window.location.origin}/join/${encodeURIComponent(inviteToken)}`
       : undefined;
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
+    try {
+      // Migration 045 validates this digest against a real pending invite
+      // before suppressing personal-workspace bootstrap. Never store the
+      // plaintext invitation token in auth user metadata.
+      const metadata = await buildSignupMetadata(fullName, inviteToken);
+
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: metadata,
+          ...(emailRedirectTo ? { emailRedirectTo } : {}),
         },
-        ...(emailRedirectTo ? { emailRedirectTo } : {}),
-      },
-    });
+      });
 
-    if (error) {
-      setError(error.message);
+      if (error) {
+        setError(error.message);
+        return;
+      }
+
+      setSuccess(true);
+    } catch (signupError) {
+      console.error("[signup] failed:", signupError);
+      setError(
+        signupError instanceof Error ? signupError.message : t("signupFailed"),
+      );
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setSuccess(true);
-    setLoading(false);
   };
 
   if (success) {

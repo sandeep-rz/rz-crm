@@ -4,7 +4,7 @@ import {
   engineSendInteractiveButtons,
   engineSendInteractiveList,
 } from '@/lib/flows/meta-send'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 import {
   phoneVariants,
   isRecipientNotAllowedError,
@@ -139,16 +139,11 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   }
   const sanitized = sendTarget.target
 
-  const { data: config, error: configErr } = await db
-    .from('whatsapp_config')
-    .select('*')
-    .eq('account_id', input.accountId)
-    .single()
-  if (configErr || !config) {
-    throw new Error('WhatsApp not configured for this account')
-  }
-
-  const accessToken = decrypt(config.access_token)
+  const config = await resolveWhatsAppConnection(db, {
+    accountId: input.accountId,
+    conversationId: input.conversationId,
+  })
+  const accessToken = config.accessToken
 
   // Local template row — read for the body we persist below, not for
   // the Meta payload (the wire shape is deliberately unchanged here).
@@ -162,6 +157,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
             input.accountId,
             input.templateName,
             input.language,
+            config.id,
           )
         ).row
       : null
@@ -169,7 +165,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {
       const r = await sendTemplateMessage({
-        phoneNumberId: config.phone_number_id,
+        phoneNumberId: config.phoneNumberId,
         accessToken,
         to: phone,
         templateName: input.templateName,
@@ -179,7 +175,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       return r.messageId
     }
     const r = await sendTextMessage({
-      phoneNumberId: config.phone_number_id,
+      phoneNumberId: config.phoneNumberId,
       accessToken,
       to: phone,
       text: input.text,

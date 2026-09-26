@@ -41,6 +41,7 @@ export default function EditAutomationPage({
         trigger_type: body.automation.trigger_type as AutomationTriggerType,
         trigger_config: body.automation.trigger_config ?? {},
         is_active: !!body.automation.is_active,
+        whatsapp_config_id: body.automation.whatsapp_config_id ?? null,
         steps: fromServerSteps((body.steps ?? []) as ServerStepNode[]),
       })
     }

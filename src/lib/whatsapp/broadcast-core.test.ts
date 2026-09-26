@@ -61,17 +61,24 @@ function makeDb(rpcResult: { data: unknown; error: unknown }) {
   const database = {
     from(table: string) {
       if (table === 'whatsapp_config') {
-        return {
-          select: () => ({
-            eq: () => ({
-              single: () =>
-                Promise.resolve({
-                  data: { phone_number_id: 'pn-1', access_token: 'enc' },
-                  error: null,
-                }),
-            }),
-          }),
-        };
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.limit = () => Promise.resolve({
+          data: [{
+            id: 'connection-b',
+            account_id: 'acc',
+            user_id: 'user',
+            display_name: 'Broadcasts',
+            is_primary: true,
+            phone_number_id: 'pn-1',
+            waba_id: 'waba-1',
+            access_token: 'enc',
+            status: 'connected',
+          }],
+          error: null,
+        });
+        return chain;
       }
       if (table === 'message_templates') {
         const chain: Record<string, unknown> = {
@@ -82,15 +89,25 @@ function makeDb(rpcResult: { data: unknown; error: unknown }) {
         return chain;
       }
       if (table === 'broadcasts' || table === 'broadcast_recipients') {
-        calls.usedDirectInsert++;
-        return {
-          insert: () => ({
+        const write = {
+          insert: () => {
+            calls.usedDirectInsert++;
+            return {
             select: () => ({
               single: () =>
                 Promise.resolve({ data: { id: 'orphan' }, error: null }),
             }),
-          }),
+            };
+          },
+          update: () => {
+            const chain: Record<string, unknown> = {};
+            chain.eq = () => chain;
+            chain.then = (resolve: (value: { error: null }) => unknown) =>
+              resolve({ error: null });
+            return chain;
+          },
         };
+        return write;
       }
       throw new Error(`unexpected table: ${table}`);
     },

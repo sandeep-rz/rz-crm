@@ -11,8 +11,9 @@ import type {
   Deal,
   DealStatus,
   PipelineStage,
-  Profile,
+  AccountMember,
 } from "@/types";
+import { fetchAccountMembers, memberLabel } from "@/lib/account/members";
 import {
   Sheet,
   SheetContent,
@@ -67,7 +68,7 @@ export function DealForm({
   const [notes, setNotes] = useState("");
 
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [members, setMembers] = useState<AccountMember[]>([]);
   const [linkedConversation, setLinkedConversation] =
     useState<Conversation | null>(null);
 
@@ -112,18 +113,18 @@ export function DealForm({
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const [c, p] = await Promise.all([
+      const [c, accountMembers] = await Promise.all([
         supabase.from("contacts").select("*").order("name"),
-        supabase.from("profiles").select("*").order("full_name"),
+        fetchAccountMembers(),
       ]);
       if (cancelled) return;
       setContacts((c.data ?? []) as Contact[]);
-      setProfiles((p.data ?? []) as Profile[]);
+      setMembers(accountMembers);
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, supabase]);
+  }, [open, supabase, accountId]);
 
   // Fetch linked conversation for the selected contact (newest open one).
   // Clearing on no-selection is sync with prop state; the populated
@@ -358,9 +359,9 @@ export function DealForm({
                 className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
               >
                 <option value="">{t("unassigned")}</option>
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.full_name || p.email}
+                {members.map((member) => (
+                  <option key={member.user_id} value={member.profile_id}>
+                    {memberLabel(member)}
                   </option>
                 ))}
               </select>

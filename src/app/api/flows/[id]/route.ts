@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 
 /**
  * GET   /api/flows/[id]  — fetch one flow with its nodes.
@@ -25,6 +26,7 @@ async function requireOwnership(
       ok: true
       userId: string
       supabase: Awaited<ReturnType<typeof createClient>>
+      flow: { id: string; account_id: string }
     }
   | { ok: false; status: number; body: { error: string } }
 > {
@@ -39,13 +41,13 @@ async function requireOwnership(
   // returns null (404 below).
   const { data: flow } = await supabase
     .from('flows')
-    .select('id')
+    .select('id, account_id')
     .eq('id', flowId)
     .maybeSingle()
   if (!flow) {
     return { ok: false, status: 404, body: { error: 'Not found' } }
   }
-  return { ok: true, userId: user.id, supabase }
+  return { ok: true, userId: user.id, supabase, flow }
 }
 
 export async function GET(
@@ -72,6 +74,7 @@ export async function GET(
 }
 
 interface PutBody {
+  whatsapp_config_id?: string
   name?: string
   description?: string | null
   trigger_type?: 'keyword' | 'first_inbound_message' | 'manual'
@@ -134,6 +137,13 @@ export async function PUT(
     flowPatch.entry_node_id = body.entry_node_id
   if (body.fallback_policy !== undefined)
     flowPatch.fallback_policy = body.fallback_policy
+  if (body.whatsapp_config_id !== undefined) {
+    const connection = await resolveWhatsAppConnection(admin, {
+      accountId: guard.flow.account_id,
+      connectionId: body.whatsapp_config_id,
+    })
+    flowPatch.whatsapp_config_id = connection.id
+  }
 
   const { error: updErr } = await admin
     .from('flows')
@@ -211,4 +221,3 @@ export async function DELETE(
   }
   return NextResponse.json({ ok: true })
 }
-

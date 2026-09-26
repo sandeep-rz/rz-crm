@@ -9,6 +9,7 @@ import {
   normalizeConversation,
 } from "@/lib/inbox/conversations";
 import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
+import type { WhatsAppConfig } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
@@ -16,6 +17,7 @@ import { ContactSidebar } from "@/components/inbox/contact-sidebar";
 import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -36,6 +38,7 @@ function InboxPageInner() {
   const t = useTranslations("Inbox.page");
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { accountId } = useAuth();
   /**
    * `?c=<id>` deep-link support. Used when landing here from the
    * dashboard's recent-conversations list so the right thread opens
@@ -51,6 +54,7 @@ function InboxPageInner() {
   const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
     null
   );
+  const [whatsappConnections, setWhatsappConnections] = useState<Array<Pick<WhatsAppConfig, "id" | "display_name" | "is_primary" | "status">>>([]);
   /**
    * Bumped whenever we want children (ConversationList, MessageThread)
    * to refetch from the DB — used as a safety net against missed
@@ -129,6 +133,7 @@ function InboxPageInner() {
   // Also self-heals if a realtime event was missed: callers can invoke
   // this whenever they reference a conversation id they don't recognise.
   const hydrateConversation = useCallback(async (convId: string) => {
+    if (!accountId) return;
     if (hydratingConvIdsRef.current.has(convId)) return;
     hydratingConvIdsRef.current.add(convId);
     try {
@@ -137,6 +142,7 @@ function InboxPageInner() {
         .from("conversations")
         .select(CONVERSATION_SELECT)
         .eq("id", convId)
+        .eq("account_id", accountId)
         .maybeSingle();
       if (error) {
         // Supabase errors have non-enumerable properties — log fields
@@ -170,7 +176,7 @@ function InboxPageInner() {
     } finally {
       hydratingConvIdsRef.current.delete(convId);
     }
-  }, []);
+  }, [accountId]);
 
   // Check WhatsApp connection status on mount
   useEffect(() => {
@@ -183,12 +189,9 @@ function InboxPageInner() {
 
       if (!user) return;
 
-      // whatsapp_config is one-row-per-account post-multi-user, so
-      // the previous `.eq('user_id', user.id)` would miss the row
-      // for any teammate who didn't personally save the config —
-      // the "WhatsApp not connected" banner would show in the
-      // shared inbox even though the admin had it configured.
-      // Resolve account_id via the profile and query by that.
+      // A workspace may have zero or more WhatsApp connections. Resolve
+      // account_id through the profile, then let the config API return the
+      // active workspace's connection collection.
       const { data: profile } = await supabase
         .from("profiles")
         .select("account_id")
@@ -200,13 +203,11 @@ function InboxPageInner() {
         return;
       }
 
-      const { data } = await supabase
-        .from("whatsapp_config")
-        .select("status")
-        .eq("account_id", accountId)
-        .maybeSingle();
-
-      setWhatsappConnected(data?.status === "connected");
+      const response = await fetch('/api/whatsapp/config');
+      const payload = await response.json();
+      const rows = payload.connections ?? [];
+      setWhatsappConnections(rows);
+      setWhatsappConnected(rows.some((row: { status: string }) => row.status === 'connected'));
     };
 
     checkConnection();
@@ -343,9 +344,10 @@ function InboxPageInner() {
   // throttle) are simply lost. We need a way to catch up.
   const { isConnected } = useRealtime({
     channelName: "inbox-realtime",
+    accountId,
     onMessageEvent: handleMessageEvent,
     onConversationEvent: handleConversationEvent,
-    enabled: true,
+    enabled: Boolean(accountId),
   });
 
   /**
@@ -590,6 +592,7 @@ function InboxPageInner() {
             conversations={conversations}
             onConversationsLoaded={handleConversationsLoaded}
             resyncToken={resyncToken}
+            whatsappConnections={whatsappConnections}
           />
         </div>
 

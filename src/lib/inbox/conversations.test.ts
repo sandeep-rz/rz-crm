@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   matchesContactFilters,
+  matchesConnectionFilter,
   normalizeConversation,
 } from "./conversations";
 import type { Conversation } from "@/types";
@@ -29,6 +30,17 @@ function makeConversation(
       : undefined,
   };
 }
+
+describe("matchesConnectionFilter", () => {
+  const a = { ...makeConversation(null), whatsapp_config_id: "a" };
+  const b = { ...makeConversation(null), id: "c2", whatsapp_config_id: "b" };
+
+  it("supports all and individual connection filters", () => {
+    expect([a, b].filter((row) => matchesConnectionFilter(row, "all"))).toHaveLength(2);
+    expect([a, b].filter((row) => matchesConnectionFilter(row, "a"))).toEqual([a]);
+    expect([a, b].filter((row) => matchesConnectionFilter(row, "b"))).toEqual([b]);
+  });
+});
 
 const tag = (id: string, name = id) => ({
   id,

@@ -66,6 +66,7 @@ export interface BuilderState {
   entry_node_id: string | null;
   status: FlowRow["status"];
   nodes: BuilderNode[];
+  whatsapp_config_id: string | null;
 }
 
 export interface FlowEditorContextValue {
@@ -247,6 +248,7 @@ export function FlowEditorProvider({
     trigger_config: initialFlow.trigger_config as Record<string, unknown>,
     entry_node_id: initialFlow.entry_node_id,
     status: initialFlow.status,
+    whatsapp_config_id: initialFlow.whatsapp_config_id ?? null,
     nodes: initialNodes.map((n) => ({
       node_key: n.node_key,
       node_type: n.node_type as NodeType,
@@ -342,6 +344,7 @@ export function FlowEditorProvider({
           trigger_config: state.trigger_config,
           entry_node_id: state.entry_node_id,
           nodes: state.nodes,
+          whatsapp_config_id: state.whatsapp_config_id,
         }),
       });
       if (!res.ok) {

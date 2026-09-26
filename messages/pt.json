@@ -52,6 +52,11 @@
     "settings": "Configurações",
     "openMenu": "Abrir menu",
     "openAccountMenu": "Abrir menu da conta",
+    "openWorkspaceMenu": "Abrir menu de espaços de trabalho",
+    "workspaces": "Espaços de trabalho",
+    "createWorkspace": "Criar espaço de trabalho",
+    "workspaceFallback": "Espaço de trabalho",
+    "workspaceSwitchFailed": "Não foi possível trocar de espaço de trabalho",
     "defaultUser": "Usuário",
     "defaultAvatar": "Avatar",
     "menuProfile": "Perfil",
@@ -62,11 +67,26 @@
     "switchMode": "Mudar para o modo {mode}"
   },
   "AccountAccess": {
+    "noWorkspaceTitle": "Nenhum espaço de trabalho ainda",
+    "noWorkspaceBody": "Você ainda não entrou em um espaço de trabalho. Conclua seu convite ou crie seu próprio espaço.",
+    "createWorkspace": "Criar espaço de trabalho",
     "unlinkedTitle": "Este usuário não está vinculado a uma conta",
     "unlinkedBody": "Nada do que você alterar será salvo enquanto isso não for resolvido — o banco de dados rejeita toda gravação de um usuário sem conta ou função. Se você foi convidado para uma equipe, peça ao proprietário para reenviar o convite. Em uma instalação própria, verifique se a migração de bootstrap da conta foi executada para este usuário.",
     "errorTitle": "Não foi possível carregar suas permissões",
     "errorBody": "A função da sua conta não foi carregada, então toda ação é tratada como somente leitura e as alterações não serão salvas. Verifique sua conexão e tente novamente.",
     "retry": "Tentar novamente"
+  },
+  "CreateWorkspace": {
+    "title": "Criar espaço de trabalho",
+    "description": "Crie um novo espaço para sua equipe, contatos e conversas do WhatsApp.",
+    "nameLabel": "Nome do espaço de trabalho",
+    "namePlaceholder": "One Tree",
+    "nameRequired": "O nome do espaço de trabalho é obrigatório",
+    "nameTooLong": "O nome deve ter no máximo {max} caracteres",
+    "createFailed": "Não foi possível criar o espaço de trabalho",
+    "success": "{name} agora é seu espaço de trabalho ativo",
+    "cancel": "Cancelar",
+    "submit": "Criar espaço de trabalho"
   },
   "Dashboard": {
     "page": {
@@ -1885,6 +1905,7 @@
     }
   },
   "SignupPage": {
+    "signupFailed": "Não foi possível criar a conta",
     "passwordsMismatch": "As senhas não coincidem",
     "passwordTooShort": "A senha deve ter pelo menos 6 caracteres",
     "checkEmailTitle": "Verifique seu e-mail",
@@ -1929,11 +1950,9 @@
       "serverErrorTitle": "Algo deu errado",
       "serverErrorBody": "Não conseguimos verificar este convite agora. Tente recarregar a página em instantes."
     },
-    "conflictDefault": "Você já está em outra conta. Entre com um e-mail diferente para ingressar nesta.",
     "acceptFailed": "Falha ao aceitar o convite",
     "welcome": "Bem-vindo à equipe",
     "serverUnreachable": "Não foi possível conectar ao servidor",
-    "signOutFailed": "Não foi possível sair. Tente recarregar a página.",
     "verifying": "Verificando convite…",
     "tryAgain": "Tentar novamente",
     "createNewAccount": "Criar uma nova conta em vez disso",
@@ -1942,12 +1961,7 @@
     "joinAs": "Você entrará como <badge>{role}</badge>. Link válido até {date}.",
     "accepting": "Aceitando…",
     "acceptInvitation": "Aceitar convite",
-    "acceptNote": "Ao aceitar, seu login passa para {name}. Sua conta pessoal vazia criada no cadastro será removida.",
-    "conflictTitle": "Não é possível entrar em {name} com esta conta",
-    "conflictBody": "Para entrar em <account>{name}</account>, saia e cadastre-se novamente com um endereço de e-mail diferente. O link do convite continua válido enquanto não expirar.",
-    "staySignedIn": "Continuar conectado",
-    "signingOut": "Saindo…",
-    "signOutSwitch": "Sair e usar outro e-mail",
+    "acceptNote": "Ao aceitar, {name} será adicionado aos seus espaços de trabalho e ficará ativo. Seus espaços atuais continuarão disponíveis.",
     "createAndJoin": "Criar conta e entrar na equipe",
     "haveAccount": "Já tenho uma conta"
   },

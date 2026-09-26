@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder'
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body'
 import {
@@ -89,6 +89,7 @@ export async function POST(request: Request) {
       template_name,
       template_language,
       template_params,
+      whatsapp_config_id,
     } = body
 
     // Normalize to a list of {phone, params} regardless of shape.
@@ -120,13 +121,13 @@ export async function POST(request: Request) {
       )
     }
 
-    const { data: config, error: configError } = await supabase
-      .from('whatsapp_config')
-      .select('*')
-      .eq('account_id', accountId)
-      .single()
+    const config = await resolveWhatsAppConnection(supabase, {
+      accountId,
+      connectionId:
+        typeof whatsapp_config_id === 'string' ? whatsapp_config_id : null,
+    }).catch(() => null)
 
-    if (configError || !config) {
+    if (!config) {
       return NextResponse.json(
         {
           error:
@@ -136,7 +137,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const accessToken = decrypt(config.access_token)
+    const accessToken = config.accessToken
 
     // Load the template row once so sendTemplateMessage can build
     // header + button components on each iteration. Loading inside
@@ -148,6 +149,7 @@ export async function POST(request: Request) {
       accountId,
       template_name,
       template_language,
+      config.id,
     )
     if (resolvedTemplate.malformed) {
       return NextResponse.json(
@@ -186,7 +188,7 @@ export async function POST(request: Request) {
       for (const variant of variants) {
         try {
           const result = await sendTemplateMessage({
-            phoneNumberId: config.phone_number_id,
+          phoneNumberId: config.phoneNumberId,
             accessToken,
             to: variant,
             templateName: template_name,

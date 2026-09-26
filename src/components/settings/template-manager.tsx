@@ -132,10 +132,12 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
 export function TemplateManager() {
   const t = useTranslations('Settings.templates');
   const supabase = createClient();
-  const { user, loading: authLoading } = useAuth();
+  const { user, accountId, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [connections, setConnections] = useState<Array<{ id: string; display_name: string; is_primary: boolean }>>([]);
+  const [whatsappConfigId, setWhatsappConfigId] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -185,22 +187,31 @@ export function TemplateManager() {
 
   useEffect(() => {
     if (authLoading) return;
-    if (!user) {
+    if (!user || !accountId) {
       setLoading(false);
       return;
     }
-    fetchTemplates(user.id);
+    void (async () => {
+      const response = await fetch('/api/whatsapp/config');
+      const payload = await response.json();
+      const rows = payload.connections ?? [];
+      const selectedId = rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ?? rows[0]?.id ?? '';
+      setConnections(rows);
+      setWhatsappConfigId(selectedId);
+      await fetchTemplates(accountId, selectedId);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user?.id]);
+  }, [accountId, authLoading, user?.id]);
 
-  async function fetchTemplates(userId: string) {
+  async function fetchTemplates(activeAccountId: string, connectionId = whatsappConfigId) {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      let query = supabase
         .from('message_templates')
         .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+        .eq('account_id', activeAccountId)
+      if (connectionId) query = query.eq('whatsapp_config_id', connectionId)
+      const { data, error } = await query.order('created_at', { ascending: false });
       if (error) throw error;
       setTemplates(data || []);
     } catch (err) {
@@ -221,6 +232,7 @@ export function TemplateManager() {
     }
 
     return {
+      whatsapp_config_id: whatsappConfigId,
       name: form.name.trim(),
       category: form.category,
       language: form.language.trim() || 'en_US',
@@ -286,7 +298,7 @@ export function TemplateManager() {
       }
       // Refresh first, then close — re-opening the dialog
       // immediately should not show a stale list.
-      if (user) await fetchTemplates(user.id);
+      if (accountId) await fetchTemplates(accountId);
       toast.success(
         data.dry_run
           ? isEdit
@@ -311,7 +323,11 @@ export function TemplateManager() {
     if (!user) return;
     setSyncing(true);
     try {
-      const res = await fetch('/api/whatsapp/templates/sync', { method: 'POST' });
+      const res = await fetch('/api/whatsapp/templates/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ whatsapp_config_id: whatsappConfigId }),
+      });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data?.error || `Sync failed (HTTP ${res.status})`);
@@ -340,7 +356,7 @@ export function TemplateManager() {
           { duration: 10000 },
         );
       }
-      await fetchTemplates(user.id);
+      if (accountId) await fetchTemplates(accountId);
     } catch (err) {
       console.error('Template sync error:', err);
       toast.error(err instanceof Error ? err.message : t('toastSyncError'));
@@ -540,6 +556,24 @@ export function TemplateManager() {
           </div>
         }
       />
+
+      {connections.length > 1 && (
+        <select
+          value={whatsappConfigId}
+          onChange={(event) => {
+            const id = event.target.value;
+            setWhatsappConfigId(id);
+            setEditingId(null);
+            if (accountId) void fetchTemplates(accountId, id);
+          }}
+          className="h-10 w-full max-w-sm rounded-md border border-border bg-background px-3 text-sm"
+          aria-label="WhatsApp connection"
+        >
+          {connections.map((connection) => (
+            <option key={connection.id} value={connection.id}>{connection.display_name}</option>
+          ))}
+        </select>
+      )}
 
       {templates.length === 0 ? (
         <Card>

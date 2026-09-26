@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
 import { useTranslations } from "next-intl";
+import { useAuth } from "@/hooks/use-auth";
 
 export interface TemplateSendValues {
   body: string[];
@@ -34,6 +35,7 @@ interface TemplatePickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (template: MessageTemplate, values: TemplateSendValues) => void;
+  whatsappConfigId?: string | null;
 }
 
 function renderBodyPreview(body: string, params: string[]): string {
@@ -78,8 +80,10 @@ export function TemplatePicker({
   open,
   onOpenChange,
   onSelect,
+  whatsappConfigId,
 }: TemplatePickerProps) {
   const t = useTranslations("Inbox.templatePicker");
+  const { accountId } = useAuth();
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,7 +103,7 @@ export function TemplatePicker({
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user) {
+      if (!user || !accountId) {
         if (!cancelled) {
           setTemplates([]);
           setLoading(false);
@@ -107,15 +111,21 @@ export function TemplatePicker({
         return;
       }
 
-      // Scope by RLS (message_templates_select → is_account_member), NOT by
-      // user_id. Templates are account-owned, so filtering on the caller's
-      // user_id hid templates that a teammate created — leaving them unable
-      // to send approved templates in a shared account.
-      const { data, error } = await supabase
+      // Templates are workspace-owned. Filter by the active workspace rather
+      // than creator user_id (which would hide teammate-created templates).
+      let connectionId = whatsappConfigId;
+      if (!connectionId) {
+        const response = await fetch('/api/whatsapp/config');
+        const payload = await response.json();
+        connectionId = payload.connections?.find((row: { is_primary: boolean }) => row.is_primary)?.id ?? null;
+      }
+      let query = supabase
         .from("message_templates")
         .select("*")
+        .eq("account_id", accountId)
         .eq("status", "APPROVED")
-        .order("created_at", { ascending: false });
+      if (connectionId) query = query.eq('whatsapp_config_id', connectionId)
+      const { data, error } = await query.order("created_at", { ascending: false });
 
       if (cancelled) return;
       if (error) {
@@ -130,7 +140,7 @@ export function TemplatePicker({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [accountId, open, whatsappConfigId]);
 
   function resetSelection() {
     setSelected(null);

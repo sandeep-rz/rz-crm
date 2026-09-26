@@ -9,12 +9,10 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
-  ExternalLink,
   Zap,
   AlertTriangle,
   RotateCcw,
 } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
@@ -31,6 +29,13 @@ import {
   AccordionContent,
 } from '@/components/ui/accordion';
 import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
+import {
+  AddWhatsAppConnectionButton,
+  WhatsAppConnectionCard,
+  WhatsAppEmptyState,
+  WhatsAppSetupGuide,
+  WhatsAppSetupWizard,
+} from './whatsapp-setup-ui';
 
 const MASKED_TOKEN = '••••••••••••••••';
 
@@ -59,15 +64,13 @@ type WabaSubscription = {
   app_id_match: boolean | null;
   error?: string;
 };
+type ConnectionSummary = Omit<WhatsAppConfigType, 'access_token' | 'verify_token'>;
 
 export function WhatsAppConfig() {
   const t = useTranslations('Settings.whatsapp');
-  const supabase = createClient();
-  // After multi-user, whatsapp_config is one-row-per-account, not
-  // one-row-per-user. We pull `accountId` straight off the auth
-  // context and key every read off it — so a teammate who just
-  // joined an account sees the inviter's saved config without
-  // having to re-enter anything.
+  // A workspace may have zero or more WhatsApp connections. Pull the active
+  // account from auth context and let the server return that collection, so
+  // teammates see the same connections without trusting a browser account id.
   const {
     user,
     accountId,
@@ -82,6 +85,13 @@ export function WhatsAppConfig() {
   const [resetting, setResetting] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
+  const [connections, setConnections] = useState<ConnectionSummary[]>([]);
+  const [displayName, setDisplayName] = useState('');
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [webhookCopied, setWebhookCopied] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -108,10 +118,9 @@ export function WhatsAppConfig() {
   // Inbound-media mirror (issue #466). Unlike everything else on this
   // page it is NOT part of handleSave: that path insists on re-entering
   // the access token so it can re-verify with Meta, which is a silly
-  // toll to pay for flipping a boolean. The switch writes straight to
-  // the row instead — RLS (migration 017) restricts whatsapp_config
-  // UPDATE to admins, hence the canEditSettings gate below; without it
-  // a viewer's toggle would match zero rows and appear to work.
+  // toll to pay for flipping a boolean. The switch uses the account-scoped
+  // config API; the canEditSettings gate also prevents a viewer from being
+  // shown a control the server will reject.
   const [mirrorMedia, setMirrorMedia] = useState(true);
   const [savingMirror, setSavingMirror] = useState(false);
 
@@ -139,27 +148,22 @@ export function WhatsAppConfig() {
       ? `${window.location.origin}/api/whatsapp/webhook`
       : '';
 
-  const fetchConfig = useCallback(async (acctId: string) => {
+  const fetchConfig = useCallback(async (_acctId: string, preferredId?: string | null) => {
     setLoading(true);
     try {
-      // Load form values from Supabase (shows what's in DB).
-      // Switched from `user_id` (which would only match the row's
-      // original author) to `account_id` so every member of the
-      // account sees the same saved configuration. UNIQUE(account_id)
-      // on the table guarantees the .maybeSingle() return type
-      // remains accurate.
-      const { data, error } = await supabase
-        .from('whatsapp_config')
-        .select('*')
-        .eq('account_id', acctId)
-        .maybeSingle();
-
-      if (error) {
-        console.error('Failed to load config row:', error);
-      }
+      const query = preferredId ? `?id=${encodeURIComponent(preferredId)}` : '';
+      const res = await fetch(`/api/whatsapp/config${query}`, { method: 'GET' });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Failed to load connections');
+      const list = (payload.connections ?? []) as ConnectionSummary[];
+      setConnections(list);
+      const data = preferredId
+        ? list.find((row) => row.id === preferredId)
+        : list.find((row) => row.is_primary) ?? list[0] ?? null;
 
       if (data) {
-        setConfig(data);
+        setConfig({ ...data, access_token: '' } as WhatsAppConfigType);
+        setDisplayName(data.display_name || '');
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
@@ -171,6 +175,7 @@ export function WhatsAppConfig() {
         setMirrorMedia(data.mirror_inbound_media !== false);
       } else {
         setConfig(null);
+        setDisplayName('');
         setPhoneNumberId('');
         setWabaId('');
         setAccessToken('');
@@ -182,12 +187,7 @@ export function WhatsAppConfig() {
       // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
 
-      // Then verify health via the API (decrypts token + pings Meta)
       if (data) {
-        try {
-          const res = await fetch('/api/whatsapp/config', { method: 'GET' });
-          const payload = await res.json();
-
           if (payload.connected) {
             setConnectionStatus('connected');
             setResetReason(null);
@@ -201,10 +201,6 @@ export function WhatsAppConfig() {
             setStatusMeta(payload.meta ?? null);
             setWabaSubscription(null);
           }
-        } catch (err) {
-          console.error('Health check failed:', err);
-          setConnectionStatus('disconnected');
-        }
       } else {
         setConnectionStatus('disconnected');
         setResetReason(null);
@@ -218,7 +214,7 @@ export function WhatsAppConfig() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, t]);
+  }, [t]);
 
   useEffect(() => {
     // Need both the auth session (`!authLoading`) AND the profile
@@ -227,10 +223,10 @@ export function WhatsAppConfig() {
     // for the first render window and bail without ever retrying
     // once the profile arrives.
     if (authLoading || profileLoading) return;
-    if (!user || !accountId) {
+    if (!user?.id || !accountId) {
       loadedAccountIdRef.current = null;
-      setLoading(false);
-      return;
+      const timeout = window.setTimeout(() => setLoading(false), 0);
+      return () => window.clearTimeout(timeout);
     }
     if (loadedAccountIdRef.current === accountId) return;
     loadedAccountIdRef.current = accountId;
@@ -245,11 +241,12 @@ export function WhatsAppConfig() {
     setMirrorMedia(next);
     setSavingMirror(true);
     try {
-      const { error } = await supabase
-        .from('whatsapp_config')
-        .update({ mirror_inbound_media: next })
-        .eq('account_id', accountId);
-      if (error) throw new Error(error.message);
+      const res = await fetch('/api/whatsapp/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: config.id, mirror_inbound_media: next }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Update failed');
       setConfig({ ...config, mirror_inbound_media: next });
     } catch (error) {
       console.error('Failed to update media retention setting:', error);
@@ -260,22 +257,22 @@ export function WhatsAppConfig() {
     }
   }
 
-  async function handleSave() {
+  async function handleSave(): Promise<boolean> {
     if (!phoneNumberId.trim()) {
       toast.error(t('phoneNumberIdRequired'));
-      return;
+      return false;
     }
     if (!META_ID_RE.test(phoneNumberId.trim())) {
       toast.error(t('phoneNumberIdNotNumeric'));
-      return;
+      return false;
     }
     if (wabaId.trim() && !META_ID_RE.test(wabaId.trim())) {
       toast.error(t('wabaIdNotNumeric'));
-      return;
+      return false;
     }
     if (!config && (!accessToken.trim() || !tokenEdited)) {
       toast.error(t('accessTokenRequired'));
-      return;
+      return false;
     }
 
     try {
@@ -286,6 +283,8 @@ export function WhatsAppConfig() {
       // and writing direct to Supabase stores the token in plaintext,
       // which then fails decryption on every subsequent health check.
       const payload: Record<string, unknown> = {
+        id: config?.id,
+        display_name: displayName.trim(),
         phone_number_id: phoneNumberId.trim(),
         waba_id: wabaId.trim() || null,
         verify_token: verifyToken.trim() || null,
@@ -304,7 +303,7 @@ export function WhatsAppConfig() {
         // that. Simplest: require token re-entry if they're updating.
         toast.error(t('reenterAccessToken'));
         setSaving(false);
-        return;
+        return false;
       }
 
       const res = await fetch('/api/whatsapp/config', {
@@ -325,7 +324,7 @@ export function WhatsAppConfig() {
         });
         toast.error(data.error || t('saveFailed'), { duration: 10000 });
         setSaving(false);
-        return;
+        return false;
       }
       setSaveFailure(null);
 
@@ -366,10 +365,12 @@ export function WhatsAppConfig() {
         setPin('');
       }
 
-      if (accountId) await fetchConfig(accountId);
+      if (accountId) await fetchConfig(accountId, config?.id);
+      return data.success === true;
     } catch (err) {
       console.error('Save error:', err);
       toast.error(t('saveFailed'));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -378,7 +379,7 @@ export function WhatsAppConfig() {
   async function handleTestConnection() {
     try {
       setTesting(true);
-      const res = await fetch('/api/whatsapp/config', { method: 'GET' });
+      const res = await fetch(`/api/whatsapp/config?id=${encodeURIComponent(config?.id ?? '')}`, { method: 'GET' });
       const payload = await res.json();
 
       if (payload.connected) {
@@ -413,7 +414,7 @@ export function WhatsAppConfig() {
     setVerifyingRegistration(true);
     setRegistrationProbe(null);
     try {
-      const res = await fetch('/api/whatsapp/config/verify-registration', {
+      const res = await fetch(`/api/whatsapp/config/verify-registration?id=${encodeURIComponent(config?.id ?? '')}`, {
         method: 'GET',
       });
       const data = (await res.json()) as RegistrationProbe;
@@ -426,7 +427,7 @@ export function WhatsAppConfig() {
           { duration: 8000 },
         );
       }
-      if (accountId) await fetchConfig(accountId);
+      if (accountId) await fetchConfig(accountId, config?.id);
     } catch (err) {
       console.error('verify-registration failed:', err);
       toast.error(t('verifyEndpointUnreachable'));
@@ -436,13 +437,15 @@ export function WhatsAppConfig() {
   }
 
   async function handleReset() {
-    if (!confirm(t('resetConfirm'))) {
+    const connectionLabel = displayName.trim() || 'WhatsApp connection';
+    if (!confirm(`Delete "${connectionLabel}"? This connection will be removed from the workspace.`)) {
       return;
     }
 
     try {
       setResetting(true);
-      const res = await fetch('/api/whatsapp/config', { method: 'DELETE' });
+      if (!config) return;
+      const res = await fetch(`/api/whatsapp/config?id=${encodeURIComponent(config.id)}`, { method: 'DELETE' });
       const data = await res.json();
 
       if (!res.ok) {
@@ -452,6 +455,7 @@ export function WhatsAppConfig() {
 
       toast.success(t('resetDone'));
       setConfig(null);
+      setDisplayName('');
       setPhoneNumberId('');
       setWabaId('');
       setAccessToken('');
@@ -463,6 +467,8 @@ export function WhatsAppConfig() {
       setStatusMeta(null);
       setSaveFailure(null);
       setWabaSubscription(null);
+      setManageOpen(false);
+      if (accountId) await fetchConfig(accountId);
     } catch (err) {
       console.error('Reset error:', err);
       toast.error(t('resetFailed'));
@@ -473,7 +479,82 @@ export function WhatsAppConfig() {
 
   function handleCopyWebhookUrl() {
     navigator.clipboard.writeText(webhookUrl);
+    setWebhookCopied(true);
+    window.setTimeout(() => setWebhookCopied(false), 1800);
     toast.success(t('webhookCopied'));
+  }
+
+  function handleAddConnection() {
+    setConfig(null);
+    setDisplayName('');
+    setPhoneNumberId('');
+    setWabaId('');
+    setAccessToken('');
+    setVerifyToken('');
+    setPin('');
+    setTokenEdited(false);
+    setMirrorMedia(true);
+    setConnectionStatus('disconnected');
+    setRegistrationProbe(null);
+    setSaveFailure(null);
+    setWizardStep(1);
+    setManageOpen(false);
+    setWizardOpen(true);
+  }
+
+  async function handleManageConnection(id: string) {
+    if (!accountId) return;
+    await fetchConfig(accountId, id);
+    setWizardOpen(false);
+    setManageOpen(true);
+  }
+
+  async function handleConnectFromWizard() {
+    const connected = await handleSave();
+    if (connected) {
+      setWizardOpen(false);
+      setWizardStep(1);
+      setManageOpen(false);
+    }
+  }
+
+  function handleWizardContinue() {
+    if (wizardStep === 1) {
+      setWizardStep(2);
+      return;
+    }
+    if (!phoneNumberId.trim()) {
+      toast.error(t('phoneNumberIdRequired'));
+      return;
+    }
+    if (!META_ID_RE.test(phoneNumberId.trim())) {
+      toast.error(t('phoneNumberIdNotNumeric'));
+      return;
+    }
+    if (wabaId.trim() && !META_ID_RE.test(wabaId.trim())) {
+      toast.error(t('wabaIdNotNumeric'));
+      return;
+    }
+    if (!accessToken.trim() || !tokenEdited) {
+      toast.error(t('accessTokenRequired'));
+      return;
+    }
+    setWizardStep(3);
+  }
+
+  async function handleSetPrimary(id: string) {
+    const res = await fetch('/api/whatsapp/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, action: 'set_primary' }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast.error(data.error || 'Failed to set primary connection');
+      return;
+    }
+    toast.success('Primary WhatsApp connection updated');
+    if (accountId) await fetchConfig(accountId, id);
   }
 
   if (loading) {
@@ -531,9 +612,84 @@ export function WhatsAppConfig() {
         title={t("title")}
         description={t("description")}
       />
-      <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
-      {/* Main config form */}
-      <div className="space-y-6">
+      {connections.length === 0 ? (
+        <WhatsAppEmptyState canConnect={canEditSettings} onConnect={handleAddConnection} />
+      ) : (
+        <div className="mb-8 space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">WhatsApp connections</h2>
+              <p className="text-sm text-muted-foreground">Manage the numbers connected to this workspace.</p>
+            </div>
+            {canEditSettings && <AddWhatsAppConnectionButton onClick={handleAddConnection} />}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {connections.map((connection) => (
+              <WhatsAppConnectionCard
+                key={connection.id}
+                connection={connection}
+                showPrimary={connections.length > 1}
+                canManage={canEditSettings}
+                onManage={() => handleManageConnection(connection.id)}
+                onSetPrimary={() => handleSetPrimary(connection.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <WhatsAppSetupWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        step={wizardStep}
+        setStep={setWizardStep}
+        displayName={displayName}
+        setDisplayName={setDisplayName}
+        phoneNumberId={phoneNumberId}
+        setPhoneNumberId={setPhoneNumberId}
+        wabaId={wabaId}
+        setWabaId={setWabaId}
+        accessToken={accessToken}
+        setAccessToken={setAccessToken}
+        showToken={showToken}
+        setShowToken={setShowToken}
+        verifyToken={verifyToken}
+        setVerifyToken={setVerifyToken}
+        pin={pin}
+        setPin={setPin}
+        webhookUrl={webhookUrl}
+        copied={webhookCopied}
+        connecting={saving}
+        errorMessage={saveFailure?.message}
+        onTokenEdited={() => setTokenEdited(true)}
+        onCopyWebhook={handleCopyWebhookUrl}
+        onOpenGuide={() => {
+          setWizardOpen(false);
+          setGuideOpen(true);
+        }}
+        onContinue={handleWizardContinue}
+        onConnect={handleConnectFromWizard}
+      />
+      <WhatsAppSetupGuide
+        open={guideOpen}
+        onOpenChange={(open) => {
+          setGuideOpen(open);
+          if (!open) setWizardOpen(true);
+        }}
+        webhookUrl={webhookUrl}
+        copied={webhookCopied}
+        onCopy={handleCopyWebhookUrl}
+      />
+
+      {manageOpen && config && (
+      <div className="mx-auto max-w-3xl space-y-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Manage connection</p>
+            <h2 className="text-xl font-semibold text-foreground">{displayName || 'WhatsApp connection'}</h2>
+          </div>
+          <Button type="button" variant="outline" onClick={() => setManageOpen(false)}>Done</Button>
+        </div>
         {/* Corrupted-token reset banner */}
         {showResetBanner && (
           <Alert className="bg-amber-950/40 border-amber-600/40">
@@ -725,6 +881,15 @@ export function WhatsAppConfig() {
           </Alert>
         )}
 
+        <Accordion>
+          <AccordionItem className="rounded-lg border border-border px-4">
+            <AccordionTrigger className="hover:no-underline">
+              <span className="text-left">
+                <span className="block font-medium text-foreground">Advanced settings</span>
+                <span className="mt-1 block text-xs font-normal text-muted-foreground">Credentials, webhook configuration, registration, and troubleshooting</span>
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="space-y-6 pt-2">
         {/* API Credentials */}
         <Card>
           <CardHeader>
@@ -734,6 +899,15 @@ export function WhatsAppConfig() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-muted-foreground">Connection name</Label>
+              <Input
+                placeholder="Sales, Support, Main number…"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+              />
+            </div>
             <div className="space-y-2">
               <Label className="text-muted-foreground">{t('phoneNumberId')}</Label>
               <Input
@@ -925,124 +1099,30 @@ export function WhatsAppConfig() {
               </>
             )}
           </Button>
-          {config && (
+        </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+
+        <Card className="border-red-900/50">
+          <CardHeader>
+            <CardTitle className="text-base text-foreground">Delete connection</CardTitle>
+            <CardDescription>Remove this WhatsApp connection from the workspace. This cannot be undone.</CardDescription>
+          </CardHeader>
+          <CardContent>
             <Button
               variant="outline"
               onClick={handleReset}
               disabled={resetting}
-              className="border-red-900 text-red-400 hover:text-red-300 hover:bg-red-950/40"
+              className="border-red-900 text-red-400 hover:bg-red-950/40 hover:text-red-300"
             >
-              {resetting ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  {t('resetting')}
-                </>
-              ) : (
-                <>
-                  <RotateCcw className="size-4" />
-                  {t('resetConfig')}
-                </>
-              )}
+              {resetting ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+              {resetting ? 'Deleting…' : 'Delete connection'}
             </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Setup Instructions Sidebar */}
-      <div>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-foreground text-base">{t('setupInstructions')}</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              {t('setupInstructionsDesc')}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Accordion>
-              <AccordionItem className="border-border">
-                <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
-                  <span className="flex items-center gap-2">
-                    <span className="flex size-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">1</span>
-                    {t('step1')}
-                  </span>
-                </AccordionTrigger>
-                <AccordionContent className="text-muted-foreground">
-                  <ol className="list-decimal list-inside space-y-1 text-sm">
-                    <li dangerouslySetInnerHTML={{ __html: t('step1_1') }} />
-                    <li>{t('step1_2')}</li>
-                    <li>{t('step1_3')}</li>
-                    <li>{t('step1_4')}</li>
-                  </ol>
-                </AccordionContent>
-              </AccordionItem>
-
-              <AccordionItem className="border-border">
-                <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
-                  <span className="flex items-center gap-2">
-                    <span className="flex size-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
-                    {t('step2')}
-                  </span>
-                </AccordionTrigger>
-                <AccordionContent className="text-muted-foreground">
-                  <ol className="list-decimal list-inside space-y-1 text-sm">
-                    <li>{t('step2_1')}</li>
-                    <li>{t('step2_2')}</li>
-                    <li>{t('step2_3')}</li>
-                  </ol>
-                </AccordionContent>
-              </AccordionItem>
-
-              <AccordionItem className="border-border">
-                <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
-                  <span className="flex items-center gap-2">
-                    <span className="flex size-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">3</span>
-                    {t('step3')}
-                  </span>
-                </AccordionTrigger>
-                <AccordionContent className="text-muted-foreground">
-                  <ol className="list-decimal list-inside space-y-1 text-sm">
-                    <li>{t('step3_1')}</li>
-                    <li dangerouslySetInnerHTML={{ __html: t.raw('step3_2') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t.raw('step3_3') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t.raw('step3_4') }} />
-                  </ol>
-                </AccordionContent>
-              </AccordionItem>
-
-              <AccordionItem className="border-border">
-                <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
-                  <span className="flex items-center gap-2">
-                    <span className="flex size-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">4</span>
-                    {t('step4')}
-                  </span>
-                </AccordionTrigger>
-                <AccordionContent className="text-muted-foreground">
-                  <ol className="list-decimal list-inside space-y-1 text-sm">
-                    <li>{t('step4_1')}</li>
-                    <li>{t('step4_2')}</li>
-                    <li dangerouslySetInnerHTML={{ __html: t.raw('step4_3') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t.raw('step4_4') }} />
-                    <li>{t('step4_5')}</li>
-                  </ol>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-
-            <div className="mt-4 pt-4 border-t border-border">
-              <a
-                href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 transition-colors"
-              >
-                <ExternalLink className="size-3.5" />
-                {t('metaDocs')}
-              </a>
-            </div>
           </CardContent>
         </Card>
       </div>
-    </div>
+      )}
     </section>
   );
 }

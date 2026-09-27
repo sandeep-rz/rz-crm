@@ -69,13 +69,6 @@ export async function authenticateRukiyeZaraProvider(
 
   const bearerMatch = authorization?.match(/^Bearer\s+([^\s]+)$/i);
   const rawSecret = bearerMatch?.[1];
-  console.log('[PMS provider auth] rawSecret', rawSecret);
-  console.log('[PMS provider auth] keyId', keyId);
-  console.log('[PMS provider auth] authorization', authorization);
-  console.log('[PMS provider auth] bearerMatch', bearerMatch);
-  console.log('[PMS provider auth] MAX_PROVIDER_SECRET_LENGTH', MAX_PROVIDER_SECRET_LENGTH);
-  console.log('[PMS provider auth] UUID_PATTERN', UUID_PATTERN);
-  console.log('[PMS provider auth] requests', request);
   if (
     !rawSecret ||
     rawSecret.length > MAX_PROVIDER_SECRET_LENGTH ||
@@ -94,19 +87,7 @@ export async function authenticateRukiyeZaraProvider(
     p_required_scope: 'provision',
   });
 
-  console.log('[PMS provider auth] credential RPC result', {
-    hasData: Boolean(data),
-    rowCount: Array.isArray(data) ? data.length : data ? 1 : 0,
-  });
-
   if (error) {
-    console.error('[PMS provider auth] credential RPC failed', {
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-    });
-  
     invalidCredentials();
   }
   

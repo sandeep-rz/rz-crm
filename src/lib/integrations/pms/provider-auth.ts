@@ -87,7 +87,22 @@ export async function authenticateRukiyeZaraProvider(
     p_required_scope: 'provision',
   });
 
-  if (error) invalidCredentials();
+  console.log('[PMS provider auth] credential RPC result', {
+    hasData: Boolean(data),
+    rowCount: Array.isArray(data) ? data.length : data ? 1 : 0,
+  });
+  
+  if (error) {
+    console.error('[PMS provider auth] credential RPC failed', {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+  
+    invalidCredentials();
+  }
+  
 
   const credential = parseCredential(data);
   if (!credential) invalidCredentials();

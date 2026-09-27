@@ -75,7 +75,7 @@ export async function authenticateRukiyeZaraProvider(
   console.log('[PMS provider auth] bearerMatch', bearerMatch);
   console.log('[PMS provider auth] MAX_PROVIDER_SECRET_LENGTH', MAX_PROVIDER_SECRET_LENGTH);
   console.log('[PMS provider auth] UUID_PATTERN', UUID_PATTERN);
-  console.log('[PMS provider auth] request', request);
+  console.log('[PMS provider auth] requests', request);
   if (
     !rawSecret ||
     rawSecret.length > MAX_PROVIDER_SECRET_LENGTH ||

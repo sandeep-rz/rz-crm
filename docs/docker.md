@@ -74,3 +74,13 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   deployment, sending the shared secret in the `x-cron-secret` header
   (`AUTOMATION_CRON_SECRET`, see `.env.local.example`). Both return
   503 until that variable is set.
+- PMS initial reservation sync is woken by Supabase `pg_cron` + `pg_net`, not
+  by a container or Vercel cron. Migration
+  `20260928144026_pms_initial_sync_wakeup.sql` schedules the internal worker
+  every minute and also queues a best-effort wake-up when a PMS property enters
+  `pending`. Configure these two Supabase Vault secrets after applying it:
+  `pms_sync_worker_url` must be the full public HTTPS URL ending in
+  `/api/integrations/pms/sync/worker`, and `pms_sync_worker_token` must match the
+  deployment's server-only `PMS_SYNC_WORKER_TOKEN`. The worker returns 503 until
+  that environment variable is configured. PostgreSQL only sends wake-ups; the
+  application worker still owns claiming and synchronization.

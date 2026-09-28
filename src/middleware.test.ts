@@ -110,4 +110,20 @@ describe("middleware — refreshed auth cookies survive redirects", () => {
     expect(res.headers.get("location")).toBeNull();
     expect(res.cookies.get(ROTATED.name)?.value).toBe(ROTATED.value);
   });
+
+  it("allows the unauthenticated Rukiye Zara callback, then recognizes its Supabase session", async () => {
+    mockUser = null;
+    const callback = await middleware(
+      new NextRequest("https://app.test/auth/rukiye-zara/callback?code=opaque"),
+    );
+    expect(callback.headers.get("location")).toBeNull();
+
+    // The callback bootstraps a normal Supabase session. On the subsequent
+    // protected request middleware reads that session through getUser().
+    mockUser = { id: "mapped-crm-user" };
+    const dashboard = await middleware(
+      new NextRequest("https://app.test/dashboard"),
+    );
+    expect(dashboard.headers.get("location")).toBeNull();
+  });
 });

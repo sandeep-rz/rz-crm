@@ -78,6 +78,8 @@ export async function middleware(request: NextRequest) {
   }
 
   // Protected pages - redirect to login if not authenticated
+  // Every top-level route under src/app/(dashboard)/ belongs here —
+  // middleware.test.ts reads that directory and fails on a missing one.
   const protectedPaths = [
     '/dashboard',
     '/inbox',
@@ -85,6 +87,10 @@ export async function middleware(request: NextRequest) {
     '/pipelines',
     '/broadcasts',
     '/automations',
+    '/flows',
+    '/agents',
+    '/notifications',
+    '/reservations',
     '/settings',
   ];
   if (

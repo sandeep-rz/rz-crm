@@ -1,35 +1,22 @@
-import { timingSafeEqual } from 'node:crypto';
-
 import { NextResponse } from 'next/server';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { runInitialPmsPropertySync } from '@/lib/integrations/pms/initial-sync';
+import { authorizePmsWorkerRequest } from '@/lib/integrations/pms/worker-auth';
 
 export const runtime = 'nodejs';
 
 const MAX_PROPERTIES_PER_RUN = 10;
-const WORKER_TOKEN_HEADER = 'x-pms-sync-worker-token';
-
-function authorized(request: Request, expected: string): boolean {
-  const supplied = request.headers.get(WORKER_TOKEN_HEADER) ?? '';
-  const suppliedBuffer = Buffer.from(supplied);
-  const expectedBuffer = Buffer.from(expected);
-
-  return (
-    suppliedBuffer.length === expectedBuffer.length &&
-    timingSafeEqual(suppliedBuffer, expectedBuffer)
-  );
-}
 
 export async function POST(request: Request) {
-  const expectedToken = process.env.PMS_SYNC_WORKER_TOKEN;
-  if (!expectedToken) {
+  const authorization = authorizePmsWorkerRequest(request);
+  if (authorization === 'not_configured') {
     return NextResponse.json(
       { error: 'PMS sync worker is not configured.' },
       { status: 503 }
     );
   }
-  if (!authorized(request, expectedToken)) {
+  if (authorization === 'unauthorized') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

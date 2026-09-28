@@ -2,13 +2,11 @@ import { ImageResponse } from 'next/og';
 
 import { MONOGRAM } from './brand-mark';
 
-// Teal tile with the Rukiye Zara gold monogram. Served as the favicon.
-
 export const runtime = 'edge';
-export const size = { width: 32, height: 32 };
+export const size = { width: 180, height: 180 };
 export const contentType = 'image/png';
 
-export default function Icon() {
+export default function AppleIcon() {
   return new ImageResponse(
     <div
       style={{
@@ -18,10 +16,10 @@ export default function Icon() {
         alignItems: 'center',
         justifyContent: 'center',
         background: '#0A7EA4',
-        borderRadius: 8,
+        borderRadius: 36,
       }}
     >
-      <svg width="26" height="26" viewBox="213 59 165 165">
+      <svg width="132" height="132" viewBox="213 59 165 165">
         <path fill="#d4a160" d={MONOGRAM} />
       </svg>
     </div>,

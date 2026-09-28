@@ -19,12 +19,12 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Phone,
@@ -40,7 +40,15 @@ import {
   DollarSign,
   LayoutTemplate,
 } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
+import { ContactStays } from '@/components/contacts/contact-stays';
+import {
+  formatStayDate,
+  loadContactStays,
+  nextStayHighlight,
+  type ContactStay,
+  type StayReadClient,
+} from '@/lib/contacts/pms-stays';
 import { contactHandle } from '@/lib/whatsapp/wa-identity';
 import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
 
@@ -58,6 +66,7 @@ export function ContactDetailView({
   onUpdated,
 }: ContactDetailViewProps) {
   const t = useTranslations('Contacts.detailView');
+  const locale = useLocale();
   const supabase = createClient();
   const { accountId, defaultCurrency } = useAuth();
 
@@ -98,6 +107,9 @@ export function ContactDetailView({
   // Deals tab
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loadingDeals, setLoadingDeals] = useState(false);
+  const [stays, setStays] = useState<ContactStay[]>([]);
+  const [loadingStays, setLoadingStays] = useState(false);
+  const [staysError, setStaysError] = useState(false);
 
   const fetchContact = useCallback(async () => {
     if (!contactId || !accountId) return;
@@ -192,6 +204,24 @@ export function ContactDetailView({
     setLoadingDeals(false);
   }, [accountId, contactId, supabase]);
 
+  const fetchStays = useCallback(async () => {
+    if (!contactId || !accountId) return;
+    setLoadingStays(true);
+    setStaysError(false);
+    try {
+      const rows = await loadContactStays(supabase as unknown as StayReadClient, {
+        accountId,
+        contactId,
+      });
+      setStays(rows);
+    } catch {
+      setStays([]);
+      setStaysError(true);
+    } finally {
+      setLoadingStays(false);
+    }
+  }, [accountId, contactId, supabase]);
+
   useEffect(() => {
     if (open && contactId) {
       fetchContact();
@@ -199,8 +229,9 @@ export function ContactDetailView({
       fetchNotes();
       fetchCustomFields();
       fetchDeals();
+      fetchStays();
     }
-  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals]);
+  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals, fetchStays]);
 
   async function copyPhone() {
     if (!contact) return;
@@ -389,6 +420,11 @@ export function ContactDetailView({
     }
   }
 
+  const stayHighlight = nextStayHighlight(stays);
+  const stayWhen = stayHighlight?.checkIn
+    ? formatStayDate(stayHighlight.checkIn, locale)
+    : null;
+
   function getInitials(name?: string | null) {
     if (!name) return '?';
     return name
@@ -455,6 +491,22 @@ export function ContactDetailView({
                   </div>
                 </div>
               </div>
+              {stays.length > 0 && (
+                <div className="mt-3 flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center">
+                  <Badge className="bg-brand-accent text-brand-accent-foreground">
+                    {t('guestBadge')}
+                  </Badge>
+                  {stayHighlight && (
+                    <p className="text-xs text-muted-foreground">
+                      {stayHighlight.timing === 'current'
+                        ? t('staysTab.currentStay')
+                        : t('staysTab.nextStay')}
+                      {stayHighlight.propertyName ? ` · ${stayHighlight.propertyName}` : ''}
+                      {stayWhen ? ` · ${stayWhen}` : ''}
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="mt-3">
                 <Button
                   size="sm"
@@ -474,36 +526,44 @@ export function ContactDetailView({
 
             {/* Tabs */}
             <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="bg-muted/50 border-b border-border mx-4 mt-3">
+              <TabsList className="bg-muted/50 border-b border-border mx-4 mt-3 w-full max-w-none justify-start overflow-x-auto">
                 <TabsTrigger
                   value="details"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
                   {t('tabs.details')}
                 </TabsTrigger>
                 <TabsTrigger
                   value="tags"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
                   {t('tabs.tags')}
                 </TabsTrigger>
                 <TabsTrigger
                   value="notes"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
                   {t('tabs.notes')}
                 </TabsTrigger>
                 <TabsTrigger
                   value="custom"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
                   {t('tabs.custom')}
                 </TabsTrigger>
                 <TabsTrigger
                   value="deals"
-                  className="data-active:bg-muted data-active:text-primary text-muted-foreground"
+                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
                 >
                   {t('tabs.deals')}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="stays"
+                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
+                >
+                  {stays.length > 0
+                    ? t('tabs.staysCount', { count: stays.length })
+                    : t('tabs.stays')}
                 </TabsTrigger>
               </TabsList>
 
@@ -765,6 +825,25 @@ export function ContactDetailView({
                       </div>
                     ))}
                   </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="stays" className="flex-1 overflow-y-auto px-4 py-3">
+                {loadingStays ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="size-5 animate-spin text-primary" aria-label={t('staysTab.loading')} />
+                  </div>
+                ) : (
+                  <ContactStays
+                    key={contact.id}
+                    stays={stays}
+                    error={staysError}
+                    guest={{
+                      name: contact.name ?? null,
+                      phone: contact.phone,
+                      email: contact.email ?? null,
+                    }}
+                  />
                 )}
               </TabsContent>
             </Tabs>

@@ -1,6 +1,6 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -48,6 +48,20 @@
   --color-primary-hover: var(--primary-hover);
   --color-primary-soft: var(--primary-soft);
   --color-primary-soft-2: var(--primary-soft-2);
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-accent-foreground: var(--brand-accent-foreground);
+  --color-stay-confirmed: var(--stay-confirmed);
+  --color-stay-confirmed-bg: var(--stay-confirmed-bg);
+  --color-stay-completed: var(--stay-completed);
+  --color-stay-completed-bg: var(--stay-completed-bg);
+  --color-stay-cancelled: var(--stay-cancelled);
+  --color-stay-cancelled-bg: var(--stay-cancelled-bg);
+  --color-stay-pending: var(--stay-pending);
+  --color-stay-pending-bg: var(--stay-pending-bg);
+  --color-stay-default: var(--stay-default);
+  --color-stay-default-bg: var(--stay-default-bg);
+  --radius-card: 1.25rem;
+  --shadow-card: 0px 7px 30px 0px rgba(90, 114, 123, 0.11);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -61,20 +75,23 @@
  * THEMING — two orthogonal dimensions
  *
  *   1. MODE   (light / dark)  → neutral surfaces. Selected with
- *      `document.documentElement.dataset.mode`. Defaults to dark.
- *   2. ACCENT (violet / …)    → the primary color only. Selected
- *      with `document.documentElement.dataset.theme`.
+ *      `document.documentElement.dataset.mode`. Defaults to light,
+ *      matching the Rukiye Zara property dashboard.
+ *   2. ACCENT (rukiye / violet / …) → the primary color only.
+ *      Selected with `document.documentElement.dataset.theme`.
  *
  * The two compose: any accent works in either mode. Neutral
  * tokens (background / card / border / muted / sidebar surfaces /
- * neutral charts / radius) live in the MODE blocks below; accent
+ * stay chips / radius) live in the MODE blocks below; accent
  * tokens (--primary*, --ring, --chart-1, --sidebar-primary*,
  * --sidebar-ring) live in the ACCENT blocks. They set disjoint
  * variables, so cascade order between them doesn't matter.
  *
- * `:root` carries the dark-mode + violet defaults so a visitor
- * renders correctly before JS runs; the boot script in
+ * `:root` carries the light-mode + Rukiye Zara defaults so a
+ * visitor renders correctly before JS runs; the boot script in
  * layout.tsx replays the saved mode + accent before first paint.
+ * Surface values follow the PMS GREEN_THEME neutrals. Lime is
+ * `--brand-accent`, not the shadcn `--secondary` button surface.
  *
  * The three `--primary-*` extras (hover / soft / soft-2) feed
  * hovered primary buttons and tinted-primary surfaces (sidebar
@@ -87,68 +104,111 @@
 /* ---- MODE: neutral surfaces ---- */
 
 :root,
-html[data-mode="dark"] {
-  --background: oklch(0.13 0.01 260);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.18 0.01 260);
-  --card-2: oklch(0.205 0.01 260);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.18 0.01 260);
-  --popover-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.22 0.01 260);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.22 0.01 260);
-  --muted-foreground: oklch(0.65 0.01 260);
-  --accent: oklch(0.22 0.01 260);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.28 0.01 260);
-  --input: oklch(0.28 0.01 260);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.16 0.01 260);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.22 0.01 260);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(0.28 0.01 260);
+html[data-mode='light'] {
+  --background: #fafbfb;
+  --foreground: #2a3547;
+  --card: #ffffff;
+  --card-2: #f4f9fb;
+  --card-foreground: #2a3547;
+  --popover: #ffffff;
+  --popover-foreground: #2a3547;
+  --secondary: #f2f6fa;
+  --secondary-foreground: #2a3547;
+  --muted: #f2f6fa;
+  --muted-foreground: #5a6a85;
+  --accent: #f2f6fa;
+  --accent-foreground: #2a3547;
+  --destructive: #e46a76;
+  --border: #e5eaef;
+  --input: #dfe5ef;
+  --chart-2: #ccda4e;
+  --chart-3: #5a6a85;
+  --chart-4: #767e89;
+  --chart-5: #dfe5ef;
+  --brand-accent: #ccda4e;
+  --brand-accent-foreground: #2a3547;
+  --stay-confirmed: #10b981;
+  --stay-confirmed-bg: #ecfdf5;
+  --stay-completed: #6366f1;
+  --stay-completed-bg: #eef2ff;
+  --stay-cancelled: #ef4444;
+  --stay-cancelled-bg: #fef2f2;
+  --stay-pending: #f59e0b;
+  --stay-pending-bg: #fffbeb;
+  --stay-default: #6b7280;
+  --stay-default-bg: #f3f4f6;
+  --radius: 0.5625rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #2a3547;
+  --sidebar-accent: #f2f6fa;
+  --sidebar-accent-foreground: #2a3547;
+  --sidebar-border: #e5eaef;
 }
 
-html[data-mode="light"] {
-  --background: oklch(0.99 0.002 260);
-  --foreground: oklch(0.21 0.01 260);
-  --card: oklch(1 0 0);
-  --card-2: oklch(0.985 0.002 260);
-  --card-foreground: oklch(0.21 0.01 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.01 260);
-  --secondary: oklch(0.967 0.003 260);
-  --secondary-foreground: oklch(0.25 0.01 260);
-  --muted: oklch(0.967 0.003 260);
-  --muted-foreground: oklch(0.52 0.015 260);
-  --accent: oklch(0.96 0.004 260);
-  --accent-foreground: oklch(0.25 0.01 260);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0.004 260);
-  --input: oklch(0.922 0.004 260);
-  --chart-2: oklch(0.6 0.1 260);
-  --chart-3: oklch(0.7 0.06 260);
-  --chart-4: oklch(0.8 0.04 260);
-  --chart-5: oklch(0.87 0.03 260);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0.002 260);
-  --sidebar-foreground: oklch(0.21 0.01 260);
-  --sidebar-accent: oklch(0.96 0.004 260);
-  --sidebar-accent-foreground: oklch(0.25 0.01 260);
-  --sidebar-border: oklch(0.922 0.004 260);
+html[data-mode='dark'] {
+  --background: #171c23;
+  --foreground: #e6e5e8;
+  --card: #282c34;
+  --card-2: #333f55;
+  --card-foreground: #e6e5e8;
+  --popover: #282c34;
+  --popover-foreground: #e6e5e8;
+  --secondary: #333f55;
+  --secondary-foreground: #e6e5e8;
+  --muted: #333f55;
+  --muted-foreground: #adb0bb;
+  --accent: #333f55;
+  --accent-foreground: #e6e5e8;
+  --destructive: #e46a76;
+  --border: #333f55;
+  --input: #333f55;
+  --chart-2: #ccda4e;
+  --chart-3: #adb0bb;
+  --chart-4: #767e89;
+  --chart-5: #333f55;
+  --brand-accent: #ccda4e;
+  --brand-accent-foreground: #2a3547;
+  --stay-confirmed: #34d399;
+  --stay-confirmed-bg: #064e3b;
+  --stay-completed: #a5b4fc;
+  --stay-completed-bg: #312e81;
+  --stay-cancelled: #fca5a5;
+  --stay-cancelled-bg: #7f1d1d;
+  --stay-pending: #fcd34d;
+  --stay-pending-bg: #78350f;
+  --stay-default: #d1d5db;
+  --stay-default-bg: #374151;
+  --radius: 0.5625rem;
+  --sidebar: #282c34;
+  --sidebar-foreground: #e6e5e8;
+  --sidebar-accent: #333f55;
+  --sidebar-accent-foreground: #e6e5e8;
+  --sidebar-border: #333f55;
 }
 
 /* ---- ACCENT: primary color ---- */
 
 :root,
-html[data-theme="violet"] {
+html[data-theme='rukiye'] {
+  --primary: #0a7ea4;
+  --primary-foreground: #ffffff;
+  --primary-hover: #06769a;
+  --primary-soft: #f4f9fb;
+  --primary-soft-2: #e7f3f7;
+  --ring: #0a7ea4;
+  --chart-1: #0a7ea4;
+  --chart-2: #ccda4e;
+  --sidebar-primary: #0a7ea4;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-ring: #0a7ea4;
+}
+
+html[data-theme='rukiye'][data-mode='dark'] {
+  --primary-soft: #05313f;
+  --primary-soft-2: #0a4a5c;
+}
+
+html[data-theme='violet'] {
   --primary: oklch(0.526 0.247 293);
   --primary-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.6 0.22 293);
@@ -161,7 +221,7 @@ html[data-theme="violet"] {
   --sidebar-ring: oklch(0.526 0.247 293);
 }
 
-html[data-theme="emerald"] {
+html[data-theme='emerald'] {
   --primary: oklch(0.62 0.16 162);
   --primary-foreground: oklch(0.16 0.02 162);
   --primary-hover: oklch(0.68 0.15 162);
@@ -175,7 +235,7 @@ html[data-theme="emerald"] {
   --sidebar-ring: oklch(0.62 0.16 162);
 }
 
-html[data-theme="cobalt"] {
+html[data-theme='cobalt'] {
   --primary: oklch(0.585 0.2 254);
   --primary-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.66 0.18 254);
@@ -189,7 +249,7 @@ html[data-theme="cobalt"] {
   --sidebar-ring: oklch(0.585 0.2 254);
 }
 
-html[data-theme="amber"] {
+html[data-theme='amber'] {
   --primary: oklch(0.745 0.16 65);
   --primary-foreground: oklch(0.18 0.03 65);
   --primary-hover: oklch(0.8 0.15 65);
@@ -203,7 +263,7 @@ html[data-theme="amber"] {
   --sidebar-ring: oklch(0.745 0.16 65);
 }
 
-html[data-theme="rose"] {
+html[data-theme='rose'] {
   --primary: oklch(0.645 0.22 16);
   --primary-foreground: oklch(0.985 0 0);
   --primary-hover: oklch(0.71 0.2 16);

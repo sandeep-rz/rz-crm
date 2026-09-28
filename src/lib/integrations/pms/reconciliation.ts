@@ -24,6 +24,7 @@ export interface PmsReconciliationClaim {
   propertyId: string;
   accountId: string;
   externalPropertyId: string;
+  lastReconciledAt: string | null;
   integration: PmsIntegrationContext;
   processingStartedAt: string;
   attemptCount: number;
@@ -106,15 +107,15 @@ export async function reconcilePmsProperty(
     let cursor: string | null = null;
     const seenCursors = new Set<string>();
 
-    // The current provider contract supports cursor pagination only. Do not
-    // invent an updated-since filter: the projection's stale protection makes
-    // a complete paginated safety pass idempotent.
     while (true) {
       const page = await provider.listReservations({
         integration: claim.integration,
         externalPropertyId: claim.externalPropertyId,
         limit: PMS_RECONCILIATION_PAGE_SIZE,
         cursor,
+        // The PMS contract is inclusive (>=). Re-reading the boundary row is
+        // intentional and safe because syncPmsReservation is idempotent.
+        updatedSince: claim.lastReconciledAt,
       });
 
       for (const reservation of page.items) {
@@ -236,10 +237,33 @@ export class SupabasePmsReconciliationStore implements PmsReconciliationStore {
       throw new PmsReconciliationStoreError('PMS reconciliation claim failed.');
     }
 
-    return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    const claimedRows = (data ?? []) as Array<Record<string, unknown>>;
+    if (claimedRows.length === 0) return [];
+
+    const { data: properties, error: propertyError } = await this.admin
+      .from('pms_properties')
+      .select('id, last_reconciled_at')
+      .in(
+        'id',
+        claimedRows.map((row) => row.property_id as string)
+      );
+    if (propertyError || properties?.length !== claimedRows.length) {
+      throw new PmsReconciliationStoreError(
+        'PMS reconciliation watermark lookup failed.'
+      );
+    }
+    const watermarks = new Map(
+      properties.map((property) => [
+        property.id as string,
+        property.last_reconciled_at as string | null,
+      ])
+    );
+
+    return claimedRows.map((row) => ({
       propertyId: row.property_id as string,
       accountId: row.account_id as string,
       externalPropertyId: row.external_property_id as string,
+      lastReconciledAt: watermarks.get(row.property_id as string) ?? null,
       integration: {
         integrationId: row.pms_integration_id as string,
         accountId: row.account_id as string,

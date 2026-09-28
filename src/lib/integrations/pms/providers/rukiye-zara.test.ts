@@ -127,7 +127,7 @@ describe('Rukiye Zara PMS provider adapter', () => {
     ).rejects.toMatchObject({ code: 'invalid_response' });
   });
 
-  it('forwards the cursor and max-safe limit', async () => {
+  it('forwards the cursor, max-safe limit, and updated_since watermark', async () => {
     let requested = '';
     const fetchImpl = async (input: RequestInfo | URL) => {
       requested = String(input);
@@ -150,9 +150,13 @@ describe('Rukiye Zara PMS provider adapter', () => {
       externalPropertyId: '22008',
       limit: 200,
       cursor: 'cursor-1',
+      updatedSince: '2026-09-28T10:06:11.328Z',
     });
     expect(requested).toContain('limit=200');
     expect(requested).toContain('cursor=cursor-1');
+    expect(new URL(requested).searchParams.get('updated_since')).toBe(
+      '2026-09-28T10:06:11.328Z'
+    );
   });
 
   it('accepts omitted nullable provider fields', async () => {

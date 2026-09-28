@@ -134,11 +134,13 @@ export class RukiyeZaraPmsProvider implements PmsProvider {
     externalPropertyId,
     limit,
     cursor,
+    updatedSince,
   }: {
     integration: unknown;
     externalPropertyId: string;
     limit?: number;
     cursor?: string | null;
+    updatedSince?: string | null;
   }): Promise<PmsReservationPage> {
     if (
       limit !== undefined &&
@@ -151,7 +153,11 @@ export class RukiyeZaraPmsProvider implements PmsProvider {
     const response = record(
       await this.client.get(
         `/v1/integrations/rz-crm/properties/${encodeURIComponent(externalPropertyId)}/reservations`,
-        { limit, cursor: cursor ?? undefined }
+        {
+          limit,
+          cursor: cursor ?? undefined,
+          updated_since: updatedSince ?? undefined,
+        }
       )
     );
     const data = response.data;

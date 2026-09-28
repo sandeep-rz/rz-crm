@@ -86,6 +86,7 @@ export interface PmsProvider {
     externalPropertyId: string;
     limit?: number;
     cursor?: string | null;
+    updatedSince?: string | null;
   }): Promise<PmsReservationPage>;
   getReservation(input: {
     integration: PmsIntegrationContext;

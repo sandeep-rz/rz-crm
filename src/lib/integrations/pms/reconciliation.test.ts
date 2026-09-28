@@ -10,6 +10,7 @@ import {
   PMS_RECONCILIATION_INTERVAL_MS,
   PMS_RECONCILIATION_PAGE_SIZE,
   PMS_RECONCILIATION_STALE_MS,
+  SupabasePmsReconciliationStore,
   runPmsReservationReconciliationWorker,
   type PmsReconciliationClaim,
   type PmsReconciliationStore,
@@ -30,6 +31,7 @@ const claim: PmsReconciliationClaim = {
   propertyId: 'property-1',
   accountId: 'account-1',
   externalPropertyId: '22008',
+  lastReconciledAt: null,
   integration: {
     integrationId: 'integration-1',
     accountId: 'account-1',
@@ -130,6 +132,7 @@ class MemoryReconciliationStore implements PmsReconciliationStore {
       row.nextAttemptAt = null;
       row.claim = {
         ...row.claim,
+        lastReconciledAt: row.lastReconciledAt,
         processingStartedAt: input.now,
         attemptCount: row.claim.attemptCount + 1,
       };
@@ -341,9 +344,50 @@ function workerDependencies(
 }
 
 describe('periodic PMS reservation reconciliation', () => {
+  it('loads the persisted property watermark for an atomic claim', async () => {
+    const watermark = '2026-09-27T00:00:00.000Z';
+    const inFilter = vi.fn(async () => ({
+      data: [{ id: claim.propertyId, last_reconciled_at: watermark }],
+      error: null,
+    }));
+    const admin = {
+      rpc: vi.fn(async () => ({
+        data: [
+          {
+            property_id: claim.propertyId,
+            account_id: claim.accountId,
+            external_property_id: claim.externalPropertyId,
+            pms_integration_id: claim.integration.integrationId,
+            provider: claim.integration.provider,
+            external_account_id: claim.integration.externalAccountId,
+            reconciliation_started_at: NOW.toISOString(),
+            reconciliation_attempt_count: 2,
+          },
+        ],
+        error: null,
+      })),
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({ in: inFilter })),
+      })),
+    };
+
+    const [claimed] = await new SupabasePmsReconciliationStore(
+      admin as never
+    ).claimProperties({
+      limit: 10,
+      now: NOW.toISOString(),
+      dueBefore: '2026-09-28T06:00:00.000Z',
+      staleBefore: '2026-09-28T11:45:00.000Z',
+    });
+
+    expect(claimed.lastReconciledAt).toBe(watermark);
+    expect(inFilter).toHaveBeenCalledWith('id', [claim.propertyId]);
+  });
+
   it('successfully reconciles every cursor page before advancing the watermark', async () => {
+    const previous = '2026-09-27T00:00:00.000Z';
     const state = new MemoryReconciliationStore(
-      {},
+      { lastReconciledAt: previous },
       { ...claim, attemptCount: 0 }
     );
     const projections = new MemoryReservationStore();
@@ -375,6 +419,9 @@ describe('periodic PMS reservation reconciliation', () => {
     expect(
       listReservations.mock.calls.map(([input]) => input.cursor ?? null)
     ).toEqual([null, 'cursor-1']);
+    expect(
+      listReservations.mock.calls.map(([input]) => input.updatedSince)
+    ).toEqual([previous, previous]);
     expect(state.rows[0].lastReconciledAt).toBe(NOW.toISOString());
     expect(projections.reservations).toHaveLength(2);
   });

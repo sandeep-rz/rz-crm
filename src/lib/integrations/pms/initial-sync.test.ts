@@ -103,7 +103,9 @@ class ReservationStore implements PmsReservationSyncStore {
   async findReservation() {
     return null;
   }
-  async saveReservation(input: any) {
+  async saveReservation(
+    input: Parameters<PmsReservationSyncStore['saveReservation']>[0]
+  ) {
     return { id: input.reservation.externalId, skippedStale: false };
   }
 }
@@ -120,6 +122,7 @@ function provider(pages: PmsReservationPage[]): PmsProvider {
     },
     async listReservations(input) {
       expect(input.limit).toBe(PMS_INITIAL_SYNC_PAGE_SIZE);
+      expect(input.updatedSince).toBeUndefined();
       const page = pages[index++];
       expect(input.cursor ?? null).toBe(
         index === 1 ? null : pages[index - 2].nextCursor

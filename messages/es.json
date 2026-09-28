@@ -1741,6 +1741,7 @@
       "webhookVerifyToken": "Token de verificación del webhook",
       "webhookVerifyTokenPlaceholder": "Crea un token de verificación personalizado",
       "webhookVerifyTokenHint": "Una cadena personalizada que tú creas. Debe coincidir con el token que configuraste en los ajustes de webhook de Meta.",
+      "webhookVerifyTokenSaved": "Guardado. Déjalo así para conservarlo o escribe un valor nuevo para rotarlo.",
       "twoStepPin": "PIN de verificación en dos pasos",
       "optional": "(opcional)",
       "pinPlaceholder": "PIN de 6 dígitos del Administrador de WhatsApp de Meta",

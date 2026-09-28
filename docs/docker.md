@@ -76,7 +76,7 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   503 until that variable is set.
 - PMS initial reservation sync is woken by Supabase `pg_cron` + `pg_net`, not
   by a container or Vercel cron. Migration
-  `20260928144026_pms_initial_sync_wakeup.sql` schedules the internal worker
+  `54_pms_initial_sync_wakeup.sql` schedules the internal worker
   every minute and also queues a best-effort wake-up when a PMS property enters
   `pending`. Configure these two Supabase Vault secrets after applying it:
   `pms_sync_worker_url` must be the full public HTTPS URL ending in
@@ -84,3 +84,13 @@ docker run -d --env-file .env.local -e PORT=3000 -p 3000:3000 wacrm
   deployment's server-only `PMS_SYNC_WORKER_TOKEN`. The worker returns 503 until
   that environment variable is configured. PostgreSQL only sends wake-ups; the
   application worker still owns claiming and synchronization.
+- PMS reservation reconciliation is also woken by Supabase `pg_cron` +
+  `pg_net`. Migration `56_pms_reservation_reconciliation.sql` schedules
+  `pms-reservation-reconciliation` at `0 */6 * * *` (every six hours). Add the
+  Vault secret `pms_reconciliation_worker_url` with the full public HTTPS URL
+  ending in `/api/integrations/pms/reconciliation/worker`. It reuses
+  `pms_sync_worker_token` and the deployment's existing server-only
+  `PMS_SYNC_WORKER_TOKEN`; no additional application environment variable is
+  required. PostgreSQL leases due properties and sends wake-ups only. The
+  application follows the PMS reservation cursor and projects every result via
+  the shared reservation synchronizer.

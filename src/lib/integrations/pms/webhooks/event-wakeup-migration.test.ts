@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 const migration = readFileSync(
   join(
     process.cwd(),
-    'supabase/migrations/20260928150913_pms_webhook_event_processing.sql'
+    'supabase/migrations/55_pms_webhook_event_processing.sql'
   ),
   'utf8'
 );

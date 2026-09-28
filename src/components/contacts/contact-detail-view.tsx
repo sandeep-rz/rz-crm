@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -45,12 +46,16 @@ import { ContactStays } from '@/components/contacts/contact-stays';
 import {
   formatStayDate,
   loadContactStays,
+  stayStatusLabel,
   nextStayHighlight,
   type ContactStay,
   type StayReadClient,
 } from '@/lib/contacts/pms-stays';
 import { contactHandle } from '@/lib/whatsapp/wa-identity';
 import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
+
+const tabTriggerClass =
+  'h-11 flex-none rounded-none px-3 text-sm text-muted-foreground after:!opacity-0 data-active:bg-transparent data-active:text-primary data-active:!shadow-[inset_0_-2px_0_0_var(--primary)]';
 
 interface ContactDetailViewProps {
   open: boolean;
@@ -440,7 +445,7 @@ export function ContactDetailView({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="bg-popover border-border text-popover-foreground sm:max-w-lg w-full p-0"
+        className="bg-popover border-border text-popover-foreground w-full p-0 sm:max-w-2xl"
       >
         {loading || !contact ? (
           <div className="flex items-center justify-center h-full">
@@ -526,50 +531,70 @@ export function ContactDetailView({
 
             {/* Tabs */}
             <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="bg-muted/50 border-b border-border mx-4 mt-3 w-full max-w-none justify-start overflow-x-auto">
-                <TabsTrigger
-                  value="details"
-                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
+              <TabsList
+                variant="line"
+                className="border-border h-11 w-full max-w-none justify-start gap-1 overflow-x-auto border-b bg-transparent px-4 group-data-horizontal/tabs:h-11 [scrollbar-width:none]"
+              >
+                <TabsTrigger value="details" className={tabTriggerClass}>
                   {t('tabs.details')}
                 </TabsTrigger>
-                <TabsTrigger
-                  value="tags"
-                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  {t('tabs.tags')}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="notes"
-                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  {t('tabs.notes')}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="custom"
-                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  {t('tabs.custom')}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="deals"
-                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
-                  {t('tabs.deals')}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="stays"
-                  className="shrink-0 data-active:bg-muted data-active:text-primary text-muted-foreground"
-                >
+                <TabsTrigger value="stays" className={tabTriggerClass}>
                   {stays.length > 0
                     ? t('tabs.staysCount', { count: stays.length })
                     : t('tabs.stays')}
+                </TabsTrigger>
+                <TabsTrigger value="tags" className={tabTriggerClass}>
+                  {t('tabs.tags')}
+                </TabsTrigger>
+                <TabsTrigger value="notes" className={tabTriggerClass}>
+                  {t('tabs.notes')}
+                </TabsTrigger>
+                <TabsTrigger value="custom" className={tabTriggerClass}>
+                  {t('tabs.custom')}
+                </TabsTrigger>
+                <TabsTrigger value="deals" className={tabTriggerClass}>
+                  {t('tabs.deals')}
                 </TabsTrigger>
               </TabsList>
 
               {/* Details Tab */}
               <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-3">
                 <div className="space-y-3">
+                  {(loadingStays || staysError || stays.length > 0) && (
+                    <Card size="sm">
+                      <CardHeader className="border-b">
+                        <CardTitle>
+                          {stays.length > 0
+                            ? t('tabs.staysCount', { count: stays.length })
+                            : t('tabs.stays')}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-3">
+                        {loadingStays && (
+                          <Loader2 className="size-4 animate-spin text-primary" aria-label={t('staysTab.loading')} />
+                        )}
+                        {staysError && (
+                          <p className="text-muted-foreground text-xs">{t('staysTab.loadError')}</p>
+                        )}
+                        {stays.map((stay) => (
+                          <div key={stay.id} className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">
+                                {stay.propertyName ?? t('staysTab.property')}
+                              </p>
+                              <p className="text-muted-foreground text-xs">
+                                {stay.checkIn ? formatStayDate(stay.checkIn, locale) : t('staysTab.checkIn')}
+                                {' – '}
+                                {stay.checkOut ? formatStayDate(stay.checkOut, locale) : t('staysTab.checkOut')}
+                                {stay.reservationCode ? ` · ${stay.reservationCode}` : ''}
+                              </p>
+                            </div>
+                            <Badge variant="outline">{stayStatusLabel(stay.status)}</Badge>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">{t('name')}</Label>
                     <Input

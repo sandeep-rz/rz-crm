@@ -21,6 +21,7 @@ const reservation: PmsReservation = {
   externalListingId: 'listing-a',
   reservationCode: 'RZ-A',
   status: 'confirmed',
+  providerStatus: 'confirmed',
   checkIn: '2026-10-01',
   checkOut: '2026-10-03',
   guest: {

@@ -28,6 +28,7 @@ const reservation: PmsReservation = {
   externalListingId: 'listing-1',
   reservationCode: 'RZ-1',
   status: 'confirmed',
+  providerStatus: 'confirmed',
   checkIn: '2026-10-01',
   checkOut: '2026-10-03',
   guest: {
@@ -302,9 +303,10 @@ describe('PMS webhook event processor', () => {
       dependencies(events, projections, first.provider)
     );
 
-    const updated = {
+    const updated: PmsReservation = {
       ...reservation,
-      status: 'modified',
+      status: 'confirmed',
+      providerStatus: 'modified',
       updatedAt: '2026-09-28T11:30:00.000Z',
     };
     const canonical = providerFor(updated);
@@ -316,7 +318,9 @@ describe('PMS webhook event processor', () => {
     expect(projections.reservations).toHaveLength(1);
     expect(
       projections.reservations.get('integration-1:reservation-1')
-    ).toMatchObject({ reservation: { status: 'modified' } });
+    ).toMatchObject({
+      reservation: { status: 'confirmed', providerStatus: 'modified' },
+    });
   });
 
   it('retains and updates a cancelled reservation instead of deleting it', async () => {

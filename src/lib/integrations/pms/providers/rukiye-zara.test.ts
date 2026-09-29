@@ -11,6 +11,7 @@ const reservation = {
   listing_id: 'listing-1',
   reservation_code: 'RZ-1',
   status: 'confirmed',
+  provider_status: 'confirmed',
   check_in: '2026-10-01',
   check_out: '2026-10-03',
   guest: {

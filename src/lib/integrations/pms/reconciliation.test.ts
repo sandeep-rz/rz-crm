@@ -46,13 +46,14 @@ function reservation(
   id: string,
   overrides: Partial<PmsReservation> = {}
 ): PmsReservation {
-  return {
+  const base: PmsReservation = {
     externalId: id,
     sourceType: 'pms_bookings',
     externalPropertyId: '22008',
     externalListingId: 'listing-1',
     reservationCode: `RZ-${id}`,
     status: 'confirmed',
+    providerStatus: 'confirmed',
     checkIn: '2026-10-01',
     checkOut: '2026-10-03',
     guest: {
@@ -72,7 +73,16 @@ function reservation(
     },
     createdAt: '2026-09-01T00:00:00.000Z',
     updatedAt: '2026-09-28T11:00:00.000Z',
+  };
+  return {
+    ...base,
     ...overrides,
+    status: overrides.status ?? base.status,
+    providerStatus: overrides.providerStatus ?? base.providerStatus,
+    guest: { ...base.guest, ...overrides.guest },
+    occupancy: { ...base.occupancy, ...overrides.occupancy },
+    channel: { ...base.channel, ...overrides.channel },
+    financial: { ...base.financial, ...overrides.financial },
   };
 }
 
@@ -454,7 +464,8 @@ describe('periodic PMS reservation reconciliation', () => {
           {
             items: [
               reservation('existing', {
-                status: 'modified',
+                status: 'confirmed',
+                providerStatus: 'modified',
                 updatedAt: '2026-09-28T11:30:00.000Z',
               }),
             ],
@@ -471,7 +482,7 @@ describe('periodic PMS reservation reconciliation', () => {
       projections.reservations.get('integration-1:existing')
     ).toMatchObject({
       id: 'existing-reservation',
-      status: 'modified',
+      status: 'confirmed',
       contactId: 'existing-contact',
     });
   });

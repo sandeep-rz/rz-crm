@@ -1038,7 +1038,13 @@
         "time_based": {
           "label": "시간 기반",
           "hint": "반복 일정에 따라"
-        }
+        },
+        "reservation_confirmed": { "label": "예약 확정", "hint": "PMS 예약이 확정된 후" },
+        "reservation_updated": { "label": "예약 업데이트", "hint": "PMS 예약이 업데이트된 후" },
+        "reservation_cancelled": { "label": "예약 취소", "hint": "PMS 예약이 취소된 후" },
+        "before_checkin": { "label": "체크인 전", "hint": "체크인 전 설정된 일수" },
+        "checkin_day": { "label": "체크인 당일", "hint": "체크인 날짜의 설정된 현지 시간" },
+        "after_checkout": { "label": "체크아웃 후", "hint": "체크아웃 후 설정된 일수" }
       },
       "trigger": "트리거",
       "triggerType": "트리거 유형",

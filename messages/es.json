@@ -1038,7 +1038,13 @@
         "time_based": {
           "label": "Por horario",
           "hint": "Según una programación recurrente"
-        }
+        },
+        "reservation_confirmed": { "label": "Reserva confirmada", "hint": "Después de confirmar una reserva canónica del PMS" },
+        "reservation_updated": { "label": "Reserva actualizada", "hint": "Después de actualizar una reserva canónica del PMS" },
+        "reservation_cancelled": { "label": "Reserva cancelada", "hint": "Después de cancelar una reserva canónica del PMS" },
+        "before_checkin": { "label": "Antes del check-in", "hint": "Días configurados antes del check-in" },
+        "checkin_day": { "label": "Día del check-in", "hint": "En la fecha de check-in a una hora local configurada" },
+        "after_checkout": { "label": "Después del checkout", "hint": "Días configurados después del checkout" }
       },
       "trigger": "Disparador",
       "triggerType": "Tipo de disparador",

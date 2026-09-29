@@ -35,6 +35,24 @@ export const TRIGGER_META: Record<AutomationTriggerType, TriggerMeta> = {
   interactive_reply: {
     pillClass: 'border-pink-500/30 bg-pink-500/10 text-pink-300',
   },
+  reservation_confirmed: {
+    pillClass: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+  },
+  reservation_updated: {
+    pillClass: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
+  },
+  reservation_cancelled: {
+    pillClass: 'border-red-500/30 bg-red-500/10 text-red-300',
+  },
+  before_checkin: {
+    pillClass: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300',
+  },
+  checkin_day: {
+    pillClass: 'border-green-500/30 bg-green-500/10 text-green-300',
+  },
+  after_checkout: {
+    pillClass: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
+  },
 }
 
 export function isKnownTrigger(t: string): t is AutomationTriggerType {

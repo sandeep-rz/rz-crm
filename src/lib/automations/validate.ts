@@ -203,6 +203,51 @@ export function validateTriggerForActivation(
         message: 'reply ids cannot be empty strings',
       })
     }
+  } else if (
+    triggerType === 'reservation_confirmed' ||
+    triggerType === 'reservation_updated' ||
+    triggerType === 'reservation_cancelled' ||
+    triggerType === 'before_checkin' ||
+    triggerType === 'checkin_day' ||
+    triggerType === 'after_checkout'
+  ) {
+    for (const field of ['property_ids', 'channels', 'reservation_statuses'] as const) {
+      if (
+        cfg[field] != null &&
+        (!Array.isArray(cfg[field]) ||
+          (cfg[field] as unknown[]).some((value) => !nonEmpty(value)))
+      ) {
+        issues.push({ path: `trigger.${field}`, message: `${field} must contain non-empty strings` })
+      }
+    }
+    if (
+      triggerType === 'before_checkin' ||
+      triggerType === 'checkin_day' ||
+      triggerType === 'after_checkout'
+    ) {
+      if (!nonEmpty(cfg.timezone)) {
+        issues.push({ path: 'trigger.timezone', message: 'an explicit IANA timezone is required' })
+      } else {
+        try {
+          new Intl.DateTimeFormat('en-US', { timeZone: String(cfg.timezone) }).format(new Date())
+        } catch {
+          issues.push({ path: 'trigger.timezone', message: 'timezone must be a valid IANA timezone' })
+        }
+      }
+      if (typeof cfg.local_time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(cfg.local_time)) {
+        issues.push({ path: 'trigger.local_time', message: 'local time must use HH:mm' })
+      }
+    }
+    if (triggerType === 'before_checkin') {
+      if (!Number.isInteger(cfg.days_before) || Number(cfg.days_before) < 0 || Number(cfg.days_before) > 365) {
+        issues.push({ path: 'trigger.days_before', message: 'days before must be an integer from 0 to 365' })
+      }
+    }
+    if (triggerType === 'after_checkout') {
+      if (!Number.isInteger(cfg.days_after) || Number(cfg.days_after) < 0 || Number(cfg.days_after) > 365) {
+        issues.push({ path: 'trigger.days_after', message: 'days after must be an integer from 0 to 365' })
+      }
+    }
   }
 
   return issues

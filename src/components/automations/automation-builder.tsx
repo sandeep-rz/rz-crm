@@ -869,6 +869,11 @@ function TriggerCard({
                 onChange={(e) => onTypeChange(e.target.value as AutomationTriggerType)}
                 className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none"
               >
+                {!TRIGGER_OPTIONS.some((option) => option.value === type) && (
+                  <option value={type} disabled>
+                    {t(`triggers.${type}.label`)}
+                  </option>
+                )}
                 {TRIGGER_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
                     {t(`triggers.${o.value}.label`)}

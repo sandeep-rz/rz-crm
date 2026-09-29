@@ -6,6 +6,7 @@ import type {
   ConditionStepConfig,
   KeywordMatchTriggerConfig,
   InteractiveReplyTriggerConfig,
+  PmsTriggerConfig,
   TagTriggerConfig,
   SendMessageStepConfig,
   SendButtonsStepConfig,
@@ -25,6 +26,9 @@ import { engineSendText, engineSendTemplate, engineSendInteractive } from './met
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
+import { resolveConversationForContact } from '@/lib/whatsapp/resolve-conversation'
+import type { ReservationAutomationContext } from './pms-context'
+import { matchesReservationTriggerConfig } from './pms-scheduler'
 
 // ------------------------------------------------------------
 // Public API
@@ -43,7 +47,26 @@ export interface AutomationContext {
   agent_id?: string
   /** Button / list-row id the customer tapped, for interactive_reply. */
   interactive_reply_id?: string
+  /** Canonical, credential-free PMS projection for reservation triggers. */
+  reservation?: ReservationAutomationContext
 }
+
+export interface AutomationExecutionResult {
+  logId: string
+  status: 'success' | 'partial' | 'failed' | 'processing'
+  errorMessage: string | null
+  disposition: 'executed' | 'already_completed' | 'already_running'
+}
+
+export interface AutomationExecutionIdentity {
+  triggerJobId: string
+  attemptCount: number
+}
+
+type PmsExecutionGateDisposition =
+  | 'started'
+  | 'already_completed'
+  | 'already_running'
 
 export interface DispatchInput {
   /** Account-level tenancy key. Drives the lookup of which active
@@ -120,6 +143,42 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
 }
 
 /**
+ * Dispatch exactly one already-selected automation through the same executor.
+ * PMS trigger jobs use this to avoid re-running every matching automation for
+ * each per-automation durable occurrence.
+ */
+export async function runAutomationForTrigger(
+  automationId: string,
+  input: DispatchInput,
+  executionIdentity?: AutomationExecutionIdentity,
+): Promise<AutomationExecutionResult | null> {
+  const db = supabaseAdmin()
+  if (input.contactId) {
+    const { data: contact, error } = await db
+      .from('contacts')
+      .select('id')
+      .eq('id', input.contactId)
+      .eq('account_id', input.accountId)
+      .maybeSingle()
+    if (error) throw new Error('automation contact ownership check failed')
+    if (!contact) return null
+  }
+  const { data, error } = await db
+    .from('automations')
+    .select('*')
+    .eq('id', automationId)
+    .eq('account_id', input.accountId)
+    .eq('trigger_type', input.triggerType)
+    .eq('is_active', true)
+    .maybeSingle()
+  if (error) throw new Error('automation lookup failed')
+  if (!data) return null
+  const automation = data as Automation
+  if (!triggerMatches(automation, input.context)) return null
+  return executeAutomation(automation, input, executionIdentity)
+}
+
+/**
  * Resume a run that was parked at a wait step. Called from the cron
  * endpoint after it grabs a due `automation_pending_executions` row.
  */
@@ -162,6 +221,7 @@ export async function resumePendingExecution(pending: {
       startPosition: pending.next_step_position,
       logId: pending.log_id,
       triggerEvent: 'resumed_wait',
+      triggerJobExecution: false,
     })
     await markPending(pending.id, 'done')
   } catch (err) {
@@ -174,38 +234,74 @@ export async function resumePendingExecution(pending: {
 // Internal execution
 // ------------------------------------------------------------
 
-async function executeAutomation(automation: Automation, input: DispatchInput) {
+async function executeAutomation(
+  automation: Automation,
+  input: DispatchInput,
+  executionIdentity?: AutomationExecutionIdentity,
+): Promise<AutomationExecutionResult> {
   const db = supabaseAdmin()
 
-  const { data: log, error: logErr } = await db
-    .from('automation_logs')
-    .insert({
-      automation_id: automation.id,
-      // Tenancy: matches automation.account_id (NOT NULL post-017).
-      account_id: automation.account_id,
-      // Audit: keeps the historical "author of this automation"
-      // pointer so logs still attribute to the right user even
-      // after teammates join the account.
-      user_id: automation.user_id,
-      contact_id: input.contactId ?? null,
-      trigger_event: input.triggerType,
-      steps_executed: [],
-      // Seeded pessimistically. The row is written BEFORE any step runs,
-      // and every terminal path below overwrites it (`appendResults` at
-      // the outermost scope, or `finalizeLog`). Seeding 'success' meant a
-      // run that died mid-flight — the process frozen, the pod recycled —
-      // left a permanent `status: 'success'` with `steps_executed: []`,
-      // indistinguishable from an automation that genuinely had nothing
-      // to do. 'failed' inverts that: the status only becomes success if
-      // execution actually reached the end. See issue #409.
-      status: 'failed',
-    })
-    .select()
-    .single()
+  let log: { id: string }
+  if (executionIdentity) {
+    const { data: gateData, error: gateError } = await db.rpc(
+      'begin_pms_automation_execution',
+      {
+        p_job_id: executionIdentity.triggerJobId,
+        p_attempt_count: executionIdentity.attemptCount,
+        p_contact_id: input.contactId ?? null,
+      },
+    )
+    const gate = (Array.isArray(gateData) ? gateData[0] : gateData) as
+      | { automation_log_id: string; disposition: PmsExecutionGateDisposition }
+      | null
+    if (gateError || !gate?.automation_log_id) {
+      throw new Error(`cannot acquire PMS automation execution: ${gateError?.message ?? 'unknown error'}`)
+    }
+    log = { id: gate.automation_log_id }
+    if (gate.disposition === 'already_completed' || gate.disposition === 'already_running') {
+      const { data: existingLog, error: existingLogError } = await db
+        .from('automation_logs')
+        .select('status, error_message')
+        .eq('id', log.id)
+        .eq('trigger_job_id', executionIdentity.triggerJobId)
+        .single()
+      if (existingLogError || !existingLog) {
+        throw new Error('cannot read existing PMS automation execution')
+      }
+      return {
+        logId: log.id,
+        status: gate.disposition === 'already_running'
+          ? 'processing'
+          : existingLog.status as AutomationExecutionResult['status'],
+        errorMessage: existingLog.error_message as string | null,
+        disposition: gate.disposition,
+      }
+    }
+  } else {
+    const { data: insertedLog, error: logErr } = await db
+      .from('automation_logs')
+      .insert({
+        automation_id: automation.id,
+        // Tenancy: matches automation.account_id (NOT NULL post-017).
+        account_id: automation.account_id,
+        // Audit: keeps the historical "author of this automation"
+        // pointer so logs still attribute to the right user even
+        // after teammates join the account.
+        user_id: automation.user_id,
+        contact_id: input.contactId ?? null,
+        trigger_event: input.triggerType,
+        steps_executed: [],
+        // Existing non-PMS behavior remains pessimistic: success is only
+        // written after the complete step scope reaches its terminal path.
+        status: 'failed',
+      })
+      .select()
+      .single()
 
-  if (logErr || !log) {
-    console.error('[automations] cannot create log:', logErr)
-    return
+    if (logErr || !insertedLog) {
+      throw new Error(`cannot create automation log: ${logErr?.message ?? 'unknown error'}`)
+    }
+    log = { id: insertedLog.id as string }
   }
 
   await executeStepsFrom({
@@ -217,6 +313,7 @@ async function executeAutomation(automation: Automation, input: DispatchInput) {
     startPosition: 0,
     logId: log.id,
     triggerEvent: input.triggerType,
+    triggerJobExecution: Boolean(executionIdentity),
   })
 
   // Atomic counter update via the SQL function from migration 007.
@@ -229,6 +326,21 @@ async function executeAutomation(automation: Automation, input: DispatchInput) {
   if (rpcErr) {
     console.error('[automations] increment counter failed:', rpcErr)
   }
+
+  const { data: finalLog, error: finalLogError } = await db
+    .from('automation_logs')
+    .select('status, error_message')
+    .eq('id', log.id)
+    .single()
+  if (finalLogError || !finalLog) {
+    throw new Error('cannot read final automation execution status')
+  }
+  return {
+    logId: log.id as string,
+    status: finalLog.status as AutomationExecutionResult['status'],
+    errorMessage: finalLog.error_message as string | null,
+    disposition: 'executed',
+  }
 }
 
 interface ExecuteArgs {
@@ -240,6 +352,7 @@ interface ExecuteArgs {
   startPosition: number
   logId: string | null
   triggerEvent: string
+  triggerJobExecution: boolean
 }
 
 async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
@@ -260,12 +373,12 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
   const { data: steps, error: stepsErr } = await scoped
 
   if (stepsErr) {
-    await finalizeLog(args.logId, 'failed', stepsErr.message)
+    await finalizeLog(args.logId, 'failed', stepsErr.message, args.triggerJobExecution)
     return
   }
   if (!steps || steps.length === 0) {
     if (args.parentStepId === null && args.logId) {
-      await finalizeLog(args.logId, 'success', null)
+      await finalizeLog(args.logId, 'success', null, args.triggerJobExecution)
     }
     return
   }
@@ -301,7 +414,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         detail: `waiting ${cfg.amount} ${cfg.unit}`,
       })
       status = 'partial'
-      await appendResults(args.logId, results, status, errorMessage)
+      await appendResults(args.logId, results, status, errorMessage, args.triggerJobExecution)
       return
     }
 
@@ -349,10 +462,10 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
   }
 
   if (args.parentStepId === null) {
-    await appendResults(args.logId, results, status, errorMessage)
+    await appendResults(args.logId, results, status, errorMessage, args.triggerJobExecution)
   } else {
     // Nested branch — just append results; parent scope decides final status.
-    await appendResults(args.logId, results, null, errorMessage)
+    await appendResults(args.logId, results, null, errorMessage, args.triggerJobExecution)
   }
 }
 
@@ -417,7 +530,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
               if (bNum) return 1
               return a.localeCompare(b)
             })
-            .map((k) => String(cfg.variables![k]))
+            .map((k) => interpolate(String(cfg.variables![k]), args))
         : []
       const { whatsapp_message_id } = await engineSendTemplate({
         accountId: args.automation.account_id,
@@ -644,7 +757,8 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
     connectionId: args.automation.whatsapp_config_id,
     entity: { type: 'automation', id: args.automation.id },
   })
-  const { data, error } = await supabaseAdmin()
+  const db = supabaseAdmin()
+  const { data, error } = await db
     .from('conversations')
     .select('id')
     .eq('account_id', args.automation.account_id)
@@ -652,13 +766,16 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
     .eq('whatsapp_config_id', connection.id)
     .maybeSingle()
   if (error) throw new Error(`conversation lookup failed: ${error.message}`)
-  if (!data?.id) {
-    const prefix = args.triggerEvent === 'tag_added'
-      ? 'tag_added automation cannot send'
-      : 'cannot send'
-    throw new Error(`${prefix}: contact has no existing conversation`)
+  if (data?.id) return data.id as string
+  if (args.triggerEvent === 'tag_added') {
+    throw new Error('tag_added automation cannot send: contact has no existing conversation')
   }
-  return data.id as string
+  const resolved = await resolveConversationForContact(db, {
+    accountId: args.automation.account_id,
+    contactId: args.contactId,
+    connectionId: connection.id,
+  })
+  return resolved.conversationId
 }
 
 /** Letter, digit or underscore in any script — the "inside a word" test. */
@@ -736,6 +853,23 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
     return Boolean(tagId && cfg?.tag_id && cfg.tag_id === tagId)
   }
 
+  if (
+    automation.trigger_type === 'reservation_confirmed' ||
+    automation.trigger_type === 'reservation_updated' ||
+    automation.trigger_type === 'reservation_cancelled' ||
+    automation.trigger_type === 'before_checkin' ||
+    automation.trigger_type === 'checkin_day' ||
+    automation.trigger_type === 'after_checkout'
+  ) {
+    return Boolean(
+      ctx?.reservation &&
+      matchesReservationTriggerConfig(
+        automation.trigger_config as PmsTriggerConfig,
+        ctx.reservation,
+      )
+    )
+  }
+
   return true
 }
 
@@ -786,6 +920,22 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
       const t = parse(to)
       return f <= t ? mins >= f && mins < t : mins >= f || mins < t
     }
+    case 'property':
+      return Boolean(
+        args.context.reservation &&
+        (args.context.reservation.property_id === (cfg.value ?? cfg.operand) ||
+          args.context.reservation.property_name === (cfg.value ?? cfg.operand)),
+      )
+    case 'channel':
+      return Boolean(
+        args.context.reservation &&
+        (args.context.reservation.channel === (cfg.value ?? cfg.operand) ||
+          args.context.reservation.channel_name === (cfg.value ?? cfg.operand)),
+      )
+    case 'reservation_status':
+      return Boolean(
+        args.context.reservation?.reservation_status === (cfg.value ?? cfg.operand),
+      )
     default:
       return false
   }
@@ -801,6 +951,11 @@ function interpolate(s: string, args: ExecuteArgs): string {
     const [ns, prop] = String(key).split('.')
     if (ns === 'message' && prop === 'text') return String(args.context.message_text ?? '')
     if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '')
+    if (ns === 'reservation' && prop) {
+      return String(
+        args.context.reservation?.[prop as keyof ReservationAutomationContext] ?? '',
+      )
+    }
     return ''
   })
 }
@@ -810,6 +965,7 @@ async function appendResults(
   newItems: AutomationLogStepResult[],
   status: 'success' | 'partial' | 'failed' | null,
   errorMessage: string | null,
+  triggerJobExecution = false,
 ) {
   if (!logId) return
   const db = supabaseAdmin()
@@ -826,6 +982,9 @@ async function appendResults(
   // Only overwrite status on the outermost scope — nested branches pass null.
   if (status !== null) {
     update.status = status
+    if (triggerJobExecution) {
+      update.trigger_job_execution_state = status === 'failed' ? 'failed' : 'completed'
+    }
   }
   if (errorMessage) update.error_message = errorMessage
   await db.from('automation_logs').update(update).eq('id', logId)
@@ -835,11 +994,18 @@ async function finalizeLog(
   logId: string | null,
   status: 'success' | 'partial' | 'failed',
   errorMessage: string | null,
+  triggerJobExecution = false,
 ) {
   if (!logId) return
   await supabaseAdmin()
     .from('automation_logs')
-    .update({ status, error_message: errorMessage })
+    .update({
+      status,
+      error_message: errorMessage,
+      ...(triggerJobExecution
+        ? { trigger_job_execution_state: status === 'failed' ? 'failed' : 'completed' }
+        : {}),
+    })
     .eq('id', logId)
 }
 

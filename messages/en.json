@@ -1038,7 +1038,13 @@
         "time_based": {
           "label": "Time-Based",
           "hint": "On a recurring schedule"
-        }
+        },
+        "reservation_confirmed": { "label": "Reservation Confirmed", "hint": "After a canonical PMS reservation is confirmed" },
+        "reservation_updated": { "label": "Reservation Updated", "hint": "After a canonical PMS reservation is updated" },
+        "reservation_cancelled": { "label": "Reservation Cancelled", "hint": "After a canonical PMS reservation is cancelled" },
+        "before_checkin": { "label": "Before Check-in", "hint": "A configured number of days before check-in" },
+        "checkin_day": { "label": "Check-in Day", "hint": "On the check-in date at a configured local time" },
+        "after_checkout": { "label": "After Checkout", "hint": "A configured number of days after checkout" }
       },
       "trigger": "Trigger",
       "triggerType": "Trigger type",

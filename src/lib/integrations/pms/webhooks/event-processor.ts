@@ -15,6 +15,7 @@ import {
   type PmsReservationSyncStore,
 } from '../reservation-sync';
 import { isSupportedRzPmsEvent } from './envelope';
+import { schedulePmsAutomationsAfterSync } from '@/lib/automations/pms-scheduler';
 
 export const PMS_WEBHOOK_EVENT_BATCH_SIZE = 10;
 export const PMS_WEBHOOK_EVENT_STALE_MS = 15 * 60 * 1000;
@@ -97,6 +98,7 @@ export interface PmsWebhookEventDependencies {
   reservationStore?: PmsReservationSyncStore;
   createProvider?: (provider: string) => PmsProvider;
   now?: () => Date;
+  scheduleAutomations?: typeof schedulePmsAutomationsAfterSync;
 }
 
 export interface PmsWebhookEventResult {
@@ -209,7 +211,7 @@ export async function processPmsWebhookEvent(
       );
     }
 
-    await syncPmsReservation(
+    const syncResult = await syncPmsReservation(
       {
         accountId: event.accountId,
         integration: context.integration,
@@ -221,6 +223,26 @@ export async function processPmsWebhookEvent(
       },
       dependencies.reservationStore ?? new SupabasePmsReservationSyncStore()
     );
+
+    // This adapter is deliberately outside syncPmsReservation(): initial sync
+    // and reconciliation use the same projection function and must not emit
+    // historical guest-facing automation occurrences.
+    // Test/custom projection stores intentionally do not imply production
+    // scheduling. The real worker has no injected reservation store and uses
+    // the default durable adapter; unit tests can inject the adapter directly.
+    const scheduleAutomations = dependencies.scheduleAutomations ??
+      (dependencies.reservationStore ? null : schedulePmsAutomationsAfterSync);
+    if (scheduleAutomations) {
+      await scheduleAutomations({
+        accountId: event.accountId,
+        reservationId: syncResult.reservationId,
+        webhookEventId: event.id,
+        eventType: event.eventType as
+          | 'reservation.confirmed'
+          | 'reservation.updated'
+          | 'reservation.cancelled',
+      });
+    }
 
     await store.markProcessed(event, now().toISOString());
     return { eventId: event.id, status: 'processed' };

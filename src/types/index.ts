@@ -500,6 +500,12 @@ export type AutomationTriggerType =
   | 'conversation_assigned'
   | 'tag_added'
   | 'time_based'
+  | 'reservation_confirmed'
+  | 'reservation_updated'
+  | 'reservation_cancelled'
+  | 'before_checkin'
+  | 'checkin_day'
+  | 'after_checkout'
   /** Customer tapped a reply button / list row whose id matches; lets
    *  multi-step menus be chained across automations. */
   | 'interactive_reply';
@@ -550,12 +556,36 @@ export interface InteractiveReplyTriggerConfig {
   reply_ids: string[];
 }
 
+export type PmsAutomationTriggerType =
+  | 'reservation_confirmed'
+  | 'reservation_updated'
+  | 'reservation_cancelled'
+  | 'before_checkin'
+  | 'checkin_day'
+  | 'after_checkout';
+
+export interface PmsTriggerConfig {
+  property_id?: string;
+  property_ids?: string[];
+  channels?: string[];
+  reservation_statuses?: string[];
+  /** Required for date-based triggers until PMS properties expose a canonical timezone. */
+  timezone?: string;
+  /** Local wall-clock time in HH:mm form. */
+  local_time?: string;
+  /** before_checkin only. */
+  days_before?: number;
+  /** after_checkout only. */
+  days_after?: number;
+}
+
 export type AutomationTriggerConfig =
   | Record<string, never>
   | KeywordMatchTriggerConfig
   | TagTriggerConfig
   | TimeBasedTriggerConfig
   | InteractiveReplyTriggerConfig
+  | PmsTriggerConfig
   | Record<string, unknown>;
 
 export interface SendMessageStepConfig {
@@ -614,7 +644,10 @@ export type ConditionSubject =
   | 'contact_field'
   | 'tag_presence'
   | 'message_content'
-  | 'time_of_day';
+  | 'time_of_day'
+  | 'property'
+  | 'channel'
+  | 'reservation_status';
 
 export interface ConditionStepConfig {
   subject: ConditionSubject;

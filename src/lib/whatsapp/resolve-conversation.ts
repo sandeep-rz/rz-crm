@@ -33,6 +33,70 @@ export interface ResolvedConversation {
   contactCreated: boolean;
 }
 
+export interface ResolveConversationForContactInput {
+  accountId: string;
+  contactId: string;
+  connectionId?: string | null;
+}
+
+/**
+ * Resolve or create the WhatsApp conversation for an existing account contact.
+ * This is shared by first-touch API and automation sends; it never creates or
+ * reassigns a contact and keeps both contact and connection account-scoped.
+ */
+export async function resolveConversationForContact(
+  db: SupabaseClient,
+  input: ResolveConversationForContactInput,
+): Promise<ResolvedConversation> {
+  const config = await resolveWhatsAppConnection(db, {
+    accountId: input.accountId,
+    connectionId: input.connectionId,
+  }).catch(() => null);
+  if (!config) {
+    throw new SendMessageError(
+      'whatsapp_not_configured',
+      'WhatsApp not configured. Please set up your WhatsApp integration first.',
+      400,
+    );
+  }
+  const { data: contact, error } = await db
+    .from('contacts')
+    .select('id, phone')
+    .eq('id', input.contactId)
+    .eq('account_id', input.accountId)
+    .maybeSingle();
+  if (error) {
+    throw new SendMessageError('db_error', 'Failed to resolve contact', 500);
+  }
+  if (!contact) {
+    throw new SendMessageError('bad_request', 'Contact does not belong to this account.', 400);
+  }
+  if (!parseInternationalPhone(contact.phone ?? '')) {
+    throw new SendMessageError(
+      'bad_request',
+      'Contact does not have a deliverable international phone number.',
+      400,
+    );
+  }
+  let ownerUserId: string;
+  try {
+    ownerUserId = await resolveAuditUserId(db, input.accountId);
+  } catch (err) {
+    if (err instanceof ContactError) {
+      throw new SendMessageError('db_error', err.message, err.status);
+    }
+    throw err;
+  }
+  const conversationId = await findOrCreateConversationRow(
+    db,
+    input.accountId,
+    input.contactId,
+    ownerUserId,
+    config.id,
+  );
+  return { conversationId, contactId: input.contactId, contactCreated: false };
+}
+
 /**
  * Find or create the contact + conversation for `phone` within
  * `accountId`. Throws `SendMessageError` (shared with the send core,

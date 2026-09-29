@@ -484,7 +484,7 @@ export function ContactDetailView({
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="right"
-        className="bg-popover border-border text-popover-foreground w-full max-w-none gap-0 p-0 sm:w-[min(94vw,56rem)] sm:max-w-none lg:w-[min(88vw,58rem)]"
+        className="bg-popover border-border text-popover-foreground gap-0 p-0 data-[side=right]:w-full data-[side=right]:max-w-none data-[side=right]:sm:w-[min(94vw,56rem)] data-[side=right]:sm:max-w-none data-[side=right]:lg:w-[min(88vw,58rem)]"
       >
         {loading || !contact ? (
           <div className="flex items-center justify-center h-full">
@@ -616,15 +616,9 @@ export function ContactDetailView({
 
               {/* Details Tab */}
               <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
-                <div
-                  className={`grid items-start gap-5 ${
-                    loadingStays || staysError || stays.length > 0
-                      ? 'lg:grid-cols-[minmax(0,1.08fr)_minmax(20rem,0.92fr)] lg:gap-6'
-                      : ''
-                  }`}
-                >
+                <div className="space-y-5">
                   {(loadingStays || staysError || stays.length > 0) && (
-                    <div className="min-w-0 lg:sticky lg:top-0">
+                    <div className="min-w-0">
                       <ContactStaySummary
                         stays={stays}
                         loading={loadingStays}

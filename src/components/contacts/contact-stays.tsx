@@ -307,7 +307,7 @@ export function ReservationDetailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="border-border bg-popover w-full max-w-none gap-0 overflow-y-auto p-0 sm:w-[min(92vw,42rem)] sm:max-w-none"
+        className="border-border bg-popover gap-0 overflow-y-auto p-0 data-[side=right]:w-full data-[side=right]:max-w-none data-[side=right]:sm:w-[min(92vw,42rem)] data-[side=right]:sm:max-w-none"
       >
         {loading ? (
           <div className="flex h-full items-center justify-center">

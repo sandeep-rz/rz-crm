@@ -11,6 +11,7 @@ export interface ReservationAutomationContext {
   guest_name: string | null;
   property_id: string;
   property_name: string | null;
+  property_timezone: string | null;
   reservation_status: string;
   provider_status: string;
   channel: string | null;
@@ -34,23 +35,27 @@ export class ReservationAutomationContextError extends Error {
   }
 }
 
-function nightsBetween(checkIn: string | null, checkOut: string | null): number | null {
+function nightsBetween(
+  checkIn: string | null,
+  checkOut: string | null
+): number | null {
   if (!checkIn || !checkOut) return null;
   const start = Date.parse(`${checkIn}T00:00:00Z`);
   const end = Date.parse(`${checkOut}T00:00:00Z`);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start)
+    return null;
   return Math.round((end - start) / 86_400_000);
 }
 
 export async function loadReservationAutomationContext(
   reservationId: string,
   accountId: string,
-  db: SupabaseClient = supabaseAdmin(),
+  db: SupabaseClient = supabaseAdmin()
 ): Promise<ReservationAutomationContext | null> {
   const { data: reservation, error: reservationError } = await db
     .from('pms_reservations')
     .select(
-      'id, account_id, pms_integration_id, pms_property_id, contact_id, external_reservation_id, reservation_code, status, provider_status, check_in, check_out, adults, children, occupancy_total, channel_code, channel_name, total_amount, currency',
+      'id, account_id, pms_integration_id, pms_property_id, contact_id, external_reservation_id, reservation_code, status, provider_status, check_in, check_out, adults, children, occupancy_total, channel_code, channel_name, total_amount, currency'
     )
     .eq('id', reservationId)
     .eq('account_id', accountId)
@@ -60,24 +65,28 @@ export async function loadReservationAutomationContext(
   }
   if (!reservation) return null;
 
-  const [{ data: property, error: propertyError }, { data: integration, error: integrationError }] =
-    await Promise.all([
-      db
-        .from('pms_properties')
-        .select('id, account_id, pms_integration_id, name')
-        .eq('id', reservation.pms_property_id)
-        .eq('account_id', accountId)
-        .eq('pms_integration_id', reservation.pms_integration_id)
-        .maybeSingle(),
-      db
-        .from('pms_integrations')
-        .select('id, account_id, provider')
-        .eq('id', reservation.pms_integration_id)
-        .eq('account_id', accountId)
-        .maybeSingle(),
-    ]);
+  const [
+    { data: property, error: propertyError },
+    { data: integration, error: integrationError },
+  ] = await Promise.all([
+    db
+      .from('pms_properties')
+      .select('id, account_id, pms_integration_id, name, timezone')
+      .eq('id', reservation.pms_property_id)
+      .eq('account_id', accountId)
+      .eq('pms_integration_id', reservation.pms_integration_id)
+      .maybeSingle(),
+    db
+      .from('pms_integrations')
+      .select('id, account_id, provider')
+      .eq('id', reservation.pms_integration_id)
+      .eq('account_id', accountId)
+      .maybeSingle(),
+  ]);
   if (propertyError || integrationError) {
-    throw new ReservationAutomationContextError('Reservation relationship lookup failed.');
+    throw new ReservationAutomationContextError(
+      'Reservation relationship lookup failed.'
+    );
   }
   if (!property || !integration) return null;
 
@@ -90,7 +99,9 @@ export async function loadReservationAutomationContext(
       .eq('account_id', accountId)
       .maybeSingle();
     if (contactError) {
-      throw new ReservationAutomationContextError('Reservation contact lookup failed.');
+      throw new ReservationAutomationContextError(
+        'Reservation contact lookup failed.'
+      );
     }
     if (!contact) return null;
     guestName = contact.name as string | null;
@@ -105,6 +116,7 @@ export async function loadReservationAutomationContext(
     guest_name: guestName,
     property_id: property.id as string,
     property_name: property.name as string | null,
+    property_timezone: property.timezone as string | null,
     reservation_status: reservation.status as string,
     provider_status: reservation.provider_status as string,
     channel: reservation.channel_code as string | null,
@@ -113,13 +125,15 @@ export async function loadReservationAutomationContext(
     check_out: reservation.check_out as string | null,
     nights: nightsBetween(
       reservation.check_in as string | null,
-      reservation.check_out as string | null,
+      reservation.check_out as string | null
     ),
     adults: reservation.adults as number | null,
     children: reservation.children as number | null,
     occupancy_total: reservation.occupancy_total as number | null,
     total_amount:
-      reservation.total_amount == null ? null : Number(reservation.total_amount),
+      reservation.total_amount == null
+        ? null
+        : Number(reservation.total_amount),
     currency: reservation.currency as string | null,
     pms_integration_id: integration.id as string,
     provider: integration.provider as string,
@@ -127,7 +141,7 @@ export async function loadReservationAutomationContext(
 }
 
 export function reservationContextVars(
-  reservation: ReservationAutomationContext,
+  reservation: ReservationAutomationContext
 ): Record<string, unknown> {
   return {
     guest_name: reservation.guest_name,

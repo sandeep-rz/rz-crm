@@ -27,6 +27,7 @@ export interface IntegrationRecord {
 export interface PropertyRecord {
   id: string;
   initial_sync_status: InitialSyncStatus;
+  timezone: string | null;
   metadata: Record<string, unknown>;
 }
 
@@ -55,6 +56,7 @@ export interface PropertyWriteInput {
   integrationId: string;
   externalPropertyId: string;
   name: string;
+  timezone: string | null;
   metadata: Record<string, unknown>;
 }
 
@@ -282,7 +284,7 @@ export class SupabasePmsProvisioningStore implements PmsProvisioningStore {
   ): Promise<PropertyRecord | null> {
     const { data, error } = await this.admin
       .from('pms_properties')
-      .select('id, initial_sync_status, metadata')
+      .select('id, initial_sync_status, timezone, metadata')
       .eq('pms_integration_id', integrationId)
       .eq('external_property_id', externalPropertyId)
       .maybeSingle();
@@ -292,6 +294,7 @@ export class SupabasePmsProvisioningStore implements PmsProvisioningStore {
     return {
       id: data.id,
       initial_sync_status: data.initial_sync_status,
+      timezone: data.timezone as string | null,
       metadata: asMetadata(data.metadata),
     };
   }
@@ -304,11 +307,12 @@ export class SupabasePmsProvisioningStore implements PmsProvisioningStore {
         pms_integration_id: input.integrationId,
         external_property_id: input.externalPropertyId,
         name: input.name,
+        timezone: input.timezone,
         status: 'active',
         initial_sync_status: 'pending',
         metadata: input.metadata,
       })
-      .select('id, initial_sync_status, metadata')
+      .select('id, initial_sync_status, timezone, metadata')
       .single();
     if (isUniqueViolation(error)) throw new StoreConflictError();
     if (error || !data || !isInitialSyncStatus(data.initial_sync_status))
@@ -316,6 +320,7 @@ export class SupabasePmsProvisioningStore implements PmsProvisioningStore {
     return {
       id: data.id,
       initial_sync_status: data.initial_sync_status,
+      timezone: data.timezone as string | null,
       metadata: asMetadata(data.metadata),
     };
   }
@@ -327,19 +332,21 @@ export class SupabasePmsProvisioningStore implements PmsProvisioningStore {
       .from('pms_properties')
       .update({
         name: input.name,
+        timezone: input.timezone,
         status: 'active',
         metadata: input.metadata,
       })
       .eq('id', input.id)
       .eq('account_id', input.accountId)
       .eq('pms_integration_id', input.integrationId)
-      .select('id, initial_sync_status, metadata')
+      .select('id, initial_sync_status, timezone, metadata')
       .single();
     if (error || !data || !isInitialSyncStatus(data.initial_sync_status))
       storageFailure(error);
     return {
       id: data.id,
       initial_sync_status: data.initial_sync_status,
+      timezone: data.timezone as string | null,
       metadata: asMetadata(data.metadata),
     };
   }
@@ -519,6 +526,7 @@ async function resolveProperty(
       integrationId: integration.id,
       externalPropertyId: request.property.external_property_id,
       name: request.property.name,
+      timezone: request.property.timezone ?? property.timezone,
       metadata,
     });
   }
@@ -529,6 +537,7 @@ async function resolveProperty(
       integrationId: integration.id,
       externalPropertyId: request.property.external_property_id,
       name: request.property.name,
+      timezone: request.property.timezone ?? null,
       metadata,
     });
   } catch (error) {
@@ -544,6 +553,7 @@ async function resolveProperty(
       integrationId: integration.id,
       externalPropertyId: request.property.external_property_id,
       name: request.property.name,
+      timezone: request.property.timezone ?? property.timezone,
       metadata: { ...property.metadata, ...metadata },
     });
   }

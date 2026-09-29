@@ -61,6 +61,7 @@ function propertyFrom(value: unknown): PmsProperty {
     name: stringValue(item.name, 'property name')!,
     status: stringValue(item.status, 'property status')!,
     active: item.active === true,
+    timezone: nullableString(item.timezone),
     address: Object.fromEntries(
       Object.entries(address).map(([key, v]) => [
         key,

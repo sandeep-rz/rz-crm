@@ -94,6 +94,7 @@ class MemoryProvisioningStore implements PmsProvisioningStore {
       externalPropertyId,
       name: 'Already synced',
       initial_sync_status: 'completed',
+      timezone: null,
       metadata: { retained: true, accountId },
     };
     this.properties.set(`${integrationId}:${externalPropertyId}`, record);
@@ -198,6 +199,7 @@ class MemoryProvisioningStore implements PmsProvisioningStore {
       externalPropertyId: input.externalPropertyId,
       name: input.name,
       initial_sync_status: 'pending',
+      timezone: input.timezone,
       metadata: input.metadata,
     };
     this.properties.set(key, record);
@@ -212,6 +214,7 @@ class MemoryProvisioningStore implements PmsProvisioningStore {
     const record: StoredProperty = {
       ...current,
       name: input.name,
+      timezone: input.timezone,
       metadata: input.metadata,
     };
     this.properties.set(key, record);
@@ -226,6 +229,19 @@ beforeEach(() => {
 });
 
 describe('Rukiye Zara PMS provisioning', () => {
+  it('stores the property timezone supplied by RZ PMS', async () => {
+    await provisionRukiyeZara(
+      {
+        ...REQUEST,
+        property: { ...REQUEST.property, timezone: 'Asia/Kolkata' },
+      },
+      store
+    );
+
+    const property = [...store.properties.values()][0];
+    expect(property.timezone).toBe('Asia/Kolkata');
+  });
+
   it('creates a new CRM user, trigger-owned workspace, integration, and property', async () => {
     const result = await provisionRukiyeZara(REQUEST, store);
 

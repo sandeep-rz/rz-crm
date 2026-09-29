@@ -9,20 +9,52 @@ import {
 } from './pms-worker';
 
 const reservation: ReservationAutomationContext = {
-  reservation_id: 'r1', external_reservation_id: 'e1', reservation_reference: 'R1',
-  account_id: 'a1', contact_id: 'c1', guest_name: 'Guest', property_id: 'p1', property_name: 'Villa',
-  reservation_status: 'confirmed', provider_status: 'confirmed', channel: 'direct', channel_name: 'Direct',
-  check_in: '2026-10-01', check_out: '2026-10-03', nights: 2, adults: 2, children: 0,
-  occupancy_total: 2, total_amount: 100, currency: 'INR', pms_integration_id: 'i1', provider: 'pms',
+  reservation_id: 'r1',
+  external_reservation_id: 'e1',
+  reservation_reference: 'R1',
+  account_id: 'a1',
+  contact_id: 'c1',
+  guest_name: 'Guest',
+  property_id: 'p1',
+  property_name: 'Villa',
+  property_timezone: 'Asia/Kolkata',
+  reservation_status: 'confirmed',
+  provider_status: 'confirmed',
+  channel: 'direct',
+  channel_name: 'Direct',
+  check_in: '2026-10-01',
+  check_out: '2026-10-03',
+  nights: 2,
+  adults: 2,
+  children: 0,
+  occupancy_total: 2,
+  total_amount: 100,
+  currency: 'INR',
+  pms_integration_id: 'i1',
+  provider: 'pms',
 };
 const job: AutomationTriggerJobClaim = {
-  id: 'j1', accountId: 'a1', automationId: 'auto1', reservationId: 'r1', webhookEventId: 'event1',
-  triggerType: 'reservation_confirmed', runAt: '2026-09-28T00:00:00.000Z',
-  processingStartedAt: '2026-09-28T00:00:00.000Z', attemptCount: 1,
+  id: 'j1',
+  accountId: 'a1',
+  automationId: 'auto1',
+  reservationId: 'r1',
+  webhookEventId: 'event1',
+  triggerType: 'reservation_confirmed',
+  runAt: '2026-09-28T00:00:00.000Z',
+  processingStartedAt: '2026-09-28T00:00:00.000Z',
+  attemptCount: 1,
 };
 const active: Automation = {
-  id: 'auto1', account_id: 'a1', user_id: 'u1', name: 'Welcome', trigger_type: 'reservation_confirmed',
-  trigger_config: {}, is_active: true, execution_count: 0, created_at: '', updated_at: '',
+  id: 'auto1',
+  account_id: 'a1',
+  user_id: 'u1',
+  name: 'Welcome',
+  trigger_type: 'reservation_confirmed',
+  trigger_config: {},
+  is_active: true,
+  execution_count: 0,
+  created_at: '',
+  updated_at: '',
 };
 
 class MemoryStore implements PmsAutomationJobStore {
@@ -32,11 +64,15 @@ class MemoryStore implements PmsAutomationJobStore {
   completedExecution = false;
   markCompletedCalls = 0;
   failMarkCompletedOnce = false;
-  async claimJobs() { return [job]; }
+  async claimJobs() {
+    return [job];
+  }
   async findCompletedExecution() {
     return this.completedExecution ? { logId: 'log1' } : null;
   }
-  async loadAutomation() { return this.automation; }
+  async loadAutomation() {
+    return this.automation;
+  }
   async markCompleted() {
     this.markCompletedCalls += 1;
     if (this.failMarkCompletedOnce) {
@@ -45,25 +81,41 @@ class MemoryStore implements PmsAutomationJobStore {
     }
     this.result = 'completed';
   }
-  async markSuppressed(_job: AutomationTriggerJobClaim, _date: string, reason: string) { this.result = `suppressed:${reason}`; }
-  async markRescheduled() { this.result = 'rescheduled'; }
-  async markFailed(_job: AutomationTriggerJobClaim, input: { error: string }) { this.result = `failed:${input.error}`; this.failures.push(input); }
+  async markSuppressed(
+    _job: AutomationTriggerJobClaim,
+    _date: string,
+    reason: string
+  ) {
+    this.result = `suppressed:${reason}`;
+  }
+  async markRescheduled() {
+    this.result = 'rescheduled';
+  }
+  async markFailed(_job: AutomationTriggerJobClaim, input: { error: string }) {
+    this.result = `failed:${input.error}`;
+    this.failures.push(input);
+  }
 }
 
 describe('PMS automation job worker', () => {
   it('rechecks the canonical reservation and dispatches the existing engine', async () => {
     const store = new MemoryStore();
     const dispatch = vi.fn().mockResolvedValue({
-      logId: 'log1', status: 'success', errorMessage: null, disposition: 'executed',
+      logId: 'log1',
+      status: 'success',
+      errorMessage: null,
+      disposition: 'executed',
     });
     const result = await processPmsAutomationJob(job, {
-      store, loadContext: async () => reservation, dispatch,
+      store,
+      loadContext: async () => reservation,
+      dispatch,
     });
     expect(result).toBe('completed');
     expect(dispatch).toHaveBeenCalledWith(
       'auto1',
       expect.objectContaining({ contactId: 'c1' }),
-      { triggerJobId: 'j1', attemptCount: 1 },
+      { triggerJobId: 'j1', attemptCount: 1 }
     );
     expect(store.result).toBe('completed');
   });
@@ -71,29 +123,54 @@ describe('PMS automation job worker', () => {
   it('suppresses inactive automations and cancelled non-cancellation jobs', async () => {
     const inactive = new MemoryStore();
     inactive.automation = { ...active, is_active: false };
-    expect(await processPmsAutomationJob(job, { store: inactive, loadContext: async () => reservation })).toBe('suppressed');
+    expect(
+      await processPmsAutomationJob(job, {
+        store: inactive,
+        loadContext: async () => reservation,
+      })
+    ).toBe('suppressed');
     expect(inactive.result).toContain('suppressed:');
 
     const cancelled = new MemoryStore();
-    expect(await processPmsAutomationJob(job, {
-      store: cancelled, loadContext: async () => ({ ...reservation, reservation_status: 'cancelled' }),
-    })).toBe('suppressed');
+    expect(
+      await processPmsAutomationJob(job, {
+        store: cancelled,
+        loadContext: async () => ({
+          ...reservation,
+          reservation_status: 'cancelled',
+        }),
+      })
+    ).toBe('suppressed');
   });
 
   it('records retryable execution failures and terminal relationship failures', async () => {
     const retry = new MemoryStore();
     const dispatch = vi.fn().mockResolvedValue({
-      logId: 'log1', status: 'failed', errorMessage: 'Meta temporary failure', disposition: 'executed',
+      logId: 'log1',
+      status: 'failed',
+      errorMessage: 'Meta temporary failure',
+      disposition: 'executed',
     });
-    expect(await processPmsAutomationJob(job, { store: retry, loadContext: async () => reservation, dispatch })).toBe('failed');
+    expect(
+      await processPmsAutomationJob(job, {
+        store: retry,
+        loadContext: async () => reservation,
+        dispatch,
+      })
+    ).toBe('failed');
     expect(retry.result).toContain('failed:Meta temporary failure');
     expect((retry.failures[0] as { retryable: boolean }).retryable).toBe(true);
 
     const terminal = new MemoryStore();
-    expect(await processPmsAutomationJob(job, {
-      store: terminal, loadContext: async () => null,
-    })).toBe('failed');
-    expect((terminal.failures[0] as { retryable: boolean }).retryable).toBe(false);
+    expect(
+      await processPmsAutomationJob(job, {
+        store: terminal,
+        loadContext: async () => null,
+      })
+    ).toBe('failed');
+    expect((terminal.failures[0] as { retryable: boolean }).retryable).toBe(
+      false
+    );
   });
 
   it('finalizes a duplicate or stale invocation from its successful durable execution', async () => {
@@ -101,10 +178,12 @@ describe('PMS automation job worker', () => {
     store.completedExecution = true;
     const dispatch = vi.fn();
 
-    expect(await processPmsAutomationJob(
-      { ...job, attemptCount: 2 },
-      { store, loadContext: async () => reservation, dispatch },
-    )).toBe('completed');
+    expect(
+      await processPmsAutomationJob(
+        { ...job, attemptCount: 2 },
+        { store, loadContext: async () => reservation, dispatch }
+      )
+    ).toBe('completed');
     expect(dispatch).not.toHaveBeenCalled();
     expect(store.markCompletedCalls).toBe(1);
   });
@@ -115,57 +194,88 @@ describe('PMS automation job worker', () => {
     const dispatch = vi.fn().mockImplementation(async () => {
       store.completedExecution = true;
       return {
-        logId: 'log1', status: 'success', errorMessage: null, disposition: 'executed',
+        logId: 'log1',
+        status: 'success',
+        errorMessage: null,
+        disposition: 'executed',
       };
     });
 
-    expect(await processPmsAutomationJob(job, {
-      store, loadContext: async () => reservation, dispatch,
-    })).toBe('failed');
+    expect(
+      await processPmsAutomationJob(job, {
+        store,
+        loadContext: async () => reservation,
+        dispatch,
+      })
+    ).toBe('failed');
     expect(dispatch).toHaveBeenCalledTimes(1);
 
-    expect(await processPmsAutomationJob(
-      { ...job, attemptCount: 2 },
-      { store, loadContext: async () => reservation, dispatch },
-    )).toBe('completed');
+    expect(
+      await processPmsAutomationJob(
+        { ...job, attemptCount: 2 },
+        { store, loadContext: async () => reservation, dispatch }
+      )
+    ).toBe('completed');
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('retries a failed automation but cannot create a second successful execution', async () => {
     const store = new MemoryStore();
-    const dispatch = vi.fn()
+    const dispatch = vi
+      .fn()
       .mockResolvedValueOnce({
-        logId: 'log1', status: 'failed', errorMessage: 'temporary', disposition: 'executed',
+        logId: 'log1',
+        status: 'failed',
+        errorMessage: 'temporary',
+        disposition: 'executed',
       })
       .mockImplementationOnce(async () => {
         store.completedExecution = true;
         return {
-          logId: 'log1', status: 'success', errorMessage: null, disposition: 'executed',
+          logId: 'log1',
+          status: 'success',
+          errorMessage: null,
+          disposition: 'executed',
         };
       });
 
-    expect(await processPmsAutomationJob(job, {
-      store, loadContext: async () => reservation, dispatch,
-    })).toBe('failed');
-    expect(await processPmsAutomationJob(
-      { ...job, attemptCount: 2 },
-      { store, loadContext: async () => reservation, dispatch },
-    )).toBe('completed');
-    expect(await processPmsAutomationJob(
-      { ...job, attemptCount: 3 },
-      { store, loadContext: async () => reservation, dispatch },
-    )).toBe('completed');
+    expect(
+      await processPmsAutomationJob(job, {
+        store,
+        loadContext: async () => reservation,
+        dispatch,
+      })
+    ).toBe('failed');
+    expect(
+      await processPmsAutomationJob(
+        { ...job, attemptCount: 2 },
+        { store, loadContext: async () => reservation, dispatch }
+      )
+    ).toBe('completed');
+    expect(
+      await processPmsAutomationJob(
+        { ...job, attemptCount: 3 },
+        { store, loadContext: async () => reservation, dispatch }
+      )
+    ).toBe('completed');
     expect(dispatch).toHaveBeenCalledTimes(2);
   });
 
   it('leaves a duplicate current invocation alone while its execution is running', async () => {
     const store = new MemoryStore();
     const dispatch = vi.fn().mockResolvedValue({
-      logId: 'log1', status: 'processing', errorMessage: null, disposition: 'already_running',
+      logId: 'log1',
+      status: 'processing',
+      errorMessage: null,
+      disposition: 'already_running',
     });
-    expect(await processPmsAutomationJob(job, {
-      store, loadContext: async () => reservation, dispatch,
-    })).toBe('inProgress');
+    expect(
+      await processPmsAutomationJob(job, {
+        store,
+        loadContext: async () => reservation,
+        dispatch,
+      })
+    ).toBe('inProgress');
     expect(store.result).toBeNull();
   });
 });

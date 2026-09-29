@@ -10,6 +10,7 @@ export interface PmsProperty {
   name: string;
   status: string;
   active: boolean;
+  timezone: string | null;
   address: Record<string, string | null>;
   currency: string | null;
   createdAt: string | null;

@@ -22,6 +22,7 @@ export interface RukiyeZaraProvisionRequest {
   property: {
     external_property_id: string;
     name: string;
+    timezone?: string;
   };
 }
 
@@ -107,7 +108,9 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
   ) {
     return { success: false, message: 'Owner contains unsupported fields.' };
   }
-  if (!hasOnlyKeys(value.property, ['external_property_id', 'name'])) {
+  if (
+    !hasOnlyKeys(value.property, ['external_property_id', 'name', 'timezone'])
+  ) {
     return { success: false, message: 'Property contains unsupported fields.' };
   }
 
@@ -176,6 +179,29 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
   if (propertyName.error)
     return { success: false, message: propertyName.error };
 
+  let propertyTimezone: string | undefined;
+  if (value.property.timezone !== undefined) {
+    const timezone = normalizedString(
+      value.property.timezone,
+      'property.timezone',
+      100
+    );
+    if (timezone.error || !timezone.value) {
+      return { success: false, message: timezone.error };
+    }
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: timezone.value }).format(
+        new Date()
+      );
+    } catch {
+      return {
+        success: false,
+        message: 'property.timezone must be a valid IANA timezone.',
+      };
+    }
+    propertyTimezone = timezone.value;
+  }
+
   return {
     success: true,
     data: {
@@ -189,6 +215,7 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
       property: {
         external_property_id: externalPropertyId.value!,
         name: propertyName.value!,
+        ...(propertyTimezone ? { timezone: propertyTimezone } : {}),
       },
     },
   };

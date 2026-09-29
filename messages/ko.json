@@ -1036,37 +1036,65 @@
           "hint": "연락처에 태그가 추가되었을 때"
         },
         "time_based": {
-          "label": "시간 기반",
-          "hint": "반복 일정에 따라"
+          "label": "기존 일정",
+          "hint": "기존 반복 자동화용"
         },
-        "reservation_confirmed": { "label": "예약 확정", "hint": "PMS 예약이 확정된 후" },
-        "reservation_updated": { "label": "예약 업데이트", "hint": "PMS 예약이 업데이트된 후" },
-        "reservation_cancelled": { "label": "예약 취소", "hint": "PMS 예약이 취소된 후" },
-        "before_checkin": { "label": "체크인 전", "hint": "체크인 전 설정된 일수" },
-        "checkin_day": { "label": "체크인 당일", "hint": "체크인 날짜의 설정된 현지 시간" },
-        "after_checkout": { "label": "체크아웃 후", "hint": "체크아웃 후 설정된 일수" }
+        "reservation_confirmed": {
+          "label": "예약 확정",
+          "hint": "예약이 확정될 때"
+        },
+        "reservation_updated": {
+          "label": "예약 업데이트",
+          "hint": "예약 정보가 변경될 때"
+        },
+        "reservation_cancelled": {
+          "label": "예약 취소",
+          "hint": "예약이 취소될 때"
+        },
+        "before_checkin": { "label": "체크인 전", "hint": "게스트 도착 전" },
+        "checkin_day": { "label": "체크인 당일", "hint": "게스트 도착일" },
+        "after_checkout": { "label": "체크아웃 후", "hint": "게스트 퇴실 후" }
       },
       "trigger": "트리거",
       "triggerType": "트리거 유형",
       "triggerGroups": {
-        "general": "일반 / CRM",
-        "reservations": "PMS / 예약",
+        "crm": "CRM",
+        "whatsapp": "WHATSAPP",
+        "reservations": "예약",
         "stayTiming": "숙박 일정"
       },
       "pms": {
-        "filtersHint": "선택적 예약 필터입니다. 비워 두면 모든 값과 일치합니다.",
         "properties": "숙소",
+        "allProperties": "모든 숙소",
+        "propertyCount": "숙소 {count}개",
+        "unknownProperty": "사용할 수 없는 숙소",
         "noProperties": "이 워크스페이스에 연결된 PMS 숙소가 없습니다.",
-        "allPropertiesHint": "숙소를 선택하지 않으면 모든 숙소가 포함됩니다.",
-        "channels": "예약 채널 코드",
-        "channelsHint": "쉼표로 구분된 표준 채널 코드입니다. 예: direct, booking_com.",
+        "channels": "예약 채널",
+        "anyChannel": "모든 채널",
+        "channelCount": "채널 {count}개",
         "reservationStatuses": "예약 상태",
-        "reservationStatusesHint": "쉼표로 구분된 표준 예약 상태입니다.",
-        "daysBefore": "체크인 전 일수",
-        "daysAfter": "체크아웃 후 일수",
-        "localTime": "현지 시간",
-        "timezone": "IANA 시간대",
-        "timezonePlaceholder": "Asia/Seoul"
+        "anyStatus": "모든 상태",
+        "statusCount": "상태 {count}개",
+        "when": "시점",
+        "days": "{count}일",
+        "beforeCheckin": "체크인 전",
+        "afterCheckout": "체크아웃 후",
+        "sendAt": "전송 시간",
+        "chooseSendTime": "이 자동화를 실행할 시간을 선택하세요.",
+        "propertyLocalTime": "각 숙소의 현지 시간을 사용합니다.",
+        "missingPropertyTimezone": "이 일정을 활성화하기 전에 RZ PMS에서 {properties}의 현지 시간대를 설정하세요.",
+        "addCondition": "조건 추가",
+        "removeCondition": "삭제"
+      },
+      "whatsapp": {
+        "sendFrom": "WhatsApp 발신 계정",
+        "chooseConnection": "WhatsApp 계정 선택",
+        "connectionRequired": "이 자동화에 WhatsApp 작업이 있지만 연결된 WhatsApp 계정이 없습니다.",
+        "connectionRequiredShort": "WhatsApp 연결 필요",
+        "connectBeforeUsing": "이 작업을 사용하려면 WhatsApp 계정을 연결하세요.",
+        "checkingConnection": "WhatsApp 연결 확인 중…",
+        "reconnectOrChoose": "WhatsApp을 다시 연결하거나 다른 연결을 선택하세요.",
+        "connect": "WhatsApp 연결"
       },
       "keywords": "키워드",
       "keywordsHint": "쉼표로 구분된 목록 (예: hello, help, buy)",

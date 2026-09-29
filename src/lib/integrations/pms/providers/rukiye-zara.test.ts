@@ -61,6 +61,7 @@ describe('Rukiye Zara PMS provider adapter', () => {
         name: 'Villa',
         status: 'active',
         active: true,
+        timezone: 'Asia/Kolkata',
         address: { city: 'Goa' },
         currency: 'INR',
         created_at: null,
@@ -68,6 +69,7 @@ describe('Rukiye Zara PMS provider adapter', () => {
     }).getProperty({ integration: {} as never, externalPropertyId: '22008' });
     expect(property.externalId).toBe('22008');
     expect(property.address.city).toBe('Goa');
+    expect(property.timezone).toBe('Asia/Kolkata');
   });
 
   it('normalizes numeric property ids and reservation fields', async () => {

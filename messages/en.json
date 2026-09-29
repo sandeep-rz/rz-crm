@@ -1036,37 +1036,74 @@
           "hint": "When a tag is added to a contact"
         },
         "time_based": {
-          "label": "Time-Based",
-          "hint": "On a recurring schedule"
+          "label": "Legacy Schedule",
+          "hint": "For existing recurring automations"
         },
-        "reservation_confirmed": { "label": "Reservation Confirmed", "hint": "After a canonical PMS reservation is confirmed" },
-        "reservation_updated": { "label": "Reservation Updated", "hint": "After a canonical PMS reservation is updated" },
-        "reservation_cancelled": { "label": "Reservation Cancelled", "hint": "After a canonical PMS reservation is cancelled" },
-        "before_checkin": { "label": "Before Check-in", "hint": "A configured number of days before check-in" },
-        "checkin_day": { "label": "Check-in Day", "hint": "On the check-in date at a configured local time" },
-        "after_checkout": { "label": "After Checkout", "hint": "A configured number of days after checkout" }
+        "reservation_confirmed": {
+          "label": "Reservation Confirmed",
+          "hint": "When a reservation is confirmed"
+        },
+        "reservation_updated": {
+          "label": "Reservation Updated",
+          "hint": "When reservation details change"
+        },
+        "reservation_cancelled": {
+          "label": "Reservation Cancelled",
+          "hint": "When a reservation is cancelled"
+        },
+        "before_checkin": {
+          "label": "Before Check-in",
+          "hint": "Before the guest arrives"
+        },
+        "checkin_day": {
+          "label": "Check-in Day",
+          "hint": "On the guest's arrival day"
+        },
+        "after_checkout": {
+          "label": "After Checkout",
+          "hint": "After the guest leaves"
+        }
       },
       "trigger": "Trigger",
       "triggerType": "Trigger type",
       "triggerGroups": {
-        "general": "GENERAL / CRM",
-        "reservations": "PMS / RESERVATIONS",
+        "crm": "CRM",
+        "whatsapp": "WHATSAPP",
+        "reservations": "RESERVATIONS",
         "stayTiming": "STAY TIMING"
       },
       "pms": {
-        "filtersHint": "Optional reservation filters. Leave a filter empty to match every value.",
         "properties": "Properties",
+        "allProperties": "All properties",
+        "propertyCount": "{count, plural, one {# property} other {# properties}}",
+        "unknownProperty": "Unavailable property",
         "noProperties": "No PMS properties are connected to this workspace.",
-        "allPropertiesHint": "No property selected means all properties.",
-        "channels": "Booking channel codes",
-        "channelsHint": "Comma-separated canonical channel codes, for example direct, booking_com.",
-        "reservationStatuses": "Reservation statuses",
-        "reservationStatusesHint": "Comma-separated canonical reservation statuses.",
-        "daysBefore": "Days before check-in",
-        "daysAfter": "Days after checkout",
-        "localTime": "Local time",
-        "timezone": "IANA timezone",
-        "timezonePlaceholder": "Asia/Kolkata"
+        "channels": "Booking channel",
+        "anyChannel": "Any channel",
+        "channelCount": "{count, plural, one {# channel} other {# channels}}",
+        "reservationStatuses": "Reservation status",
+        "anyStatus": "Any status",
+        "statusCount": "{count, plural, one {# status} other {# statuses}}",
+        "when": "When",
+        "days": "{count, plural, one {day} other {days}}",
+        "beforeCheckin": "before check-in",
+        "afterCheckout": "after checkout",
+        "sendAt": "Send at",
+        "chooseSendTime": "Choose when this automation should run.",
+        "propertyLocalTime": "Uses each property's local time.",
+        "missingPropertyTimezone": "Set the local timezone for {properties} in RZ PMS before activating this schedule.",
+        "addCondition": "Add condition",
+        "removeCondition": "Remove"
+      },
+      "whatsapp": {
+        "sendFrom": "Send WhatsApp from",
+        "chooseConnection": "Choose a WhatsApp account",
+        "connectionRequired": "This automation has a WhatsApp action, but no connected WhatsApp account is available.",
+        "connectionRequiredShort": "WhatsApp connection required",
+        "connectBeforeUsing": "Connect a WhatsApp account before using these actions.",
+        "checkingConnection": "Checking WhatsApp connection…",
+        "reconnectOrChoose": "Reconnect WhatsApp or choose another connection.",
+        "connect": "Connect WhatsApp"
       },
       "keywords": "Keywords",
       "keywordsHint": "Comma-separated list (e.g. hello, help, buy)",

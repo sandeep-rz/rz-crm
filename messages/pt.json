@@ -1036,37 +1036,74 @@
           "hint": "Quando uma tag é adicionada a um contato"
         },
         "time_based": {
-          "label": "Por horário",
-          "hint": "Em um agendamento recorrente"
+          "label": "Agendamento legado",
+          "hint": "Para automações recorrentes existentes"
         },
-        "reservation_confirmed": { "label": "Reserva confirmada", "hint": "Após a confirmação de uma reserva canônica do PMS" },
-        "reservation_updated": { "label": "Reserva atualizada", "hint": "Após a atualização de uma reserva canônica do PMS" },
-        "reservation_cancelled": { "label": "Reserva cancelada", "hint": "Após o cancelamento de uma reserva canônica do PMS" },
-        "before_checkin": { "label": "Antes do check-in", "hint": "Dias configurados antes do check-in" },
-        "checkin_day": { "label": "Dia do check-in", "hint": "Na data do check-in em um horário local configurado" },
-        "after_checkout": { "label": "Após o checkout", "hint": "Dias configurados após o checkout" }
+        "reservation_confirmed": {
+          "label": "Reserva confirmada",
+          "hint": "Quando uma reserva é confirmada"
+        },
+        "reservation_updated": {
+          "label": "Reserva atualizada",
+          "hint": "Quando os dados da reserva mudam"
+        },
+        "reservation_cancelled": {
+          "label": "Reserva cancelada",
+          "hint": "Quando uma reserva é cancelada"
+        },
+        "before_checkin": {
+          "label": "Antes do check-in",
+          "hint": "Antes da chegada do hóspede"
+        },
+        "checkin_day": {
+          "label": "Dia do check-in",
+          "hint": "No dia da chegada do hóspede"
+        },
+        "after_checkout": {
+          "label": "Após o checkout",
+          "hint": "Depois da saída do hóspede"
+        }
       },
       "trigger": "Gatilho",
       "triggerType": "Tipo de gatilho",
       "triggerGroups": {
-        "general": "GERAL / CRM",
-        "reservations": "PMS / RESERVAS",
+        "crm": "CRM",
+        "whatsapp": "WHATSAPP",
+        "reservations": "RESERVAS",
         "stayTiming": "HORÁRIOS DA ESTADIA"
       },
       "pms": {
-        "filtersHint": "Filtros opcionais da reserva. Deixe um filtro vazio para incluir todos os valores.",
         "properties": "Propriedades",
+        "allProperties": "Todas as propriedades",
+        "propertyCount": "{count, plural, one {# propriedade} other {# propriedades}}",
+        "unknownProperty": "Propriedade indisponível",
         "noProperties": "Nenhuma propriedade PMS está conectada a este espaço de trabalho.",
-        "allPropertiesHint": "Sem propriedades selecionadas, todas serão incluídas.",
-        "channels": "Códigos do canal de reserva",
-        "channelsHint": "Códigos canônicos separados por vírgulas, por exemplo direct, booking_com.",
+        "channels": "Canal da reserva",
+        "anyChannel": "Qualquer canal",
+        "channelCount": "{count, plural, one {# canal} other {# canais}}",
         "reservationStatuses": "Status da reserva",
-        "reservationStatusesHint": "Status canônicos da reserva separados por vírgulas.",
-        "daysBefore": "Dias antes do check-in",
-        "daysAfter": "Dias após o checkout",
-        "localTime": "Horário local",
-        "timezone": "Fuso horário IANA",
-        "timezonePlaceholder": "America/Sao_Paulo"
+        "anyStatus": "Qualquer status",
+        "statusCount": "{count, plural, one {# status} other {# status}}",
+        "when": "Quando",
+        "days": "{count, plural, one {dia} other {dias}}",
+        "beforeCheckin": "antes do check-in",
+        "afterCheckout": "após o checkout",
+        "sendAt": "Enviar às",
+        "chooseSendTime": "Escolha quando esta automação deve ser executada.",
+        "propertyLocalTime": "Usa o horário local de cada propriedade.",
+        "missingPropertyTimezone": "Defina o fuso horário local de {properties} no RZ PMS antes de ativar este agendamento.",
+        "addCondition": "Adicionar condição",
+        "removeCondition": "Remover"
+      },
+      "whatsapp": {
+        "sendFrom": "Enviar WhatsApp de",
+        "chooseConnection": "Escolha uma conta do WhatsApp",
+        "connectionRequired": "Esta automação tem uma ação do WhatsApp, mas não há nenhuma conta conectada disponível.",
+        "connectionRequiredShort": "Conexão do WhatsApp necessária",
+        "connectBeforeUsing": "Conecte uma conta do WhatsApp antes de usar estas ações.",
+        "checkingConnection": "Verificando a conexão do WhatsApp…",
+        "reconnectOrChoose": "Reconecte o WhatsApp ou escolha outra conexão.",
+        "connect": "Conectar WhatsApp"
       },
       "keywords": "Palavras-chave",
       "keywordsHint": "Lista separada por vírgulas (ex.: olá, ajuda, comprar)",

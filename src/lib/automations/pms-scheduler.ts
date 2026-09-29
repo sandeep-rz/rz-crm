@@ -12,6 +12,7 @@ import {
 } from './pms-context';
 import {
   PMS_EVENT_AUTOMATION_TRIGGERS,
+  isValidIanaTimeZone,
   PMS_LOCAL_TIME_PATTERN,
   PMS_OFFSET_DAYS_MAX,
   PMS_OFFSET_DAYS_MIN,
@@ -56,7 +57,11 @@ export interface PmsAutomationScheduleStore {
   loadActiveAutomations(accountId: string): Promise<Automation[]>;
   insertEventJob(job: AutomationTriggerJobInsert): Promise<boolean>;
   upsertScheduledJob(job: AutomationTriggerJobInsert): Promise<boolean>;
-  cancelFutureJobs(reservationId: string, accountId: string, reason: string): Promise<number>;
+  cancelFutureJobs(
+    reservationId: string,
+    accountId: string,
+    reason: string
+  ): Promise<number>;
 }
 
 export class PmsAutomationScheduleError extends Error {
@@ -69,12 +74,14 @@ export class PmsAutomationScheduleError extends Error {
 function listIncludes(values: unknown, candidate: string | null): boolean {
   if (!Array.isArray(values) || values.length === 0) return true;
   if (!candidate) return false;
-  return values.some((value) => String(value).toLowerCase() === candidate.toLowerCase());
+  return values.some(
+    (value) => String(value).toLowerCase() === candidate.toLowerCase()
+  );
 }
 
 export function matchesReservationTriggerConfig(
   config: PmsTriggerConfig,
-  reservation: ReservationAutomationContext,
+  reservation: ReservationAutomationContext
 ): boolean {
   const propertyIds = Array.isArray(config.property_ids)
     ? config.property_ids
@@ -86,15 +93,6 @@ export function matchesReservationTriggerConfig(
     listIncludes(config.channels, reservation.channel) &&
     listIncludes(config.reservation_statuses, reservation.reservation_status)
   );
-}
-
-function validTimeZone(timeZone: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function formatParts(date: Date, timeZone: string) {
@@ -115,18 +113,18 @@ function formatParts(date: Date, timeZone: string) {
 export function localDateTimeToUtc(
   localDate: string,
   localTime: string,
-  timeZone: string,
+  timeZone: string
 ): string | null {
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(localDate);
   const timeMatch = PMS_LOCAL_TIME_PATTERN.exec(localTime);
-  if (!dateMatch || !timeMatch || !validTimeZone(timeZone)) return null;
+  if (!dateMatch || !timeMatch || !isValidIanaTimeZone(timeZone)) return null;
   const target = Date.UTC(
     Number(dateMatch[1]),
     Number(dateMatch[2]) - 1,
     Number(dateMatch[3]),
     Number(timeMatch[1]),
     Number(timeMatch[2]),
-    0,
+    0
   );
   let instant = target;
   for (let i = 0; i < 3; i += 1) {
@@ -137,7 +135,7 @@ export function localDateTimeToUtc(
       Number(p.day),
       Number(p.hour),
       Number(p.minute),
-      Number(p.second),
+      Number(p.second)
     );
     instant -= represented - target;
   }
@@ -157,7 +155,9 @@ export function localDateTimeToUtc(
 function addDays(date: string, days: number): string | null {
   const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!parsed) return null;
-  const instant = new Date(Date.UTC(Number(parsed[1]), Number(parsed[2]) - 1, Number(parsed[3])));
+  const instant = new Date(
+    Date.UTC(Number(parsed[1]), Number(parsed[2]) - 1, Number(parsed[3]))
+  );
   instant.setUTCDate(instant.getUTCDate() + days);
   return instant.toISOString().slice(0, 10);
 }
@@ -165,9 +165,13 @@ function addDays(date: string, days: number): string | null {
 export function computeScheduledRunAt(
   triggerType: PmsAutomationTriggerType,
   config: PmsTriggerConfig,
-  reservation: ReservationAutomationContext,
+  reservation: ReservationAutomationContext
 ): string | null {
-  if (!config.timezone || !config.local_time) return null;
+  // Existing saved definitions may carry an explicit timezone. Preserve that
+  // behavior, while new definitions resolve the business timezone from the
+  // reservation's canonical PMS property.
+  const timezone = config.timezone ?? reservation.property_timezone;
+  if (!timezone || !config.local_time) return null;
   let localDate: string | null = null;
   if (triggerType === 'before_checkin' && reservation.check_in) {
     const days = Number(config.days_before ?? 0);
@@ -175,7 +179,8 @@ export function computeScheduledRunAt(
       !Number.isInteger(days) ||
       days < PMS_OFFSET_DAYS_MIN ||
       days > PMS_OFFSET_DAYS_MAX
-    ) return null;
+    )
+      return null;
     localDate = addDays(reservation.check_in, -days);
   } else if (triggerType === 'checkin_day' && reservation.check_in) {
     localDate = reservation.check_in;
@@ -185,11 +190,12 @@ export function computeScheduledRunAt(
       !Number.isInteger(days) ||
       days < PMS_OFFSET_DAYS_MIN ||
       days > PMS_OFFSET_DAYS_MAX
-    ) return null;
+    )
+      return null;
     localDate = addDays(reservation.check_out, days);
   }
   return localDate
-    ? localDateTimeToUtc(localDate, config.local_time, config.timezone)
+    ? localDateTimeToUtc(localDate, config.local_time, timezone)
     : null;
 }
 
@@ -216,14 +222,17 @@ export async function schedulePmsAutomationsAfterSync(
     store?: PmsAutomationScheduleStore;
     loadContext?: typeof loadReservationAutomationContext;
     now?: () => Date;
-  } = {},
+  } = {}
 ): Promise<PmsAutomationScheduleResult> {
   const store = dependencies.store ?? new SupabasePmsAutomationScheduleStore();
-  const loadContext = dependencies.loadContext ?? loadReservationAutomationContext;
+  const loadContext =
+    dependencies.loadContext ?? loadReservationAutomationContext;
   const now = dependencies.now ?? (() => new Date());
   const reservation = await loadContext(input.reservationId, input.accountId);
   if (!reservation || reservation.account_id !== input.accountId) {
-    throw new PmsAutomationScheduleError('Canonical reservation context is invalid.');
+    throw new PmsAutomationScheduleError(
+      'Canonical reservation context is invalid.'
+    );
   }
 
   const automations = await store.loadActiveAutomations(input.accountId);
@@ -236,7 +245,13 @@ export async function schedulePmsAutomationsAfterSync(
 
   for (const automation of automations) {
     if (automation.trigger_type !== eventTrigger) continue;
-    if (!matchesReservationTriggerConfig(automation.trigger_config as PmsTriggerConfig, reservation)) continue;
+    if (
+      !matchesReservationTriggerConfig(
+        automation.trigger_config as PmsTriggerConfig,
+        reservation
+      )
+    )
+      continue;
     const inserted = await store.insertEventJob({
       account_id: input.accountId,
       automation_id: automation.id,
@@ -258,21 +273,31 @@ export async function schedulePmsAutomationsAfterSync(
     result.cancelledJobs = await store.cancelFutureJobs(
       reservation.reservation_id,
       input.accountId,
-      'Reservation cancelled.',
+      'Reservation cancelled.'
     );
     return result;
   }
 
   for (const automation of automations) {
-    if (!PMS_SCHEDULED_AUTOMATION_TRIGGERS.includes(
-      automation.trigger_type as (typeof PMS_SCHEDULED_AUTOMATION_TRIGGERS)[number],
-    )) continue;
-    if (!matchesReservationTriggerConfig(automation.trigger_config as PmsTriggerConfig, reservation)) continue;
-    const scheduledTrigger = automation.trigger_type as PmsAutomationTriggerType;
+    if (
+      !PMS_SCHEDULED_AUTOMATION_TRIGGERS.includes(
+        automation.trigger_type as (typeof PMS_SCHEDULED_AUTOMATION_TRIGGERS)[number]
+      )
+    )
+      continue;
+    if (
+      !matchesReservationTriggerConfig(
+        automation.trigger_config as PmsTriggerConfig,
+        reservation
+      )
+    )
+      continue;
+    const scheduledTrigger =
+      automation.trigger_type as PmsAutomationTriggerType;
     const runAt = computeScheduledRunAt(
       scheduledTrigger,
       automation.trigger_config as PmsTriggerConfig,
-      reservation,
+      reservation
     );
     if (!runAt || Date.parse(runAt) <= now().getTime()) continue;
     const inserted = await store.upsertScheduledJob({
@@ -308,7 +333,8 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
       .eq('account_id', accountId)
       .eq('is_active', true)
       .in('trigger_type', triggers);
-    if (error) throw new PmsAutomationScheduleError('Automation lookup failed.');
+    if (error)
+      throw new PmsAutomationScheduleError('Automation lookup failed.');
     return (data ?? []) as Automation[];
   }
 
@@ -317,7 +343,8 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
       .from('automation_trigger_jobs')
       .upsert(job, { onConflict: 'occurrence_key', ignoreDuplicates: true })
       .select('id');
-    if (error) throw new PmsAutomationScheduleError('Event occurrence insert failed.');
+    if (error)
+      throw new PmsAutomationScheduleError('Event occurrence insert failed.');
     return (data?.length ?? 0) > 0;
   }
 
@@ -327,7 +354,10 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
       .select('id, status')
       .eq('occurrence_key', job.occurrence_key)
       .maybeSingle();
-    if (findError) throw new PmsAutomationScheduleError('Scheduled occurrence lookup failed.');
+    if (findError)
+      throw new PmsAutomationScheduleError(
+        'Scheduled occurrence lookup failed.'
+      );
     if (existing?.status === 'completed') return false;
     if (existing) {
       const { error } = await this.db
@@ -343,18 +373,24 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
         })
         .eq('id', existing.id)
         .eq('account_id', job.account_id);
-      if (error) throw new PmsAutomationScheduleError('Scheduled occurrence update failed.');
+      if (error)
+        throw new PmsAutomationScheduleError(
+          'Scheduled occurrence update failed.'
+        );
       return true;
     }
     const { error } = await this.db.from('automation_trigger_jobs').insert(job);
-    if (error) throw new PmsAutomationScheduleError('Scheduled occurrence insert failed.');
+    if (error)
+      throw new PmsAutomationScheduleError(
+        'Scheduled occurrence insert failed.'
+      );
     return true;
   }
 
   async cancelFutureJobs(
     reservationId: string,
     accountId: string,
-    reason: string,
+    reason: string
   ): Promise<number> {
     const { data, error } = await this.db
       .from('automation_trigger_jobs')
@@ -371,7 +407,10 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
       .in('trigger_type', PMS_SCHEDULED_AUTOMATION_TRIGGERS)
       .in('status', ['scheduled', 'failed'])
       .select('id');
-    if (error) throw new PmsAutomationScheduleError('Future occurrence cancellation failed.');
+    if (error)
+      throw new PmsAutomationScheduleError(
+        'Future occurrence cancellation failed.'
+      );
     return data?.length ?? 0;
   }
 }

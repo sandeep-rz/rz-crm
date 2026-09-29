@@ -1,81 +1,91 @@
-import { NextResponse } from 'next/server'
-import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account'
-import { supabaseAdmin } from '@/lib/automations/admin-client'
+import { NextResponse } from 'next/server';
+import {
+  getCurrentAccount,
+  requireRole,
+  toErrorResponse,
+} from '@/lib/auth/account';
+import { supabaseAdmin } from '@/lib/automations/admin-client';
 import {
   resolveWhatsAppConnection,
   WhatsAppConnectionError,
-} from '@/lib/whatsapp/connection-resolver'
+} from '@/lib/whatsapp/connection-resolver';
 import {
   loadStepsTree,
   replaceSteps,
   type BuilderStepInput,
-} from '@/lib/automations/steps-tree'
+} from '@/lib/automations/steps-tree';
 import {
   validateStepsForActivation,
   validateTriggerForActivation,
+  validatePmsPropertyTimezonesForActivation,
   validateWhatsAppConnectionForActivation,
-} from '@/lib/automations/validate'
+} from '@/lib/automations/validate';
 
 export async function GET(
   _request: Request,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params
-  let account
+  const { id } = await params;
+  let account;
   try {
-    account = await getCurrentAccount()
+    account = await getCurrentAccount();
   } catch (err) {
-    return toErrorResponse(err)
+    return toErrorResponse(err);
   }
 
-  const admin = supabaseAdmin()
+  const admin = supabaseAdmin();
   const { data: automation, error } = await admin
     .from('automations')
     .select('*')
     .eq('id', id)
     .eq('account_id', account.accountId)
-    .maybeSingle()
+    .maybeSingle();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!automation) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (error)
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!automation)
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const steps = await loadStepsTree(id)
-  return NextResponse.json({ automation, steps })
+  const steps = await loadStepsTree(id);
+  return NextResponse.json({ automation, steps });
 }
 
 export async function PATCH(
   request: Request,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params
+  const { id } = await params;
 
   // Editing an automation is a write — the RLS automations_update policy
   // requires `agent`, but this route mutates via the service-role client
   // which bypasses RLS, so enforce the role here.
-  let account
+  let account;
   try {
-    account = await requireRole('agent')
+    account = await requireRole('agent');
   } catch (err) {
-    return toErrorResponse(err)
+    return toErrorResponse(err);
   }
 
-  const body = await request.json().catch(() => null)
-  if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  const body = await request.json().catch(() => null);
+  if (!body)
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
 
-  const admin = supabaseAdmin()
+  const admin = supabaseAdmin();
 
   // Ownership check before we touch anything. Load the fields we need
   // to compute the post-patch "effective" state for validation.
   const { data: existing } = await admin
     .from('automations')
-    .select('id, user_id, account_id, whatsapp_config_id, is_active, trigger_type, trigger_config')
+    .select(
+      'id, user_id, account_id, whatsapp_config_id, is_active, trigger_type, trigger_config'
+    )
     .eq('id', id)
-    .maybeSingle()
+    .maybeSingle();
   if (!existing || existing.account_id !== account.accountId) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const update: Record<string, unknown> = {}
+  const update: Record<string, unknown> = {};
   for (const k of [
     'name',
     'description',
@@ -83,11 +93,11 @@ export async function PATCH(
     'trigger_config',
     'is_active',
   ] as const) {
-    if (k in body) update[k] = body[k]
+    if (k in body) update[k] = body[k];
   }
   if ('whatsapp_config_id' in body) {
     if (body.whatsapp_config_id === null) {
-      update.whatsapp_config_id = null
+      update.whatsapp_config_id = null;
     } else if (
       typeof body.whatsapp_config_id === 'string' &&
       body.whatsapp_config_id.trim() !== ''
@@ -96,16 +106,22 @@ export async function PATCH(
         const connection = await resolveWhatsAppConnection(admin, {
           accountId: existing.account_id,
           connectionId: body.whatsapp_config_id,
-        })
-        update.whatsapp_config_id = connection.id
+        });
+        update.whatsapp_config_id = connection.id;
       } catch (error) {
         if (error instanceof WhatsAppConnectionError) {
-          return NextResponse.json({ error: error.message }, { status: error.status })
+          return NextResponse.json(
+            { error: error.message },
+            { status: error.status }
+          );
         }
-        throw error
+        throw error;
       }
     } else {
-      return NextResponse.json({ error: 'whatsapp_config_id must be a non-empty string or null' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'whatsapp_config_id must be a non-empty string or null' },
+        { status: 400 }
+      );
     }
   }
 
@@ -114,29 +130,47 @@ export async function PATCH(
   // merged configuration first. Activation is the natural gate — drafts
   // are still allowed to be incomplete.
   const willBeActive =
-    typeof update.is_active === 'boolean' ? update.is_active : existing.is_active
+    typeof update.is_active === 'boolean'
+      ? update.is_active
+      : existing.is_active;
   if (willBeActive) {
-    const mergedTriggerType = (update.trigger_type ?? existing.trigger_type) as string
-    const mergedTriggerConfig = update.trigger_config ?? existing.trigger_config
+    const mergedTriggerType = (update.trigger_type ??
+      existing.trigger_type) as string;
+    const mergedTriggerConfig =
+      update.trigger_config ?? existing.trigger_config;
     const mergedSteps = Array.isArray(body.steps)
-      ? (body.steps as { step_type: string; step_config: Record<string, unknown> }[])
-      : await loadStepsTree(id)
-    const mergedWhatsappConfigId = 'whatsapp_config_id' in update
-      ? update.whatsapp_config_id as string | null
-      : existing.whatsapp_config_id as string | null
+      ? (body.steps as {
+          step_type: string;
+          step_config: Record<string, unknown>;
+        }[])
+      : await loadStepsTree(id);
+    const mergedWhatsappConfigId =
+      'whatsapp_config_id' in update
+        ? (update.whatsapp_config_id as string | null)
+        : (existing.whatsapp_config_id as string | null);
+    const timezoneIssues = await validatePmsPropertyTimezonesForActivation(
+      admin,
+      existing.account_id,
+      mergedTriggerType,
+      mergedTriggerConfig
+    );
     const issues = [
       ...validateTriggerForActivation(mergedTriggerType, mergedTriggerConfig),
+      ...timezoneIssues,
       ...validateStepsForActivation(mergedSteps),
-      ...validateWhatsAppConnectionForActivation(mergedSteps, mergedWhatsappConfigId),
-    ]
+      ...validateWhatsAppConnectionForActivation(
+        mergedSteps,
+        mergedWhatsappConfigId
+      ),
+    ];
     if (issues.length > 0) {
       return NextResponse.json(
         {
           error: 'Cannot keep automation active with invalid configuration',
           issues,
         },
-        { status: 400 },
-      )
+        { status: 400 }
+      );
     }
   }
 
@@ -145,38 +179,40 @@ export async function PATCH(
       .from('automations')
       .update(update)
       .eq('id', id)
-      .eq('account_id', account.accountId)
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
+      .eq('account_id', account.accountId);
+    if (updErr)
+      return NextResponse.json({ error: updErr.message }, { status: 500 });
   }
 
   if (Array.isArray(body.steps)) {
-    const err = await replaceSteps(id, body.steps as BuilderStepInput[])
-    if (err) return NextResponse.json({ error: err }, { status: 500 })
+    const err = await replaceSteps(id, body.steps as BuilderStepInput[]);
+    if (err) return NextResponse.json({ error: err }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(
   _request: Request,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params
+  const { id } = await params;
 
   // Deleting an automation is a write — enforce `agent` (the service-role
   // client below bypasses the agent-gated automations_delete RLS).
-  let account
+  let account;
   try {
-    account = await requireRole('agent')
+    account = await requireRole('agent');
   } catch (err) {
-    return toErrorResponse(err)
+    return toErrorResponse(err);
   }
 
   const { error } = await supabaseAdmin()
     .from('automations')
     .delete()
     .eq('id', id)
-    .eq('account_id', account.accountId)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true })
+    .eq('account_id', account.accountId);
+  if (error)
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
 }

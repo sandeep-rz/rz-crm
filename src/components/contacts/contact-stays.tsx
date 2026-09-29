@@ -92,29 +92,32 @@ export function ContactStaySummary({
     .sort()[0];
 
   return (
-    <section aria-labelledby="stay-summary-title" className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <p
-          id="stay-summary-title"
-          className="text-muted-foreground text-[11px] font-semibold tracking-[0.16em] uppercase"
-        >
-          {t('staysTab.summary')}
-        </p>
-        <div className="text-muted-foreground flex items-center gap-3 text-xs">
-          <span className="text-foreground font-medium">
+    <section aria-labelledby="stay-summary-title" className="space-y-3.5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p
+            id="stay-summary-title"
+            className="text-muted-foreground text-[11px] font-semibold tracking-[0.16em] uppercase"
+          >
+            {t('staysTab.summary')}
+          </p>
+          {firstCheckIn && (
+            <p className="text-muted-foreground mt-1 text-xs">
+              {t('staysTab.guestSince', {
+                date: formatStayMonth(firstCheckIn, locale),
+              })}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="bg-muted/70 text-foreground rounded-full px-2.5 py-1 font-medium">
             {t('staysTab.stayCount', { count: stays.length })}
           </span>
-          <span>{t('staysTab.upcomingCount', { count: upcomingCount })}</span>
+          <span className="bg-primary-soft text-primary rounded-full px-2.5 py-1 font-medium">
+            {t('staysTab.upcomingCount', { count: upcomingCount })}
+          </span>
         </div>
       </div>
-
-      {firstCheckIn && (
-        <p className="text-muted-foreground text-xs">
-          {t('staysTab.guestSince', {
-            date: formatStayMonth(firstCheckIn, locale),
-          })}
-        </p>
-      )}
 
       {relevant && (
         <StayRow
@@ -129,7 +132,7 @@ export function ContactStaySummary({
         type="button"
         variant="link"
         size="sm"
-        className="h-auto px-0 text-xs"
+        className="h-auto px-0 text-sm font-medium"
         onClick={onViewAll}
       >
         {t('staysTab.viewAll', { count: stays.length })}
@@ -231,9 +234,9 @@ function StayRow({
       type="button"
       onClick={onOpen}
       className={cn(
-        'group hover:bg-muted/55 focus-visible:ring-ring flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset',
+        'group hover:bg-muted/55 focus-visible:ring-ring flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset sm:px-4',
         emphasized &&
-          'border-primary/15 bg-primary-soft/70 rounded-xl border py-3.5'
+          'border-primary/15 bg-card rounded-2xl border py-4 shadow-sm ring-1 ring-primary/5 sm:px-5 sm:py-5'
       )}
     >
       <div className="min-w-0 flex-1">
@@ -304,7 +307,7 @@ export function ReservationDetailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="border-border bg-popover w-full gap-0 overflow-y-auto p-0 sm:max-w-lg"
+        className="border-border bg-popover w-full max-w-none gap-0 overflow-y-auto p-0 sm:w-[min(92vw,42rem)] sm:max-w-none"
       >
         {loading ? (
           <div className="flex h-full items-center justify-center">

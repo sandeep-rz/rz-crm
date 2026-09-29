@@ -484,7 +484,7 @@ export function ContactDetailView({
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="right"
-        className="bg-popover border-border text-popover-foreground w-full p-0 sm:max-w-2xl"
+        className="bg-popover border-border text-popover-foreground w-full max-w-none gap-0 p-0 sm:w-[min(94vw,56rem)] sm:max-w-none lg:w-[min(88vw,58rem)]"
       >
         {loading || !contact ? (
           <div className="flex items-center justify-center h-full">
@@ -493,7 +493,7 @@ export function ContactDetailView({
         ) : (
           <div className="flex flex-col h-full">
             {/* Header */}
-            <SheetHeader className="border-b border-border/50 px-4 py-3.5 pr-14">
+            <SheetHeader className="border-b border-border/60 px-4 py-4 pr-14 sm:px-6 sm:py-5 sm:pr-16">
               <div className="flex items-start gap-3">
                 <Avatar className="size-10 shrink-0 border border-border bg-muted">
                   <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
@@ -564,13 +564,13 @@ export function ContactDetailView({
                   </span>
                 </button>
               )}
-              <div className="mt-2.5">
+              <div className="mt-3 flex">
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => setTemplatePickerOpen(true)}
                   disabled={sendingTemplate}
-                  className="h-8"
+                  className="h-9 w-full sm:w-auto"
                 >
                   {sendingTemplate ? (
                     <Loader2 className="size-4 animate-spin" />
@@ -590,7 +590,7 @@ export function ContactDetailView({
             >
               <TabsList
                 variant="line"
-                className="border-border h-11 w-full max-w-none justify-start gap-1 overflow-x-auto border-b bg-transparent px-4 group-data-horizontal/tabs:h-11 [scrollbar-width:none]"
+                className="border-border h-12 w-full max-w-none justify-start gap-1 overflow-x-auto border-b bg-popover px-4 sm:px-6 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 <TabsTrigger value="details" className={tabTriggerClass}>
                   {t('tabs.details')}
@@ -615,16 +615,35 @@ export function ContactDetailView({
               </TabsList>
 
               {/* Details Tab */}
-              <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-3">
-                <div className="space-y-4">
-                  <ContactStaySummary
-                    stays={stays}
-                    loading={loadingStays}
-                    error={staysError}
-                    onOpenStay={openReservation}
-                    onViewAll={() => setActiveTab('stays')}
-                  />
-                  {stays.length > 0 && <div className="h-px bg-border/60" />}
+              <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+                <div
+                  className={`grid items-start gap-5 ${
+                    loadingStays || staysError || stays.length > 0
+                      ? 'lg:grid-cols-[minmax(0,1.08fr)_minmax(20rem,0.92fr)] lg:gap-6'
+                      : ''
+                  }`}
+                >
+                  {(loadingStays || staysError || stays.length > 0) && (
+                    <div className="min-w-0 lg:sticky lg:top-0">
+                      <ContactStaySummary
+                        stays={stays}
+                        loading={loadingStays}
+                        error={staysError}
+                        onOpenStay={openReservation}
+                        onViewAll={() => setActiveTab('stays')}
+                      />
+                    </div>
+                  )}
+                  <section className="min-w-0 rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
+                    <div className="mb-4">
+                      <p className="text-sm font-semibold text-foreground">
+                        {t('contactInfo')}
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t('contactDetailsDesc')}
+                      </p>
+                    </div>
+                    <div className="space-y-3.5">
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">{t('name')}</Label>
                     <Input
@@ -672,6 +691,8 @@ export function ContactDetailView({
                     )}
                     {t('saveChangesBtn')}
                   </Button>
+                    </div>
+                  </section>
                 </div>
               </TabsContent>
 
@@ -883,7 +904,7 @@ export function ContactDetailView({
                 )}
               </TabsContent>
 
-              <TabsContent value="stays" className="flex-1 overflow-y-auto px-4 py-3">
+              <TabsContent value="stays" className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
                 {loadingStays ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="size-5 animate-spin text-primary" aria-label={t('staysTab.loading')} />

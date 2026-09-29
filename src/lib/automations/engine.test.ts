@@ -13,6 +13,17 @@ const h = vi.hoisted(() => ({
     upsertCalls: [] as { table: string; payload: unknown }[],
     logInserts: [] as Record<string, unknown>[],
     logUpdates: [] as Record<string, unknown>[],
+    whatsappConnection: {
+      id: "connection-primary",
+      account_id: "acct-1",
+      user_id: "u1",
+      display_name: "Main",
+      is_primary: true,
+      phone_number_id: "pn-1",
+      waba_id: "waba-1",
+      access_token: "encrypted-token",
+      status: "connected",
+    } as Record<string, unknown> | null,
   },
 }));
 
@@ -48,17 +59,7 @@ vi.mock("./admin-client", () => {
     if (table === "automations") return { data: state.automations, error: null };
     if (table === "whatsapp_config") {
       return {
-        data: {
-          id: "connection-primary",
-          account_id: ACCOUNT,
-          user_id: "u1",
-          display_name: "Main",
-          is_primary: true,
-          phone_number_id: "pn-1",
-          waba_id: "waba-1",
-          access_token: "encrypted-token",
-          status: "connected",
-        },
+        data: state.whatsappConnection,
         error: null,
       };
     }
@@ -145,6 +146,17 @@ beforeEach(() => {
   h.state.upsertCalls = [];
   h.state.logInserts = [];
   h.state.logUpdates = [];
+  h.state.whatsappConnection = {
+    id: "connection-primary",
+    account_id: ACCOUNT,
+    user_id: "u1",
+    display_name: "Main",
+    is_primary: true,
+    phone_number_id: "pn-1",
+    waba_id: "waba-1",
+    access_token: "encrypted-token",
+    status: "connected",
+  };
 });
 
 describe("runAutomationsForTrigger — tenant isolation", () => {
@@ -198,6 +210,22 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
     const filters = h.state.updateCalls[0].filters;
     expect(filters).toContainEqual(["eq", "id", "c1"]);
     expect(filters).toContainEqual(["eq", "account_id", ACCOUNT]);
+  });
+
+  it("executes a CRM-only automation without resolving WhatsApp", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [updateStep()];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+
+    expect(h.state.updateCalls).toHaveLength(1);
+    expect(h.state.fromCalls).not.toContain("whatsapp_config");
   });
 });
 
@@ -473,6 +501,43 @@ describe("tag_added — conversation policy", () => {
     expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
       status: "failed",
       error_message: "tag_added automation cannot send: contact has no existing conversation",
+    }));
+  });
+});
+
+describe("WhatsApp send execution dependency", () => {
+  it("fails defensively before sending when no WhatsApp connection exists", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.whatsappConnection = null;
+    h.state.automations = [{
+      id: "a1",
+      account_id: ACCOUNT,
+      user_id: "u1",
+      name: "send without config",
+      trigger_type: "new_contact_created",
+      trigger_config: {},
+      is_active: true,
+      whatsapp_config_id: null,
+    }];
+    h.state.steps = [{
+      id: "s1",
+      automation_id: "a1",
+      step_type: "send_message",
+      position: 0,
+      parent_step_id: null,
+      step_config: { text: "Hello" },
+    }];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_contact_created",
+      contactId: "c1",
+      context: {},
+    });
+
+    expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
+      status: "failed",
+      error_message: "No primary WhatsApp connection is configured for this workspace",
     }));
   });
 });

@@ -1,12 +1,16 @@
 import { NextResponse } from 'next/server'
 import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
-import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
+import {
+  resolveWhatsAppConnection,
+  WhatsAppConnectionError,
+} from '@/lib/whatsapp/connection-resolver'
 import { getTemplate } from '@/lib/automations/templates'
 import { insertSteps, type BuilderStepInput } from '@/lib/automations/steps-tree'
 import {
   validateStepsForActivation,
   validateTriggerForActivation,
+  validateWhatsAppConnectionForActivation,
 } from '@/lib/automations/validate'
 
 export async function GET() {
@@ -67,6 +71,26 @@ export async function POST(request: Request) {
     )
   }
 
+  const admin = supabaseAdmin()
+  let whatsappConfigId: string | null = null
+  if (body.whatsapp_config_id !== undefined && body.whatsapp_config_id !== null) {
+    if (typeof body.whatsapp_config_id !== 'string' || body.whatsapp_config_id.trim() === '') {
+      return NextResponse.json({ error: 'whatsapp_config_id must be a non-empty string or null' }, { status: 400 })
+    }
+    try {
+      const connection = await resolveWhatsAppConnection(admin, {
+        accountId,
+        connectionId: body.whatsapp_config_id,
+      })
+      whatsappConfigId = connection.id
+    } catch (error) {
+      if (error instanceof WhatsAppConnectionError) {
+        return NextResponse.json({ error: error.message }, { status: error.status })
+      }
+      throw error
+    }
+  }
+
   // Block activation of a clearly broken automation up-front instead of
   // letting every trigger silently produce a failed log row. Drafts
   // (is_active=false) are allowed to be incomplete so users can save
@@ -77,6 +101,10 @@ export async function POST(request: Request) {
       ...validateStepsForActivation(
         (effectiveSteps ?? []) as unknown as { step_type: string; step_config: Record<string, unknown> }[],
       ),
+      ...validateWhatsAppConnectionForActivation(
+        (effectiveSteps ?? []) as unknown as { step_type: string; step_config: Record<string, unknown> }[],
+        whatsappConfigId,
+      ),
     ]
     if (issues.length > 0) {
       return NextResponse.json(
@@ -86,17 +114,12 @@ export async function POST(request: Request) {
     }
   }
 
-  const admin = supabaseAdmin()
-  const connection = await resolveWhatsAppConnection(admin, {
-    accountId,
-    connectionId: typeof body.whatsapp_config_id === 'string' ? body.whatsapp_config_id : null,
-  })
   const { data: automation, error: insertErr } = await admin
     .from('automations')
     .insert({
       user_id: account.userId,
       account_id: accountId,
-      whatsapp_config_id: connection.id,
+      whatsapp_config_id: whatsappConfigId,
       name: effectiveName,
       description: effectiveDescription ?? null,
       trigger_type: effectiveTriggerType,

@@ -53,6 +53,7 @@ import type {
   InteractiveMessagePayload,
   KeywordMatchTriggerConfig,
   MessageTemplate,
+  PmsTriggerConfig,
   Tag as TagRecord,
 } from "@/types"
 import {
@@ -72,6 +73,14 @@ import {
   type StepPath,
 } from "@/lib/automations/builder-tree"
 import { cn } from "@/lib/utils"
+import {
+  isPmsAutomationTrigger,
+  isPmsScheduledAutomationTrigger,
+  PMS_EVENT_AUTOMATION_TRIGGERS,
+  PMS_OFFSET_DAYS_MAX,
+  PMS_OFFSET_DAYS_MIN,
+  PMS_SCHEDULED_AUTOMATION_TRIGGERS,
+} from "@/lib/automations/pms-trigger-schema"
 
 // ------------------------------------------------------------
 // Types (builder-local — mirror the flattened rows we POST)
@@ -139,15 +148,48 @@ const ADDABLE_STEPS: AutomationStepType[] = [
   "close_conversation",
 ]
 
-const TRIGGER_OPTIONS: { value: AutomationTriggerType }[] = [
-  { value: "new_message_received" },
-  { value: "first_inbound_message" },
-  { value: "keyword_match" },
-  { value: "interactive_reply" },
-  { value: "new_contact_created" },
-  { value: "conversation_assigned" },
-  { value: "tag_added" },
-  { value: "time_based" },
+const WHATSAPP_SEND_STEP_TYPES = new Set<AutomationStepType>([
+  "send_message",
+  "send_template",
+  "send_buttons",
+  "send_list",
+])
+
+function builderStepsRequireWhatsApp(steps: BuilderStep[]): boolean {
+  return steps.some((step) => {
+    if (WHATSAPP_SEND_STEP_TYPES.has(step.step_type)) return true
+    if (step.step_type !== "condition" || !step.branches) return false
+    return (
+      builderStepsRequireWhatsApp(step.branches.yes) ||
+      builderStepsRequireWhatsApp(step.branches.no)
+    )
+  })
+}
+
+const GENERAL_TRIGGER_OPTIONS: AutomationTriggerType[] = [
+  "new_message_received",
+  "first_inbound_message",
+  "keyword_match",
+  "interactive_reply",
+  "new_contact_created",
+  "conversation_assigned",
+  "tag_added",
+  "time_based",
+]
+
+const ALL_TRIGGER_OPTIONS: AutomationTriggerType[] = [
+  ...GENERAL_TRIGGER_OPTIONS,
+  ...PMS_EVENT_AUTOMATION_TRIGGERS,
+  ...PMS_SCHEDULED_AUTOMATION_TRIGGERS,
+]
+
+const TRIGGER_GROUPS: Array<{
+  label: "general" | "reservations" | "stayTiming"
+  options: readonly AutomationTriggerType[]
+}> = [
+  { label: "general", options: GENERAL_TRIGGER_OPTIONS },
+  { label: "reservations", options: PMS_EVENT_AUTOMATION_TRIGGERS },
+  { label: "stayTiming", options: PMS_SCHEDULED_AUTOMATION_TRIGGERS },
 ]
 
 function cid(): string {
@@ -220,6 +262,7 @@ interface AutomationResources {
   customFields: CustomField[]
   pipelines: PipelineOption[]
   stages: PipelineStageOption[]
+  pmsProperties: PmsPropertyOption[]
 }
 
 interface PipelineOption {
@@ -234,6 +277,12 @@ interface PipelineStageOption {
   position: number
 }
 
+interface PmsPropertyOption {
+  id: string
+  name: string | null
+  status: string
+}
+
 const ResourcesContext = createContext<AutomationResources>({
   tags: [],
   members: [],
@@ -241,19 +290,29 @@ const ResourcesContext = createContext<AutomationResources>({
   customFields: [],
   pipelines: [],
   stages: [],
+  pmsProperties: [],
 })
 
 function useResources(): AutomationResources {
   return useContext(ResourcesContext)
 }
 
-function ResourcesProvider({ children, whatsappConfigId }: { children: ReactNode; whatsappConfigId?: string | null }) {
+function ResourcesProvider({
+  children,
+  whatsappConfigId,
+  loadPmsProperties,
+}: {
+  children: ReactNode
+  whatsappConfigId?: string | null
+  loadPmsProperties: boolean
+}) {
   const [tags, setTags] = useState<TagRecord[]>([])
   const [members, setMembers] = useState<AccountMember[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [customFields, setCustomFields] = useState<CustomField[]>([])
   const [pipelines, setPipelines] = useState<PipelineOption[]>([])
   const [stages, setStages] = useState<PipelineStageOption[]>([])
+  const [pmsProperties, setPmsProperties] = useState<PmsPropertyOption[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -269,7 +328,20 @@ function ResourcesProvider({ children, whatsappConfigId }: { children: ReactNode
         .select("*")
         .eq("status", "APPROVED")
       if (whatsappConfigId) templateQuery = templateQuery.eq('whatsapp_config_id', whatsappConfigId)
-      const [tagsRes, templatesRes, customFieldsRes, pipelinesRes, stagesRes] =
+      const pmsPropertiesPromise = loadPmsProperties
+        ? supabase
+            .from("pms_properties")
+            .select("id, name, status")
+            .order("name")
+        : Promise.resolve({ data: [] as PmsPropertyOption[] })
+      const [
+        tagsRes,
+        templatesRes,
+        customFieldsRes,
+        pipelinesRes,
+        stagesRes,
+        pmsPropertiesRes,
+      ] =
         await Promise.all([
           supabase.from("tags").select("*").order("name"),
           templateQuery.order("name"),
@@ -279,6 +351,7 @@ function ResourcesProvider({ children, whatsappConfigId }: { children: ReactNode
             .from("pipeline_stages")
             .select("id, name, pipeline_id, position")
             .order("position"),
+          pmsPropertiesPromise,
         ])
       if (cancelled) return
       setTags((tagsRes.data as TagRecord[] | null) ?? [])
@@ -286,6 +359,7 @@ function ResourcesProvider({ children, whatsappConfigId }: { children: ReactNode
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? [])
       setPipelines((pipelinesRes.data as PipelineOption[] | null) ?? [])
       setStages((stagesRes.data as PipelineStageOption[] | null) ?? [])
+      setPmsProperties((pmsPropertiesRes.data as PmsPropertyOption[] | null) ?? [])
     })()
 
     // Members go through the API so we inherit its email-visibility
@@ -305,11 +379,11 @@ function ResourcesProvider({ children, whatsappConfigId }: { children: ReactNode
     return () => {
       cancelled = true
     }
-  }, [whatsappConfigId])
+  }, [loadPmsProperties, whatsappConfigId])
 
   return (
     <ResourcesContext.Provider
-      value={{ tags, members, templates, customFields, pipelines, stages }}
+      value={{ tags, members, templates, customFields, pipelines, stages, pmsProperties }}
     >
       {children}
     </ResourcesContext.Provider>
@@ -642,21 +716,24 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
   const [saving, setSaving] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [connections, setConnections] = useState<Array<{ id: string; display_name: string; is_primary: boolean }>>([])
+  const requiresWhatsApp = builderStepsRequireWhatsApp(state.steps)
+  const usesPmsTrigger = isPmsAutomationTrigger(state.trigger_type)
 
   useEffect(() => {
+    if (!requiresWhatsApp) return
+    let cancelled = false
     fetch('/api/whatsapp/config')
       .then((res) => res.json())
       .then((body) => {
+        if (cancelled) return
         const rows = body.connections ?? []
         setConnections(rows)
-        if (!state.whatsapp_config_id) {
-          patchTop('whatsapp_config_id', rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ?? rows[0]?.id ?? null)
-        }
       })
       .catch(() => undefined)
-    // Initial connection is chosen once; changing it remains user-controlled.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    return () => {
+      cancelled = true
+    }
+  }, [requiresWhatsApp])
 
   function patchTop<K extends keyof BuilderInitial>(key: K, value: BuilderInitial[K]) {
     setState((s) => ({ ...s, [key]: value }))
@@ -757,13 +834,14 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
           placeholder={t("untitled")}
           className="min-w-0 flex-1 rounded-md bg-transparent px-2 py-1 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:bg-muted focus:outline-none sm:text-base"
         />
-        {connections.length > 1 && (
+        {requiresWhatsApp && connections.length > 0 && (
           <select
             value={state.whatsapp_config_id ?? ''}
-            onChange={(event) => patchTop('whatsapp_config_id', event.target.value)}
+            onChange={(event) => patchTop('whatsapp_config_id', event.target.value || null)}
             className="h-9 max-w-36 rounded-md border border-border bg-background px-2 text-xs sm:max-w-44"
             aria-label="WhatsApp connection"
           >
+            <option value="">{t("templates.select")}</option>
             {connections.map((connection) => (
               <option key={connection.id} value={connection.id}>{connection.display_name}</option>
             ))}
@@ -791,11 +869,20 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
       <div className="relative flex-1 overflow-y-auto">
         <div className="absolute inset-0 bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none" />
         <div className="relative mx-auto flex max-w-2xl flex-col items-center gap-0 px-4 py-10">
-          <ResourcesProvider whatsappConfigId={state.whatsapp_config_id}>
+          <ResourcesProvider
+            whatsappConfigId={state.whatsapp_config_id}
+            loadPmsProperties={usesPmsTrigger}
+          >
             <TriggerCard
               type={state.trigger_type}
               config={state.trigger_config}
-              onTypeChange={(tVal) => patchTop("trigger_type", tVal)}
+              onTypeChange={(tVal) => {
+                setState((current) => ({
+                  ...current,
+                  trigger_type: tVal,
+                  trigger_config: {},
+                }))
+              }}
               onConfigChange={(c) => patchTop("trigger_config", c)}
               t={t}
             />
@@ -869,15 +956,19 @@ function TriggerCard({
                 onChange={(e) => onTypeChange(e.target.value as AutomationTriggerType)}
                 className="w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none"
               >
-                {!TRIGGER_OPTIONS.some((option) => option.value === type) && (
+                {!ALL_TRIGGER_OPTIONS.includes(type) && (
                   <option value={type} disabled>
                     {t(`triggers.${type}.label`)}
                   </option>
                 )}
-                {TRIGGER_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {t(`triggers.${o.value}.label`)}
-                  </option>
+                {TRIGGER_GROUPS.map((group) => (
+                  <optgroup key={group.label} label={t(`triggerGroups.${group.label}`)}>
+                    {group.options.map((option) => (
+                      <option key={option} value={option}>
+                        {t(`triggers.${option}.label`)}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
               <p className="mt-1 text-[11px] text-muted-foreground">
@@ -924,10 +1015,196 @@ function TriggerCard({
                 </p>
               </div>
             )}
+            {isPmsAutomationTrigger(type) && (
+              <PmsTriggerConfigFields
+                key={type}
+                type={type}
+                config={config as PmsTriggerConfig}
+                onChange={onConfigChange}
+                t={t}
+              />
+            )}
           </div>
         )}
       </div>
     </div>
+  )
+}
+
+function PmsTriggerConfigFields({
+  type,
+  config,
+  onChange,
+  t,
+}: {
+  type: AutomationTriggerType
+  config: PmsTriggerConfig
+  onChange: (config: Record<string, unknown>) => void
+  t: ReturnType<typeof useTranslations>
+}) {
+  const { pmsProperties } = useResources()
+  const selectedPropertyIds = Array.isArray(config.property_ids)
+    ? config.property_ids
+    : config.property_id
+      ? [config.property_id]
+      : []
+  const propertyOptions = [
+    ...pmsProperties,
+    ...selectedPropertyIds
+      .filter((id) => !pmsProperties.some((property) => property.id === id))
+      .map((id) => ({ id, name: null, status: "unknown" })),
+  ]
+
+  function setOptionalField(key: keyof PmsTriggerConfig, value: unknown) {
+    const next = { ...config } as Record<string, unknown>
+    if (
+      value === undefined ||
+      value === null ||
+      value === "" ||
+      (Array.isArray(value) && value.length === 0)
+    ) {
+      delete next[key]
+    } else {
+      next[key] = value
+    }
+    if (key === "property_ids") delete next.property_id
+    onChange(next)
+  }
+
+  function toggleProperty(propertyId: string, checked: boolean) {
+    const next = checked
+      ? [...new Set([...selectedPropertyIds, propertyId])]
+      : selectedPropertyIds.filter((id) => id !== propertyId)
+    setOptionalField("property_ids", next)
+  }
+
+  return (
+    <div className="space-y-3 border-t border-border/70 pt-3">
+      <p className="text-[11px] text-muted-foreground">{t("pms.filtersHint")}</p>
+      <FieldBlock label={t("pms.properties")}>
+        {propertyOptions.length === 0 ? (
+          <p className="rounded-md border border-dashed border-border px-2 py-2 text-[11px] text-muted-foreground">
+            {t("pms.noProperties")}
+          </p>
+        ) : (
+          <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-border bg-muted p-2">
+            {propertyOptions.map((property) => (
+              <label key={property.id} className="flex items-center gap-2 text-xs text-foreground">
+                <input
+                  type="checkbox"
+                  checked={selectedPropertyIds.includes(property.id)}
+                  onChange={(event) => toggleProperty(property.id, event.target.checked)}
+                  className="h-3.5 w-3.5 accent-primary"
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  {property.name || property.id}
+                  {property.status !== "active" ? ` (${property.status})` : ""}
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+        <p className="mt-1 text-[11px] text-muted-foreground">{t("pms.allPropertiesHint")}</p>
+      </FieldBlock>
+
+      <CommaSeparatedConfigField
+        label={t("pms.channels")}
+        hint={t("pms.channelsHint")}
+        value={config.channels}
+        onChange={(value) => setOptionalField("channels", value)}
+      />
+      <CommaSeparatedConfigField
+        label={t("pms.reservationStatuses")}
+        hint={t("pms.reservationStatusesHint")}
+        value={config.reservation_statuses}
+        onChange={(value) => setOptionalField("reservation_statuses", value)}
+      />
+
+      {isPmsScheduledAutomationTrigger(type) && (
+        <>
+          {type === "before_checkin" && (
+            <FieldBlock label={t("pms.daysBefore")}>
+              <Input
+                type="number"
+                min={PMS_OFFSET_DAYS_MIN}
+                max={PMS_OFFSET_DAYS_MAX}
+                step={1}
+                value={config.days_before ?? ""}
+                onChange={(event) => setOptionalField(
+                  "days_before",
+                  event.target.value === "" ? undefined : Number(event.target.value),
+                )}
+                className="bg-muted text-foreground"
+              />
+            </FieldBlock>
+          )}
+          {type === "after_checkout" && (
+            <FieldBlock label={t("pms.daysAfter")}>
+              <Input
+                type="number"
+                min={PMS_OFFSET_DAYS_MIN}
+                max={PMS_OFFSET_DAYS_MAX}
+                step={1}
+                value={config.days_after ?? ""}
+                onChange={(event) => setOptionalField(
+                  "days_after",
+                  event.target.value === "" ? undefined : Number(event.target.value),
+                )}
+                className="bg-muted text-foreground"
+              />
+            </FieldBlock>
+          )}
+          <FieldBlock label={t("pms.localTime")}>
+            <Input
+              type="time"
+              value={config.local_time ?? ""}
+              onChange={(event) => setOptionalField("local_time", event.target.value)}
+              className="bg-muted text-foreground"
+            />
+          </FieldBlock>
+          <FieldBlock label={t("pms.timezone")}>
+            <Input
+              value={config.timezone ?? ""}
+              placeholder={t("pms.timezonePlaceholder")}
+              onChange={(event) => setOptionalField("timezone", event.target.value)}
+              className="bg-muted text-foreground"
+            />
+          </FieldBlock>
+        </>
+      )}
+    </div>
+  )
+}
+
+function CommaSeparatedConfigField({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string
+  hint: string
+  value?: string[]
+  onChange: (value: string[]) => void
+}) {
+  const [text, setText] = useState(() => (value ?? []).join(", "))
+  return (
+    <FieldBlock label={label}>
+      <Input
+        value={text}
+        onChange={(event) => {
+          setText(event.target.value)
+          onChange(
+            event.target.value
+            .split(",")
+            .map((entry) => entry.trim())
+            .filter(Boolean),
+          )
+        }}
+        className="bg-muted text-foreground"
+      />
+      <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p>
+    </FieldBlock>
   )
 }
 

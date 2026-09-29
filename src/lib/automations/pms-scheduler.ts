@@ -10,24 +10,24 @@ import {
   loadReservationAutomationContext,
   type ReservationAutomationContext,
 } from './pms-context';
+import {
+  PMS_EVENT_AUTOMATION_TRIGGERS,
+  PMS_LOCAL_TIME_PATTERN,
+  PMS_OFFSET_DAYS_MAX,
+  PMS_OFFSET_DAYS_MIN,
+  PMS_SCHEDULED_AUTOMATION_TRIGGERS,
+} from './pms-trigger-schema';
+
+export {
+  PMS_EVENT_AUTOMATION_TRIGGERS,
+  PMS_SCHEDULED_AUTOMATION_TRIGGERS,
+} from './pms-trigger-schema';
 
 const EVENT_TRIGGER_BY_PMS_EVENT = {
   'reservation.confirmed': 'reservation_confirmed',
   'reservation.updated': 'reservation_updated',
   'reservation.cancelled': 'reservation_cancelled',
 } as const satisfies Record<string, PmsAutomationTriggerType>;
-
-export const PMS_EVENT_AUTOMATION_TRIGGERS = [
-  'reservation_confirmed',
-  'reservation_updated',
-  'reservation_cancelled',
-] as const;
-
-export const PMS_SCHEDULED_AUTOMATION_TRIGGERS = [
-  'before_checkin',
-  'checkin_day',
-  'after_checkout',
-] as const;
 
 export interface PmsAutomationScheduleInput {
   accountId: string;
@@ -118,7 +118,7 @@ export function localDateTimeToUtc(
   timeZone: string,
 ): string | null {
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(localDate);
-  const timeMatch = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(localTime);
+  const timeMatch = PMS_LOCAL_TIME_PATTERN.exec(localTime);
   if (!dateMatch || !timeMatch || !validTimeZone(timeZone)) return null;
   const target = Date.UTC(
     Number(dateMatch[1]),
@@ -171,13 +171,21 @@ export function computeScheduledRunAt(
   let localDate: string | null = null;
   if (triggerType === 'before_checkin' && reservation.check_in) {
     const days = Number(config.days_before ?? 0);
-    if (!Number.isInteger(days) || days < 0 || days > 365) return null;
+    if (
+      !Number.isInteger(days) ||
+      days < PMS_OFFSET_DAYS_MIN ||
+      days > PMS_OFFSET_DAYS_MAX
+    ) return null;
     localDate = addDays(reservation.check_in, -days);
   } else if (triggerType === 'checkin_day' && reservation.check_in) {
     localDate = reservation.check_in;
   } else if (triggerType === 'after_checkout' && reservation.check_out) {
     const days = Number(config.days_after ?? 0);
-    if (!Number.isInteger(days) || days < 0 || days > 365) return null;
+    if (
+      !Number.isInteger(days) ||
+      days < PMS_OFFSET_DAYS_MIN ||
+      days > PMS_OFFSET_DAYS_MAX
+    ) return null;
     localDate = addDays(reservation.check_out, days);
   }
   return localDate

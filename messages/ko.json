@@ -1048,6 +1048,26 @@
       },
       "trigger": "트리거",
       "triggerType": "트리거 유형",
+      "triggerGroups": {
+        "general": "일반 / CRM",
+        "reservations": "PMS / 예약",
+        "stayTiming": "숙박 일정"
+      },
+      "pms": {
+        "filtersHint": "선택적 예약 필터입니다. 비워 두면 모든 값과 일치합니다.",
+        "properties": "숙소",
+        "noProperties": "이 워크스페이스에 연결된 PMS 숙소가 없습니다.",
+        "allPropertiesHint": "숙소를 선택하지 않으면 모든 숙소가 포함됩니다.",
+        "channels": "예약 채널 코드",
+        "channelsHint": "쉼표로 구분된 표준 채널 코드입니다. 예: direct, booking_com.",
+        "reservationStatuses": "예약 상태",
+        "reservationStatusesHint": "쉼표로 구분된 표준 예약 상태입니다.",
+        "daysBefore": "체크인 전 일수",
+        "daysAfter": "체크아웃 후 일수",
+        "localTime": "현지 시간",
+        "timezone": "IANA 시간대",
+        "timezonePlaceholder": "Asia/Seoul"
+      },
       "keywords": "키워드",
       "keywordsHint": "쉼표로 구분된 목록 (예: hello, help, buy)",
       "replyIds": "응답 ID",

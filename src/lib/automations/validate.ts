@@ -1,5 +1,13 @@
 import type { AutomationTriggerType } from '@/types'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
+import {
+  isPmsAutomationTrigger,
+  isPmsScheduledAutomationTrigger,
+  PMS_FILTER_CONFIG_FIELDS,
+  PMS_LOCAL_TIME_PATTERN,
+  PMS_OFFSET_DAYS_MAX,
+  PMS_OFFSET_DAYS_MIN,
+} from './pms-trigger-schema'
 
 // ------------------------------------------------------------
 // Pre-flight config validation for automations about to be activated.
@@ -27,6 +35,13 @@ interface StepLike {
   branches?: { yes?: StepLike[]; no?: StepLike[] }
 }
 
+const WHATSAPP_SEND_STEP_TYPES = new Set([
+  'send_message',
+  'send_template',
+  'send_buttons',
+  'send_list',
+])
+
 export function validateStepsForActivation(steps: StepLike[]): ValidationIssue[] {
   const issues: ValidationIssue[] = []
   if (!Array.isArray(steps) || steps.length === 0) {
@@ -38,6 +53,36 @@ export function validateStepsForActivation(steps: StepLike[]): ValidationIssue[]
   }
   walk(steps, '', issues)
   return issues
+}
+
+/**
+ * WhatsApp is an action dependency, not an automation-wide dependency.
+ * Conditions may contain send actions in either branch, so inspect the full
+ * tree before allowing activation without a selected connection.
+ */
+export function stepsRequireWhatsAppConnection(steps: StepLike[]): boolean {
+  if (!Array.isArray(steps)) return false
+  return steps.some((step) => {
+    if (WHATSAPP_SEND_STEP_TYPES.has(step.step_type)) return true
+    if (step.step_type !== 'condition' || !step.branches) return false
+    return (
+      stepsRequireWhatsAppConnection(step.branches.yes ?? []) ||
+      stepsRequireWhatsAppConnection(step.branches.no ?? [])
+    )
+  })
+}
+
+export function validateWhatsAppConnectionForActivation(
+  steps: StepLike[],
+  whatsappConfigId: string | null | undefined,
+): ValidationIssue[] {
+  if (stepsRequireWhatsAppConnection(steps) && !nonEmpty(whatsappConfigId)) {
+    return [{
+      path: 'whatsapp_config_id',
+      message: 'a WhatsApp connection is required for WhatsApp send actions',
+    }]
+  }
+  return []
 }
 
 function walk(steps: StepLike[], prefix: string, issues: ValidationIssue[]): void {
@@ -203,15 +248,8 @@ export function validateTriggerForActivation(
         message: 'reply ids cannot be empty strings',
       })
     }
-  } else if (
-    triggerType === 'reservation_confirmed' ||
-    triggerType === 'reservation_updated' ||
-    triggerType === 'reservation_cancelled' ||
-    triggerType === 'before_checkin' ||
-    triggerType === 'checkin_day' ||
-    triggerType === 'after_checkout'
-  ) {
-    for (const field of ['property_ids', 'channels', 'reservation_statuses'] as const) {
+  } else if (isPmsAutomationTrigger(triggerType)) {
+    for (const field of PMS_FILTER_CONFIG_FIELDS) {
       if (
         cfg[field] != null &&
         (!Array.isArray(cfg[field]) ||
@@ -220,11 +258,7 @@ export function validateTriggerForActivation(
         issues.push({ path: `trigger.${field}`, message: `${field} must contain non-empty strings` })
       }
     }
-    if (
-      triggerType === 'before_checkin' ||
-      triggerType === 'checkin_day' ||
-      triggerType === 'after_checkout'
-    ) {
+    if (isPmsScheduledAutomationTrigger(triggerType)) {
       if (!nonEmpty(cfg.timezone)) {
         issues.push({ path: 'trigger.timezone', message: 'an explicit IANA timezone is required' })
       } else {
@@ -234,17 +268,25 @@ export function validateTriggerForActivation(
           issues.push({ path: 'trigger.timezone', message: 'timezone must be a valid IANA timezone' })
         }
       }
-      if (typeof cfg.local_time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(cfg.local_time)) {
+      if (typeof cfg.local_time !== 'string' || !PMS_LOCAL_TIME_PATTERN.test(cfg.local_time)) {
         issues.push({ path: 'trigger.local_time', message: 'local time must use HH:mm' })
       }
     }
     if (triggerType === 'before_checkin') {
-      if (!Number.isInteger(cfg.days_before) || Number(cfg.days_before) < 0 || Number(cfg.days_before) > 365) {
+      if (
+        !Number.isInteger(cfg.days_before) ||
+        Number(cfg.days_before) < PMS_OFFSET_DAYS_MIN ||
+        Number(cfg.days_before) > PMS_OFFSET_DAYS_MAX
+      ) {
         issues.push({ path: 'trigger.days_before', message: 'days before must be an integer from 0 to 365' })
       }
     }
     if (triggerType === 'after_checkout') {
-      if (!Number.isInteger(cfg.days_after) || Number(cfg.days_after) < 0 || Number(cfg.days_after) > 365) {
+      if (
+        !Number.isInteger(cfg.days_after) ||
+        Number(cfg.days_after) < PMS_OFFSET_DAYS_MIN ||
+        Number(cfg.days_after) > PMS_OFFSET_DAYS_MAX
+      ) {
         issues.push({ path: 'trigger.days_after', message: 'days after must be an integer from 0 to 365' })
       }
     }

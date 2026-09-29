@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server'
 import { getCurrentAccount, requireRole, toErrorResponse } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
-import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
+import {
+  resolveWhatsAppConnection,
+  WhatsAppConnectionError,
+} from '@/lib/whatsapp/connection-resolver'
 import {
   loadStepsTree,
   replaceSteps,
@@ -10,6 +13,7 @@ import {
 import {
   validateStepsForActivation,
   validateTriggerForActivation,
+  validateWhatsAppConnectionForActivation,
 } from '@/lib/automations/validate'
 
 export async function GET(
@@ -81,12 +85,28 @@ export async function PATCH(
   ] as const) {
     if (k in body) update[k] = body[k]
   }
-  if (typeof body.whatsapp_config_id === 'string') {
-    const connection = await resolveWhatsAppConnection(admin, {
-      accountId: existing.account_id,
-      connectionId: body.whatsapp_config_id,
-    })
-    update.whatsapp_config_id = connection.id
+  if ('whatsapp_config_id' in body) {
+    if (body.whatsapp_config_id === null) {
+      update.whatsapp_config_id = null
+    } else if (
+      typeof body.whatsapp_config_id === 'string' &&
+      body.whatsapp_config_id.trim() !== ''
+    ) {
+      try {
+        const connection = await resolveWhatsAppConnection(admin, {
+          accountId: existing.account_id,
+          connectionId: body.whatsapp_config_id,
+        })
+        update.whatsapp_config_id = connection.id
+      } catch (error) {
+        if (error instanceof WhatsAppConnectionError) {
+          return NextResponse.json({ error: error.message }, { status: error.status })
+        }
+        throw error
+      }
+    } else {
+      return NextResponse.json({ error: 'whatsapp_config_id must be a non-empty string or null' }, { status: 400 })
+    }
   }
 
   // If this PATCH leaves the automation active (either explicitly
@@ -101,9 +121,13 @@ export async function PATCH(
     const mergedSteps = Array.isArray(body.steps)
       ? (body.steps as { step_type: string; step_config: Record<string, unknown> }[])
       : await loadStepsTree(id)
+    const mergedWhatsappConfigId = 'whatsapp_config_id' in update
+      ? update.whatsapp_config_id as string | null
+      : existing.whatsapp_config_id as string | null
     const issues = [
       ...validateTriggerForActivation(mergedTriggerType, mergedTriggerConfig),
       ...validateStepsForActivation(mergedSteps),
+      ...validateWhatsAppConnectionForActivation(mergedSteps, mergedWhatsappConfigId),
     ]
     if (issues.length > 0) {
       return NextResponse.json(
@@ -121,6 +145,7 @@ export async function PATCH(
       .from('automations')
       .update(update)
       .eq('id', id)
+      .eq('account_id', account.accountId)
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
   }
 

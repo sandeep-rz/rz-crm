@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  stepsRequireWhatsAppConnection,
   validateStepsForActivation,
   validateTriggerForActivation,
+  validateWhatsAppConnectionForActivation,
 } from "./validate";
 
 describe("validateStepsForActivation", () => {
@@ -204,6 +206,39 @@ describe("validateStepsForActivation", () => {
       "steps[0].operand",
       "steps[0].subject",
     ]);
+  });
+});
+
+describe("WhatsApp connection activation dependency", () => {
+  const addTag = [{ step_type: "add_tag", step_config: { tag_id: "tag-1" } }];
+  const sendTemplate = [{
+    step_type: "send_template",
+    step_config: { template_name: "welcome" },
+  }];
+
+  it("allows CRM-only contact and PMS automations with no WhatsApp connection", () => {
+    expect(validateTriggerForActivation("new_contact_created", {})).toEqual([]);
+    expect(validateTriggerForActivation("reservation_confirmed", {})).toEqual([]);
+    expect(validateStepsForActivation(addTag)).toEqual([]);
+    expect(validateWhatsAppConnectionForActivation(addTag, null)).toEqual([]);
+  });
+
+  it("requires a connection for WhatsApp send actions, including nested branches", () => {
+    expect(validateWhatsAppConnectionForActivation(sendTemplate, null)).toEqual([{
+      path: "whatsapp_config_id",
+      message: "a WhatsApp connection is required for WhatsApp send actions",
+    }]);
+    expect(stepsRequireWhatsAppConnection([{
+      step_type: "condition",
+      step_config: { subject: "tag", operand: "vip" },
+      branches: { yes: sendTemplate, no: addTag },
+    }])).toBe(true);
+  });
+
+  it("allows a valid selected connection for send-template automations", () => {
+    expect(
+      validateWhatsAppConnectionForActivation(sendTemplate, "connection-1"),
+    ).toEqual([]);
   });
 });
 

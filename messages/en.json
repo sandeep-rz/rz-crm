@@ -1048,6 +1048,26 @@
       },
       "trigger": "Trigger",
       "triggerType": "Trigger type",
+      "triggerGroups": {
+        "general": "GENERAL / CRM",
+        "reservations": "PMS / RESERVATIONS",
+        "stayTiming": "STAY TIMING"
+      },
+      "pms": {
+        "filtersHint": "Optional reservation filters. Leave a filter empty to match every value.",
+        "properties": "Properties",
+        "noProperties": "No PMS properties are connected to this workspace.",
+        "allPropertiesHint": "No property selected means all properties.",
+        "channels": "Booking channel codes",
+        "channelsHint": "Comma-separated canonical channel codes, for example direct, booking_com.",
+        "reservationStatuses": "Reservation statuses",
+        "reservationStatusesHint": "Comma-separated canonical reservation statuses.",
+        "daysBefore": "Days before check-in",
+        "daysAfter": "Days after checkout",
+        "localTime": "Local time",
+        "timezone": "IANA timezone",
+        "timezonePlaceholder": "Asia/Kolkata"
+      },
       "keywords": "Keywords",
       "keywordsHint": "Comma-separated list (e.g. hello, help, buy)",
       "replyIds": "Reply IDs",

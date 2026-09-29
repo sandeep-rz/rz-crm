@@ -1048,6 +1048,26 @@
       },
       "trigger": "Gatilho",
       "triggerType": "Tipo de gatilho",
+      "triggerGroups": {
+        "general": "GERAL / CRM",
+        "reservations": "PMS / RESERVAS",
+        "stayTiming": "HORÁRIOS DA ESTADIA"
+      },
+      "pms": {
+        "filtersHint": "Filtros opcionais da reserva. Deixe um filtro vazio para incluir todos os valores.",
+        "properties": "Propriedades",
+        "noProperties": "Nenhuma propriedade PMS está conectada a este espaço de trabalho.",
+        "allPropertiesHint": "Sem propriedades selecionadas, todas serão incluídas.",
+        "channels": "Códigos do canal de reserva",
+        "channelsHint": "Códigos canônicos separados por vírgulas, por exemplo direct, booking_com.",
+        "reservationStatuses": "Status da reserva",
+        "reservationStatusesHint": "Status canônicos da reserva separados por vírgulas.",
+        "daysBefore": "Dias antes do check-in",
+        "daysAfter": "Dias após o checkout",
+        "localTime": "Horário local",
+        "timezone": "Fuso horário IANA",
+        "timezonePlaceholder": "America/Sao_Paulo"
+      },
       "keywords": "Palavras-chave",
       "keywordsHint": "Lista separada por vírgulas (ex.: olá, ajuda, comprar)",
       "replyIds": "IDs de resposta",

@@ -1048,6 +1048,26 @@
       },
       "trigger": "Disparador",
       "triggerType": "Tipo de disparador",
+      "triggerGroups": {
+        "general": "GENERAL / CRM",
+        "reservations": "PMS / RESERVAS",
+        "stayTiming": "HORARIOS DE ESTANCIA"
+      },
+      "pms": {
+        "filtersHint": "Filtros de reserva opcionales. Deja un filtro vacío para incluir todos los valores.",
+        "properties": "Propiedades",
+        "noProperties": "No hay propiedades PMS conectadas a este espacio de trabajo.",
+        "allPropertiesHint": "Sin propiedades seleccionadas se incluyen todas.",
+        "channels": "Códigos de canal de reserva",
+        "channelsHint": "Códigos de canal canónicos separados por comas, por ejemplo direct, booking_com.",
+        "reservationStatuses": "Estados de reserva",
+        "reservationStatusesHint": "Estados canónicos de reserva separados por comas.",
+        "daysBefore": "Días antes del check-in",
+        "daysAfter": "Días después del checkout",
+        "localTime": "Hora local",
+        "timezone": "Zona horaria IANA",
+        "timezonePlaceholder": "Europe/Madrid"
+      },
       "keywords": "Palabras clave",
       "keywordsHint": "Lista separada por comas (p. ej. hola, ayuda, comprar)",
       "replyIds": "IDs de respuesta",

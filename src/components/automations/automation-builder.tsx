@@ -47,6 +47,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -473,7 +474,7 @@ function ResourcesProvider({
 }
 
 const SELECT_CLASS =
-  'w-full rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none';
+  'w-full cursor-pointer rounded-md border border-border bg-muted px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none disabled:cursor-not-allowed';
 
 /** Tag dropdown by name + color, storing the tag's id. Falls back to a
  *  raw id input when no tags exist yet. */
@@ -973,7 +974,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         <button
           type="button"
           onClick={() => router.push('/automations')}
-          className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md transition-colors"
+          className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-9 w-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors"
           aria-label={t('backToAutomations')}
         >
           <ArrowLeft className="h-4 w-4" />
@@ -994,7 +995,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
               onChange={(event) =>
                 patchTop('whatsapp_config_id', event.target.value || null)
               }
-              className="border-border bg-background h-9 max-w-44 rounded-md border px-2 text-xs"
+              className="border-border bg-background h-9 max-w-44 cursor-pointer rounded-md border px-2 text-xs"
               aria-label={t('whatsapp.sendFrom')}
             >
               <option value="">{t('whatsapp.chooseConnection')}</option>
@@ -1017,7 +1018,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         <Button
           onClick={save}
           disabled={saving}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
+          className="bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer disabled:cursor-not-allowed"
         >
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           {isEditing ? t('save') : t('saveDraft')}
@@ -1034,7 +1035,7 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
             onChange={(event) =>
               patchTop('whatsapp_config_id', event.target.value || null)
             }
-            className="border-border bg-background h-9 min-w-0 flex-1 rounded-md border px-2"
+            className="border-border bg-background h-9 min-w-0 flex-1 cursor-pointer rounded-md border px-2"
           >
             <option value="">{t('whatsapp.chooseConnection')}</option>
             {usableConnections.map((connection) => (
@@ -1138,7 +1139,7 @@ function TriggerCard({
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex w-full items-center gap-3 px-4 py-3 text-left"
+          className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left"
         >
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-500/10 text-blue-400">
             <Zap className="h-4 w-4" />
@@ -1432,18 +1433,22 @@ function PmsTriggerConfigFields({
 
       {visibleConditions.size < 2 && (
         <DropdownMenu>
-          <DropdownMenuTrigger className="text-primary flex items-center gap-1.5 text-xs font-medium hover:underline">
+          <DropdownMenuTrigger className="text-primary flex cursor-pointer items-center gap-1.5 text-xs font-medium hover:underline">
             <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
             {t('pms.addCondition')}
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="min-w-52">
             {!visibleConditions.has('channels') && (
-              <DropdownMenuItem onClick={() => addCondition('channels')}>
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => addCondition('channels')}
+              >
                 {t('pms.channels')}
               </DropdownMenuItem>
             )}
             {!visibleConditions.has('reservation_statuses') && (
               <DropdownMenuItem
+                className="cursor-pointer"
                 onClick={() => addCondition('reservation_statuses')}
               >
                 {t('pms.reservationStatuses')}
@@ -1527,7 +1532,7 @@ function FriendlyMultiSelect({
       <DropdownMenuTrigger
         className={cn(
           SELECT_CLASS,
-          'flex items-center justify-between text-left'
+          'flex cursor-pointer items-center justify-between text-left'
         )}
       >
         <span className="truncate">{buttonLabel}</span>
@@ -1540,13 +1545,17 @@ function FriendlyMultiSelect({
         align="start"
         className="max-h-64 min-w-(--anchor-width)"
       >
-        <DropdownMenuItem onClick={() => onChange([])}>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          onClick={() => onChange([])}
+        >
           {emptyLabel}
         </DropdownMenuItem>
         {options.length > 0 && <DropdownMenuSeparator />}
         {options.map((option) => (
           <DropdownMenuCheckboxItem
             key={option.value}
+            className="cursor-pointer"
             checked={values.includes(option.value)}
             onCheckedChange={(checked) =>
               toggle(option.value, checked === true)
@@ -1580,7 +1589,7 @@ function OptionalPmsCondition({
         <button
           type="button"
           onClick={onRemove}
-          className="text-muted-foreground hover:text-foreground text-[11px] hover:underline"
+          className="text-muted-foreground hover:text-foreground cursor-pointer text-[11px] hover:underline"
           aria-label={`${removeLabel}: ${label}`}
         >
           {removeLabel}
@@ -1847,7 +1856,7 @@ function StepRenderer({
           <button
             type="button"
             onClick={() => props.setExpandedId(expanded ? null : step.cid)}
-            className="flex w-full items-center gap-3 px-4 py-3 text-left"
+            className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left"
           >
             <GripVertical
               className="text-muted-foreground h-4 w-4 flex-shrink-0"
@@ -1889,6 +1898,7 @@ function StepRenderer({
                   <Button
                     variant="ghost"
                     size="icon"
+                    className="cursor-pointer disabled:cursor-not-allowed"
                     disabled={index === 0}
                     aria-label={t('moveUp')}
                     onClick={() => props.moveStepAt(path, -1)}
@@ -1898,6 +1908,7 @@ function StepRenderer({
                   <Button
                     variant="ghost"
                     size="icon"
+                    className="cursor-pointer disabled:cursor-not-allowed"
                     disabled={index === total - 1}
                     aria-label={t('moveDown')}
                     onClick={() => props.moveStepAt(path, 1)}
@@ -1908,6 +1919,7 @@ function StepRenderer({
                 <Button
                   variant="destructive"
                   size="sm"
+                  className="cursor-pointer"
                   onClick={() => props.deleteStepAt(path)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -2001,7 +2013,7 @@ function AddButton({ onPick }: { onPick: (t: AutomationStepType) => void }) {
       <div className="bg-border h-4 w-[2px]" aria-hidden />
       <DropdownMenu>
         <DropdownMenuTrigger
-          className="border-border bg-background text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary data-[popup-open]:border-primary data-[popup-open]:bg-primary/20 data-[popup-open]:text-primary flex h-8 w-8 items-center justify-center rounded-full border-2 border-dashed transition-colors"
+          className="border-border bg-background text-muted-foreground hover:border-primary hover:bg-primary/10 hover:text-primary data-[popup-open]:border-primary data-[popup-open]:bg-primary/20 data-[popup-open]:text-primary flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border-2 border-dashed transition-colors"
           aria-label={t('addStep')}
         >
           <Plus className="h-4 w-4" />
@@ -2023,7 +2035,7 @@ function AddButton({ onPick }: { onPick: (t: AutomationStepType) => void }) {
                 disabled={disabled}
                 aria-disabled={disabled}
                 onClick={() => onPick(tp)}
-                className="items-start py-1.5"
+                className="cursor-pointer items-start py-1.5 data-disabled:cursor-not-allowed"
               >
                 <Icon className="h-4 w-4" />
                 <span className="flex min-w-0 flex-col">
@@ -2042,17 +2054,19 @@ function AddButton({ onPick }: { onPick: (t: AutomationStepType) => void }) {
           {!whatsappConnectionsLoading && !whatsappAvailable && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuLabel className="max-w-60 font-normal whitespace-normal">
-                {t('whatsapp.connectBeforeUsing')}
-              </DropdownMenuLabel>
-              <DropdownMenuItem>
-                <Link
-                  href="/settings?tab=whatsapp"
-                  className="text-primary w-full font-medium"
-                >
-                  {t('whatsapp.connect')}
-                </Link>
-              </DropdownMenuItem>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="max-w-60 font-normal whitespace-normal">
+                  {t('whatsapp.connectBeforeUsing')}
+                </DropdownMenuLabel>
+                <DropdownMenuItem className="cursor-pointer">
+                  <Link
+                    href="/settings?tab=whatsapp"
+                    className="text-primary w-full font-medium"
+                  >
+                    {t('whatsapp.connect')}
+                  </Link>
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
             </>
           )}
         </DropdownMenuContent>

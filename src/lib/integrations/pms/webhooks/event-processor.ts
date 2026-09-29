@@ -124,15 +124,18 @@ function safeFailure(error: unknown): {
       retryable: false,
     };
   }
+
   if (error instanceof PmsProviderError) {
     const retryable = ['rate_limited', 'upstream_temporary'].includes(
       error.code
     );
+
     return {
       message: `provider_${error.code}: PMS canonical reservation fetch failed.`,
       retryable,
     };
   }
+
   if (
     error instanceof PmsReservationSyncError ||
     error instanceof PmsWebhookEventStoreError
@@ -142,13 +145,19 @@ function safeFailure(error: unknown): {
       retryable: true,
     };
   }
-  return { message: 'PMS webhook event processing failed.', retryable: true };
+
+  return {
+    message: 'PMS webhook event processing failed.',
+    retryable: true,
+  };
 }
 
 function nextAttemptAt(attemptCount: number, now: Date): string | null {
   if (attemptCount >= PMS_WEBHOOK_EVENT_MAX_ATTEMPTS) return null;
+
   const delay =
     RETRY_DELAYS_MS[Math.min(attemptCount - 1, RETRY_DELAYS_MS.length - 1)];
+
   return new Date(now.getTime() + delay).toISOString();
 }
 
@@ -157,6 +166,7 @@ export async function processPmsWebhookEvent(
   dependencies: PmsWebhookEventDependencies = {}
 ): Promise<PmsWebhookEventResult> {
   const store = dependencies.store ?? new SupabasePmsWebhookEventStore();
+
   const now = dependencies.now ?? (() => new Date());
 
   if (!isSupportedRzPmsEvent(event.eventType)) {
@@ -165,7 +175,11 @@ export async function processPmsWebhookEvent(
       now().toISOString(),
       'Unsupported PMS webhook event type.'
     );
-    return { eventId: event.id, status: 'ignored' };
+
+    return {
+      eventId: event.id,
+      status: 'ignored',
+    };
   }
 
   try {
@@ -177,6 +191,7 @@ export async function processPmsWebhookEvent(
     }
 
     const context = await store.loadContext(event);
+
     if (
       !context ||
       context.integration.integrationId !== event.integrationId ||
@@ -195,6 +210,7 @@ export async function processPmsWebhookEvent(
     const provider = (dependencies.createProvider ?? createPmsProvider)(
       context.integration.provider
     );
+
     const reservation = await provider.getReservation({
       integration: context.integration,
       externalPropertyId: context.property.externalPropertyId,
@@ -214,43 +230,58 @@ export async function processPmsWebhookEvent(
     const syncResult = await syncPmsReservation(
       {
         accountId: event.accountId,
+
         integration: context.integration,
+
         property: {
           id: context.property.id,
           externalPropertyId: context.property.externalPropertyId,
         },
+
         reservation,
       },
+
       dependencies.reservationStore ?? new SupabasePmsReservationSyncStore()
     );
 
-    // This adapter is deliberately outside syncPmsReservation(): initial sync
-    // and reconciliation use the same projection function and must not emit
-    // historical guest-facing automation occurrences.
-    // Test/custom projection stores intentionally do not imply production
-    // scheduling. The real worker has no injected reservation store and uses
-    // the default durable adapter; unit tests can inject the adapter directly.
-    const scheduleAutomations = dependencies.scheduleAutomations ??
-      (dependencies.reservationStore ? null : schedulePmsAutomationsAfterSync);
-    if (scheduleAutomations) {
-      await scheduleAutomations({
-        accountId: event.accountId,
-        reservationId: syncResult.reservationId,
-        webhookEventId: event.id,
-        eventType: event.eventType as
-          | 'reservation.confirmed'
-          | 'reservation.updated'
-          | 'reservation.cancelled',
-      });
-    }
+    /**
+     * PMS automations are scheduled only after the canonical
+     * reservation has been successfully fetched and projected
+     * into CRM.
+     *
+     * Initial sync and reconciliation do not call this webhook
+     * processor, so they continue to avoid emitting historical
+     * guest-facing automation occurrences.
+     *
+     * Tests may inject scheduleAutomations when they need to
+     * observe or stub scheduling behavior.
+     */
+    const scheduleAutomations =
+      dependencies.scheduleAutomations ?? schedulePmsAutomationsAfterSync;
+
+    await scheduleAutomations({
+      accountId: event.accountId,
+      reservationId: syncResult.reservationId,
+      webhookEventId: event.id,
+      eventType: event.eventType as
+        | 'reservation.confirmed'
+        | 'reservation.updated'
+        | 'reservation.cancelled',
+    });
 
     await store.markProcessed(event, now().toISOString());
-    return { eventId: event.id, status: 'processed' };
+
+    return {
+      eventId: event.id,
+      status: 'processed',
+    };
   } catch (error) {
     const failure = safeFailure(error);
+
     const retryAt = failure.retryable
       ? nextAttemptAt(event.attemptCount, now())
       : null;
+
     const retryable = failure.retryable && retryAt !== null;
 
     try {
@@ -260,27 +291,40 @@ export async function processPmsWebhookEvent(
         nextAttemptAt: retryAt,
       });
     } catch {
-      // The lease will be recovered as stale. Never leak the original error or
-      // credentials through worker logs or responses.
+      // The lease will be recovered as stale.
+      // Never leak the original error or credentials
+      // through worker logs or responses.
     }
 
-    return { eventId: event.id, status: 'failed', retryable };
+    return {
+      eventId: event.id,
+      status: 'failed',
+      retryable,
+    };
   }
 }
 
 export async function runPmsWebhookEventWorker(
-  dependencies: PmsWebhookEventDependencies & { limit?: number } = {}
+  dependencies: PmsWebhookEventDependencies & {
+    limit?: number;
+  } = {}
 ): Promise<PmsWebhookEventWorkerResult> {
   const store = dependencies.store ?? new SupabasePmsWebhookEventStore();
+
   const now = dependencies.now ?? (() => new Date());
+
   const claimTime = now();
+
   const claims = await store.claimEvents({
     limit: dependencies.limit ?? PMS_WEBHOOK_EVENT_BATCH_SIZE,
+
     now: claimTime.toISOString(),
+
     staleBefore: new Date(
       claimTime.getTime() - PMS_WEBHOOK_EVENT_STALE_MS
     ).toISOString(),
   });
+
   const reservationStore =
     dependencies.reservationStore ?? new SupabasePmsReservationSyncStore();
 
@@ -299,10 +343,13 @@ export async function runPmsWebhookEventWorker(
         reservationStore,
         now,
       });
+
       summary[result.status]++;
     } catch {
-      // A claim/store failure for one event must not prevent later claims from
-      // being attempted. Its processing lease will be recovered when stale.
+      // A claim/store failure for one event must not prevent
+      // later claims from being attempted.
+      //
+      // Its processing lease will be recovered when stale.
       summary.failed++;
     }
   }
@@ -323,7 +370,10 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
       p_now: input.now,
       p_stale_before: input.staleBefore,
     });
-    if (error) throw new PmsWebhookEventStoreError('Event claim failed.');
+
+    if (error) {
+      throw new PmsWebhookEventStoreError('Event claim failed.');
+    }
 
     return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
       id: row.event_id as string,
@@ -349,9 +399,11 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
       .eq('id', event.integrationId)
       .eq('account_id', event.accountId)
       .maybeSingle();
+
     if (integrationError) {
       throw new PmsWebhookEventStoreError('Integration lookup failed.');
     }
+
     if (
       !integration ||
       integration.provider !== event.provider ||
@@ -369,10 +421,14 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
       .eq('account_id', event.accountId)
       .eq('pms_integration_id', event.integrationId)
       .maybeSingle();
+
     if (propertyError) {
       throw new PmsWebhookEventStoreError('Property lookup failed.');
     }
-    if (!property || property.status !== 'active') return null;
+
+    if (!property || property.status !== 'active') {
+      return null;
+    }
 
     return {
       integration: {
@@ -381,6 +437,7 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
         provider: integration.provider,
         externalAccountId: integration.external_account_id,
       },
+
       property: {
         id: property.id,
         accountId: property.account_id,
@@ -404,7 +461,10 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
       .eq('id', event.id)
       .eq('status', 'processing')
       .eq('attempt_count', event.attemptCount);
-    if (error) throw new PmsWebhookEventStoreError('Completion update failed.');
+
+    if (error) {
+      throw new PmsWebhookEventStoreError('Completion update failed.');
+    }
   }
 
   async markIgnored(
@@ -425,7 +485,10 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
       .eq('id', event.id)
       .eq('status', 'processing')
       .eq('attempt_count', event.attemptCount);
-    if (error) throw new PmsWebhookEventStoreError('Ignored update failed.');
+
+    if (error) {
+      throw new PmsWebhookEventStoreError('Ignored update failed.');
+    }
   }
 
   async markFailed(
@@ -448,6 +511,9 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
       .eq('id', event.id)
       .eq('status', 'processing')
       .eq('attempt_count', event.attemptCount);
-    if (error) throw new PmsWebhookEventStoreError('Failure update failed.');
+
+    if (error) {
+      throw new PmsWebhookEventStoreError('Failure update failed.');
+    }
   }
 }

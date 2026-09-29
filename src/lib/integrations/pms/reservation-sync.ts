@@ -474,7 +474,7 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
       external_listing_id: input.reservation.externalListingId,
       reservation_code: input.reservation.reservationCode,
       status: input.reservation.status,
-      provider_status: input.reservation.status,
+      provider_status: input.reservation.providerStatus,
       check_in: input.reservation.checkIn,
       check_out: input.reservation.checkOut,
       adults: input.reservation.occupancy.adults,

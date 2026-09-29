@@ -73,6 +73,23 @@ function propertyFrom(value: unknown): PmsProperty {
   };
 }
 
+const reservationStatus = (
+  value: unknown
+): PmsReservation["status"] => {
+  if (
+    value === "pending" ||
+    value === "confirmed" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+
+  throw new PmsProviderError(
+    "invalid_response",
+    `RZ PMS response has an invalid canonical reservation status: ${String(value)}.`
+  );
+};
+
 function reservationFrom(value: unknown): PmsReservation {
   const item = record(value);
   const guest = record(item.guest);
@@ -85,7 +102,11 @@ function reservationFrom(value: unknown): PmsReservation {
     externalPropertyId: identifier(item.property_id, 'property_id'),
     externalListingId: stringValue(item.listing_id, 'listing_id')!,
     reservationCode: stringValue(item.reservation_code, 'reservation_code')!,
-    status: stringValue(item.status, 'reservation status')!,
+    status: reservationStatus(item.status),
+    providerStatus: stringValue(
+      item.provider_status,
+      'provider_status'
+    )!,
     checkIn: nullableString(item.check_in),
     checkOut: nullableString(item.check_out),
     guest: {
@@ -102,8 +123,8 @@ function reservationFrom(value: unknown): PmsReservation {
       total: numberValue(occupancy.total, 'occupancy total'),
     },
     channel: {
-      code: stringValue(channel.code, 'channel code')!,
-      name: stringValue(channel.name, 'channel name')!,
+      code: nullableString(channel.code),
+      name: nullableString(channel.name),
     },
     financial: {
       totalAmount: numberValue(financial.total_amount, 'total_amount'),

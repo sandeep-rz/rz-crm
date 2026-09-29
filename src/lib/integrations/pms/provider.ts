@@ -22,15 +22,28 @@ export interface PmsReservation {
   externalPropertyId: string;
   externalListingId: string;
   reservationCode: string;
-  status: string;
+
+  status: "pending" | "confirmed" | "cancelled";
+
+  /**
+   * Original reservation status reported by the PMS/provider.
+   *
+   * Examples:
+   * RZ native: pending / confirmed / cancelled
+   * Channex/PMS: new / modified / cancelled
+   */
+  providerStatus: string;
+
   checkIn: string | null;
   checkOut: string | null;
+
   guest: {
     externalId: string | null;
     fullName: string | null;
     email: string | null;
     phone: string | null;
   };
+
   occupancy: {
     adults: number | null;
     children: number | null;
@@ -38,7 +51,12 @@ export interface PmsReservation {
     pets: number | null;
     total: number | null;
   };
-  channel: { code: string; name: string };
+
+  channel: {
+    code: string | null;
+    name: string | null;
+  };
+
   financial: {
     totalAmount: number | null;
     paidAmount: number | null;
@@ -46,6 +64,7 @@ export interface PmsReservation {
     currency: string | null;
     paymentStatus: string | null;
   };
+
   createdAt: string | null;
   updatedAt: string | null;
 }

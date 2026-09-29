@@ -8,7 +8,9 @@ import {
   groupStays,
   loadContactStay,
   loadContactStays,
+  mostRelevantStay,
   nightsBetween,
+  stayPresentationStatus,
   toContactStay,
   type StayQuery,
   type StayReadClient,
@@ -188,13 +190,42 @@ describe('stay presentation', () => {
         TODAY
       )
     ).toBe('cancelled');
+    expect(
+      classifyStay(
+        { status: 'completed', checkIn: null, checkOut: null },
+        TODAY
+      )
+    ).toBe('past');
     const groups = groupStays(stays);
-    expect(groups.upcomingCurrent.map((stay) => stay.id)).toEqual([
-      'now',
-      'future',
-    ]);
+    expect(groups.current.map((stay) => stay.id)).toEqual(['now']);
+    expect(groups.upcoming.map((stay) => stay.id)).toEqual(['future']);
     expect(groups.past.map((stay) => stay.id)).toEqual(['done']);
     expect(groups.cancelled.map((stay) => stay.id)).toEqual(['void']);
+    expect(mostRelevantStay(stays)?.id).toBe('now');
+    expect(stayPresentationStatus(stays[0]!)).toBe('upcoming');
+    expect(stayPresentationStatus(stays[1]!)).toBe('inHouse');
+    expect(stayPresentationStatus(stays[2]!)).toBe('completed');
+    expect(stayPresentationStatus(stays[3]!)).toBe('cancelled');
+  });
+
+  it('falls back to the nearest upcoming and then the latest past stay', () => {
+    const upcoming = toContactStay(
+      reservation({ id: 'future', check_in: '2026-10-02' }),
+      'Palm House',
+      TODAY
+    );
+    const past = toContactStay(
+      reservation({
+        id: 'past',
+        status: 'completed',
+        check_in: '2026-08-01',
+        check_out: '2026-08-03',
+      }),
+      'Palm House',
+      TODAY
+    );
+    expect(mostRelevantStay([past!, upcoming!])?.id).toBe('future');
+    expect(mostRelevantStay([past!])?.id).toBe('past');
   });
 
   it('keeps reservations across more than one property', async () => {

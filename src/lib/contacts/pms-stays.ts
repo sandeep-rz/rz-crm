@@ -7,8 +7,14 @@ export const PROPERTY_COLUMNS = 'id, account_id, name';
 
 export type StayTiming = 'current' | 'upcoming' | 'past' | 'cancelled';
 
-export type StayStatusTone =
-  'confirmed' | 'completed' | 'cancelled' | 'pending' | 'default';
+export type StayPresentationStatus =
+  | 'inHouse'
+  | 'upcoming'
+  | 'confirmed'
+  | 'completed'
+  | 'cancelled'
+  | 'pending'
+  | 'default';
 
 export interface ContactStay {
   id: string;
@@ -31,7 +37,8 @@ export interface ContactStay {
 }
 
 export interface StayGroups {
-  upcomingCurrent: ContactStay[];
+  current: ContactStay[];
+  upcoming: ContactStay[];
   past: ContactStay[];
   cancelled: ContactStay[];
 }
@@ -83,18 +90,10 @@ export function classifyStay(
   today: string
 ): StayTiming {
   if (/cancel/i.test(input.status)) return 'cancelled';
+  if (/^(completed|checked[ _-]?out)$/i.test(input.status)) return 'past';
   if (input.checkOut && input.checkOut <= today) return 'past';
   if (input.checkIn && input.checkIn <= today) return 'current';
   return 'upcoming';
-}
-
-export function stayStatusTone(status: string): StayStatusTone {
-  const value = status.toLowerCase();
-  if (value === 'confirmed') return 'confirmed';
-  if (value === 'completed') return 'completed';
-  if (/cancel/.test(value)) return 'cancelled';
-  if (value === 'pending') return 'pending';
-  return 'default';
 }
 
 export function stayStatusLabel(status: string): string {
@@ -104,27 +103,38 @@ export function stayStatusLabel(status: string): string {
 }
 
 export function groupStays(stays: ContactStay[]): StayGroups {
-  const upcomingCurrent = stays
-    .filter((stay) => stay.timing === 'current' || stay.timing === 'upcoming')
-    .sort((a, b) => {
-      if (a.timing !== b.timing) return a.timing === 'current' ? -1 : 1;
-      return compareDate(a.checkIn, b.checkIn, 'asc');
-    });
+  const current = stays
+    .filter((stay) => stay.timing === 'current')
+    .sort((a, b) => compareDate(a.checkIn, b.checkIn, 'asc'));
+  const upcoming = stays
+    .filter((stay) => stay.timing === 'upcoming')
+    .sort((a, b) => compareDate(a.checkIn, b.checkIn, 'asc'));
   const past = stays
     .filter((stay) => stay.timing === 'past')
     .sort((a, b) => compareDate(a.checkOut, b.checkOut, 'desc'));
   const cancelled = stays
     .filter((stay) => stay.timing === 'cancelled')
     .sort((a, b) => compareDate(a.checkIn, b.checkIn, 'desc'));
-  return { upcomingCurrent, past, cancelled };
+  return { current, upcoming, past, cancelled };
 }
 
-export function nextStayHighlight(stays: ContactStay[]): ContactStay | null {
-  return (
-    stays.find((stay) => stay.timing === 'current') ??
-    stays.find((stay) => stay.timing === 'upcoming') ??
-    null
-  );
+export function mostRelevantStay(stays: ContactStay[]): ContactStay | null {
+  const groups = groupStays(stays);
+  return groups.current[0] ?? groups.upcoming[0] ?? groups.past[0] ?? null;
+}
+
+export function stayPresentationStatus(
+  stay: ContactStay
+): StayPresentationStatus {
+  if (stay.timing === 'cancelled') return 'cancelled';
+  if (stay.timing === 'current') return 'inHouse';
+  if (stay.timing === 'past') return 'completed';
+  if (stay.checkIn) return 'upcoming';
+
+  const value = stay.status.toLowerCase();
+  if (value === 'confirmed') return 'confirmed';
+  if (value === 'pending') return 'pending';
+  return 'default';
 }
 
 export function formatStayDate(isoDate: string, locale: string): string {
@@ -137,15 +147,45 @@ export function formatStayDate(isoDate: string, locale: string): string {
   }).format(new Date(year, month - 1, day));
 }
 
+export function formatStayDateShort(isoDate: string, locale: string): string {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  if (!year || !month || !day) return isoDate;
+  return new Intl.DateTimeFormat(locale, {
+    day: 'numeric',
+    month: 'short',
+  }).format(new Date(year, month - 1, day));
+}
+
+export function formatStayMonth(isoDate: string, locale: string): string {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  if (!year || !month || !day) return isoDate;
+  return new Intl.DateTimeFormat(locale, {
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(year, month - 1, day));
+}
+
 export function formatStayTotal(
   amount: number,
   currency: string | null,
   locale: string
 ): string {
-  const formatted = new Intl.NumberFormat(locale, {
-    maximumFractionDigits: 2,
-  }).format(amount);
-  return currency ? `${formatted} ${currency}` : formatted;
+  if (currency && /^[A-Z]{3}$/i.test(currency)) {
+    try {
+      return new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency: currency.toUpperCase(),
+        currencyDisplay: 'narrowSymbol',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      }).format(amount);
+    } catch {
+      // Fall through for unknown currency codes from the provider.
+    }
+  }
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(
+    amount
+  );
 }
 
 export function formatSyncedAt(value: string, locale: string): string | null {

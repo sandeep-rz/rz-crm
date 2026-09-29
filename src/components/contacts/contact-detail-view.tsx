@@ -6,7 +6,7 @@ import { addContactTag, deleteContactTag } from '@/lib/contacts/tag-api';
 import { useAuth } from '@/hooks/use-auth';
 import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactTag, ContactNote, CustomField, ContactCustomValue, Deal, MessageTemplate } from '@/types';
+import type { Contact, Tag, ContactNote, CustomField, Deal, MessageTemplate } from '@/types';
 import {
   TemplatePicker,
   type TemplateSendValues,
@@ -19,35 +19,34 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Phone,
-  Mail,
-  Building2,
   Copy,
   Check,
   Loader2,
   Plus,
   Trash2,
   Save,
-  X,
   DollarSign,
   LayoutTemplate,
 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
-import { ContactStays } from '@/components/contacts/contact-stays';
 import {
-  formatStayDate,
+  ContactStaySummary,
+  ContactStays,
+  ReservationDetailSheet,
+  StayStatusBadge,
+} from '@/components/contacts/contact-stays';
+import {
+  formatStayDateShort,
+  loadContactStay,
   loadContactStays,
-  stayStatusLabel,
-  nextStayHighlight,
+  mostRelevantStay,
   type ContactStay,
   type StayReadClient,
 } from '@/lib/contacts/pms-stays';
@@ -115,6 +114,11 @@ export function ContactDetailView({
   const [stays, setStays] = useState<ContactStay[]>([]);
   const [loadingStays, setLoadingStays] = useState(false);
   const [staysError, setStaysError] = useState(false);
+  const [activeTab, setActiveTab] = useState('details');
+  const [selectedStay, setSelectedStay] = useState<ContactStay | null>(null);
+  const [reservationOpen, setReservationOpen] = useState(false);
+  const [loadingReservation, setLoadingReservation] = useState(false);
+  const [reservationError, setReservationError] = useState(false);
 
   const fetchContact = useCallback(async () => {
     if (!contactId || !accountId) return;
@@ -167,7 +171,7 @@ export function ContactDetailView({
 
     if (data) setNotes(data);
     setLoadingNotes(false);
-  }, [contactId, supabase]);
+  }, [accountId, contactId, supabase]);
 
   const fetchCustomFields = useCallback(async () => {
     if (!contactId) return;
@@ -226,6 +230,32 @@ export function ContactDetailView({
       setLoadingStays(false);
     }
   }, [accountId, contactId, supabase]);
+
+  const openReservation = useCallback(
+    async (reservationId: string) => {
+      if (!contactId || !accountId) return;
+      setSelectedStay(null);
+      setReservationError(false);
+      setLoadingReservation(true);
+      setReservationOpen(true);
+      try {
+        const stay = await loadContactStay(
+          supabase as unknown as StayReadClient,
+          { accountId, contactId, reservationId }
+        );
+        if (!stay) {
+          setReservationError(true);
+          return;
+        }
+        setSelectedStay(stay);
+      } catch {
+        setReservationError(true);
+      } finally {
+        setLoadingReservation(false);
+      }
+    },
+    [accountId, contactId, supabase]
+  );
 
   useEffect(() => {
     if (open && contactId) {
@@ -425,9 +455,9 @@ export function ContactDetailView({
     }
   }
 
-  const stayHighlight = nextStayHighlight(stays);
+  const stayHighlight = mostRelevantStay(stays);
   const stayWhen = stayHighlight?.checkIn
-    ? formatStayDate(stayHighlight.checkIn, locale)
+    ? formatStayDateShort(stayHighlight.checkIn, locale)
     : null;
 
   function getInitials(name?: string | null) {
@@ -440,9 +470,18 @@ export function ContactDetailView({
       .slice(0, 2);
   }
 
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
+      setActiveTab('details');
+      setReservationOpen(false);
+      setSelectedStay(null);
+    }
+    onOpenChange(nextOpen);
+  }
+
   return (
     <>
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="right"
         className="bg-popover border-border text-popover-foreground w-full p-0 sm:max-w-2xl"
@@ -454,26 +493,26 @@ export function ContactDetailView({
         ) : (
           <div className="flex flex-col h-full">
             {/* Header */}
-            <SheetHeader className="p-4 border-b border-border/50">
-              <div className="flex items-center gap-3">
-                <Avatar className="size-12 bg-muted border border-border">
+            <SheetHeader className="border-b border-border/50 px-4 py-3.5 pr-14">
+              <div className="flex items-start gap-3">
+                <Avatar className="size-10 shrink-0 border border-border bg-muted">
                   <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
                     {getInitials(contact.name)}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <SheetTitle className="text-popover-foreground truncate">
+                  <SheetTitle className="truncate text-base text-popover-foreground">
                     {contact.name || t('unnamed')}
                   </SheetTitle>
-                  <SheetDescription className="text-muted-foreground text-xs mt-0.5">
+                  <SheetDescription className="sr-only">
                     {t('contactDetailsDesc')}
                   </SheetDescription>
-                  <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                  <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                     <button
                       onClick={copyPhone}
-                      className="flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
+                      className="flex shrink-0 cursor-pointer items-center gap-1 transition-colors hover:text-primary"
                     >
-                      <Phone className="size-3" />
+                      <Phone className="size-3 shrink-0" />
                       {contactHandle(contact)}
                       {copiedPhone ? (
                         <Check className="size-3 text-primary" />
@@ -482,42 +521,56 @@ export function ContactDetailView({
                       )}
                     </button>
                     {contact.email && (
-                      <span className="flex items-center gap-1">
-                        <Mail className="size-3" />
-                        {contact.email}
-                      </span>
-                    )}
-                    {contact.company && (
-                      <span className="flex items-center gap-1">
-                        <Building2 className="size-3" />
-                        {contact.company}
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span aria-hidden="true">·</span>
+                        <span className="truncate" title={contact.email}>
+                          {contact.email}
+                        </span>
                       </span>
                     )}
                   </div>
                 </div>
               </div>
-              {stays.length > 0 && (
-                <div className="mt-3 flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center">
-                  <Badge className="bg-brand-accent text-brand-accent-foreground">
-                    {t('guestBadge')}
-                  </Badge>
-                  {stayHighlight && (
-                    <p className="text-xs text-muted-foreground">
-                      {stayHighlight.timing === 'current'
-                        ? t('staysTab.currentStay')
-                        : t('staysTab.nextStay')}
-                      {stayHighlight.propertyName ? ` · ${stayHighlight.propertyName}` : ''}
-                      {stayWhen ? ` · ${stayWhen}` : ''}
-                    </p>
-                  )}
-                </div>
+              {stayHighlight && (
+                <button
+                  type="button"
+                  onClick={() => openReservation(stayHighlight.id)}
+                  className="mt-2.5 flex w-full items-center justify-between gap-3 rounded-lg bg-primary-soft/70 px-3 py-2 text-left transition-colors hover:bg-primary-soft"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <StayStatusBadge stay={stayHighlight} />
+                      {stayHighlight.propertyName && (
+                        <span className="truncate text-xs font-semibold text-foreground">
+                          {stayHighlight.propertyName}
+                        </span>
+                      )}
+                    </div>
+                    {(stayWhen || stayHighlight.checkOut || stayHighlight.nights !== null) && (
+                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                        {stayWhen ?? ''}
+                        {stayWhen && stayHighlight.checkOut ? ' → ' : ''}
+                        {stayHighlight.checkOut
+                          ? formatStayDateShort(stayHighlight.checkOut, locale)
+                          : ''}
+                        {stayHighlight.nights !== null
+                          ? ` · ${t('staysTab.nights', { count: stayHighlight.nights })}`
+                          : ''}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-sm text-muted-foreground" aria-hidden="true">
+                    ›
+                  </span>
+                </button>
               )}
-              <div className="mt-3">
+              <div className="mt-2.5">
                 <Button
                   size="sm"
+                  variant="outline"
                   onClick={() => setTemplatePickerOpen(true)}
                   disabled={sendingTemplate}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                  className="h-8"
                 >
                   {sendingTemplate ? (
                     <Loader2 className="size-4 animate-spin" />
@@ -530,7 +583,11 @@ export function ContactDetailView({
             </SheetHeader>
 
             {/* Tabs */}
-            <Tabs defaultValue="details" className="flex-1 flex flex-col min-h-0">
+            <Tabs
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="flex-1 flex flex-col min-h-0"
+            >
               <TabsList
                 variant="line"
                 className="border-border h-11 w-full max-w-none justify-start gap-1 overflow-x-auto border-b bg-transparent px-4 group-data-horizontal/tabs:h-11 [scrollbar-width:none]"
@@ -559,42 +616,15 @@ export function ContactDetailView({
 
               {/* Details Tab */}
               <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-3">
-                <div className="space-y-3">
-                  {(loadingStays || staysError || stays.length > 0) && (
-                    <Card size="sm">
-                      <CardHeader className="border-b">
-                        <CardTitle>
-                          {stays.length > 0
-                            ? t('tabs.staysCount', { count: stays.length })
-                            : t('tabs.stays')}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="flex flex-col gap-3">
-                        {loadingStays && (
-                          <Loader2 className="size-4 animate-spin text-primary" aria-label={t('staysTab.loading')} />
-                        )}
-                        {staysError && (
-                          <p className="text-muted-foreground text-xs">{t('staysTab.loadError')}</p>
-                        )}
-                        {stays.map((stay) => (
-                          <div key={stay.id} className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium">
-                                {stay.propertyName ?? t('staysTab.property')}
-                              </p>
-                              <p className="text-muted-foreground text-xs">
-                                {stay.checkIn ? formatStayDate(stay.checkIn, locale) : t('staysTab.checkIn')}
-                                {' – '}
-                                {stay.checkOut ? formatStayDate(stay.checkOut, locale) : t('staysTab.checkOut')}
-                                {stay.reservationCode ? ` · ${stay.reservationCode}` : ''}
-                              </p>
-                            </div>
-                            <Badge variant="outline">{stayStatusLabel(stay.status)}</Badge>
-                          </div>
-                        ))}
-                      </CardContent>
-                    </Card>
-                  )}
+                <div className="space-y-4">
+                  <ContactStaySummary
+                    stays={stays}
+                    loading={loadingStays}
+                    error={staysError}
+                    onOpenStay={openReservation}
+                    onViewAll={() => setActiveTab('stays')}
+                  />
+                  {stays.length > 0 && <div className="h-px bg-border/60" />}
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">{t('name')}</Label>
                     <Input
@@ -860,14 +890,9 @@ export function ContactDetailView({
                   </div>
                 ) : (
                   <ContactStays
-                    key={contact.id}
                     stays={stays}
                     error={staysError}
-                    guest={{
-                      name: contact.name ?? null,
-                      phone: contact.phone,
-                      email: contact.email ?? null,
-                    }}
+                    onOpenStay={openReservation}
                   />
                 )}
               </TabsContent>
@@ -876,6 +901,18 @@ export function ContactDetailView({
         )}
       </SheetContent>
     </Sheet>
+    <ReservationDetailSheet
+      open={reservationOpen}
+      onOpenChange={setReservationOpen}
+      stay={selectedStay}
+      loading={loadingReservation}
+      error={reservationError}
+      guest={{
+        name: contact?.name ?? null,
+        phone: contact?.phone ?? null,
+        email: contact?.email ?? null,
+      }}
+    />
     <TemplatePicker
       open={templatePickerOpen}
       onOpenChange={setTemplatePickerOpen}

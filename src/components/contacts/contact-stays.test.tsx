@@ -3,7 +3,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { NextIntlClientProvider } from 'next-intl';
 
 import en from '../../../messages/en.json';
-import { ContactStays } from './contact-stays';
+import {
+  ContactStaySummary,
+  ContactStays,
+  ReservationDetails,
+} from './contact-stays';
 import type { ContactStay } from '@/lib/contacts/pms-stays';
 
 const GUEST = {
@@ -39,18 +43,23 @@ function renderStays(
   stays: ContactStay[],
   options: {
     error?: boolean;
-    initialSelectedId?: string | null;
-    guest?: typeof GUEST;
   } = {}
 ) {
   return renderToStaticMarkup(
     <NextIntlClientProvider locale="en" messages={en}>
       <ContactStays
         stays={stays}
-        guest={options.guest ?? GUEST}
         error={options.error}
-        initialSelectedId={options.initialSelectedId}
+        onOpenStay={() => undefined}
       />
+    </NextIntlClientProvider>
+  );
+}
+
+function renderDetail(selected: ContactStay) {
+  return renderToStaticMarkup(
+    <NextIntlClientProvider locale="en" messages={en}>
+      <ReservationDetails stay={selected} guest={GUEST} locale="en" />
     </NextIntlClientProvider>
   );
 }
@@ -60,15 +69,14 @@ describe('ContactStays', () => {
     const html = renderStays([stay()]);
     expect(html).toContain('Palm House');
     expect(html).toContain('RZ-100');
-    expect(html).toContain('Confirmed');
     expect(html).toContain('Upcoming');
     expect(html).toContain('3 nights');
     expect(html).toContain('Airbnb');
-    expect(html).toContain('1,200 INR');
+    expect(html).toContain('₹1,200');
     expect(html).not.toContain('11111111-2222-3333-4444-555555555555');
     expect(html).not.toContain('metadata');
-    expect(html).toContain('flex-col');
-    expect(html).toContain('sm:flex-row');
+    expect(html).toContain('button');
+    expect(html).toContain('chevron-right');
   });
 
   it('renders several stays across properties in separate groups', () => {
@@ -102,32 +110,30 @@ describe('ContactStays', () => {
         children: null,
       }),
     ]);
-    expect(html).toContain('Upcoming and current');
+    expect(html).toContain('Current');
+    expect(html).toContain('Upcoming');
     expect(html).toContain('Past stays');
     expect(html).toContain('Cancelled');
     expect(html).toContain('Palm House');
     expect(html).toContain('Hill Cottage');
-    expect(html).toContain('Current');
-    expect(html).toContain('sm:flex-row');
+    expect(html).toContain('In house');
+    expect(html).toContain('Completed / Past');
   });
 
   it('hides missing money, channel, and occupancy on the detail', () => {
-    const html = renderStays(
-      [
-        stay({
-          channel: null,
-          totalAmount: null,
-          currency: null,
-          adults: null,
-          children: null,
-          infants: null,
-          pets: null,
-          nights: null,
-          providerStatus: null,
-          lastSyncedAt: null,
-        }),
-      ],
-      { initialSelectedId: '11111111-2222-3333-4444-555555555555' }
+    const html = renderDetail(
+      stay({
+        channel: null,
+        totalAmount: null,
+        currency: null,
+        adults: null,
+        children: null,
+        infants: null,
+        pets: null,
+        nights: null,
+        providerStatus: null,
+        lastSyncedAt: null,
+      })
     );
     expect(html).toContain('Stay');
     expect(html).toContain('Palm House');
@@ -135,8 +141,8 @@ describe('ContactStays', () => {
     expect(html).not.toContain('Channel');
     expect(html).not.toContain('Total');
     expect(html).not.toContain('Adults');
-    expect(html).not.toContain('Financial');
-    expect(html).not.toContain('Synchronization');
+    expect(html).not.toContain('Payment');
+    expect(html).not.toContain('System');
     expect(html).toContain('sm:grid-cols-2');
     expect(html).not.toContain('11111111-2222-3333-4444-555555555555');
   });
@@ -145,5 +151,44 @@ describe('ContactStays', () => {
     const html = renderStays([]);
     expect(html).toContain('No reservations yet');
     expect(html).not.toContain('could not be loaded');
+  });
+
+  it('keeps long guest and property values inside responsive text containers', () => {
+    const longProperty =
+      'Lakeside Meadows Heritage Villa With A Very Long Property Name';
+    const html = renderDetail(
+      stay({
+        propertyName: longProperty,
+        reservationCode: 'RZ-VERY-LONG-REFERENCE-123456789',
+      })
+    );
+    expect(html).toContain(longProperty);
+    expect(html).toContain('break-words');
+    expect(html).toContain('sm:grid-cols-2');
+  });
+
+  it('renders only the most relevant stay in the details summary', () => {
+    const html = renderToStaticMarkup(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ContactStaySummary
+          stays={[
+            stay({ id: 'past', propertyName: 'Old Cottage', timing: 'past' }),
+            stay({
+              id: 'current',
+              propertyName: 'Current Villa',
+              timing: 'current',
+            }),
+            stay({ id: 'future', propertyName: 'Future Lodge' }),
+          ]}
+          onOpenStay={() => undefined}
+          onViewAll={() => undefined}
+        />
+      </NextIntlClientProvider>
+    );
+    expect(html).toContain('Stay summary');
+    expect(html).toContain('Current Villa');
+    expect(html).not.toContain('Old Cottage');
+    expect(html).not.toContain('Future Lodge');
+    expect(html).toContain('View all 3 stays');
   });
 });

@@ -1,29 +1,31 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ChevronRight, Hotel, Loader2 } from 'lucide-react';
 import { useLocale, useTranslations } from 'next-intl';
+import type { ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import {
   formatStayDate,
+  formatStayDateShort,
+  formatStayMonth,
   formatStayTotal,
   formatSyncedAt,
   groupStays,
+  mostRelevantStay,
+  stayPresentationStatus,
   stayStatusLabel,
-  stayStatusTone,
   type ContactStay,
-  type StayStatusTone,
+  type StayPresentationStatus,
 } from '@/lib/contacts/pms-stays';
 import { cn } from '@/lib/utils';
 
@@ -33,7 +35,9 @@ export interface StayGuest {
   email: string | null;
 }
 
-const TONE_CLASS: Record<StayStatusTone, string> = {
+const TONE_CLASS: Record<StayPresentationStatus, string> = {
+  inHouse: 'bg-brand-accent text-brand-accent-foreground',
+  upcoming: 'bg-stay-confirmed-bg text-stay-confirmed',
   confirmed: 'bg-stay-confirmed-bg text-stay-confirmed',
   completed: 'bg-stay-completed-bg text-stay-completed',
   cancelled: 'bg-stay-cancelled-bg text-stay-cancelled',
@@ -41,62 +45,139 @@ const TONE_CLASS: Record<StayStatusTone, string> = {
   default: 'bg-stay-default-bg text-stay-default',
 };
 
-export function ContactStays({
+export function ContactStaySummary({
   stays,
-  guest,
+  loading = false,
   error = false,
-  initialSelectedId = null,
+  onOpenStay,
+  onViewAll,
 }: {
   stays: ContactStay[];
-  guest: StayGuest;
+  loading?: boolean;
   error?: boolean;
-  initialSelectedId?: string | null;
+  onOpenStay: (reservationId: string) => void;
+  onViewAll: () => void;
 }) {
   const t = useTranslations('Contacts.detailView');
   const locale = useLocale();
-  const [selectedId, setSelectedId] = useState<string | null>(
-    initialSelectedId
-  );
-  const selected = stays.find((stay) => stay.id === selectedId) ?? null;
 
-  if (error) {
+  if (loading) {
     return (
-      <Card size="sm">
-        <CardContent>
-          <CardDescription>{t('staysTab.loadError')}</CardDescription>
-        </CardContent>
-      </Card>
+      <div className="bg-muted/45 rounded-xl p-4">
+        <Loader2
+          className="text-primary size-4 animate-spin"
+          aria-label={t('staysTab.loading')}
+        />
+      </div>
     );
   }
 
-  if (selected) {
+  if (error) {
     return (
-      <StayDetail
-        stay={selected}
-        guest={guest}
-        locale={locale}
-        onBack={() => setSelectedId(null)}
-      />
+      <p className="bg-muted/45 text-muted-foreground rounded-xl p-4 text-xs">
+        {t('staysTab.loadError')}
+      </p>
+    );
+  }
+
+  if (stays.length === 0) return null;
+
+  const relevant = mostRelevantStay(stays);
+  const upcomingCount = stays.filter(
+    (stay) => stay.timing === 'upcoming'
+  ).length;
+  const firstCheckIn = stays
+    .filter((stay) => stay.timing !== 'cancelled' && stay.checkIn)
+    .map((stay) => stay.checkIn as string)
+    .sort()[0];
+
+  return (
+    <section aria-labelledby="stay-summary-title" className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <p
+          id="stay-summary-title"
+          className="text-muted-foreground text-[11px] font-semibold tracking-[0.16em] uppercase"
+        >
+          {t('staysTab.summary')}
+        </p>
+        <div className="text-muted-foreground flex items-center gap-3 text-xs">
+          <span className="text-foreground font-medium">
+            {t('staysTab.stayCount', { count: stays.length })}
+          </span>
+          <span>{t('staysTab.upcomingCount', { count: upcomingCount })}</span>
+        </div>
+      </div>
+
+      {firstCheckIn && (
+        <p className="text-muted-foreground text-xs">
+          {t('staysTab.guestSince', {
+            date: formatStayMonth(firstCheckIn, locale),
+          })}
+        </p>
+      )}
+
+      {relevant && (
+        <StayRow
+          stay={relevant}
+          locale={locale}
+          emphasized
+          onOpen={() => onOpenStay(relevant.id)}
+        />
+      )}
+
+      <Button
+        type="button"
+        variant="link"
+        size="sm"
+        className="h-auto px-0 text-xs"
+        onClick={onViewAll}
+      >
+        {t('staysTab.viewAll', { count: stays.length })}
+        <ChevronRight className="size-3.5" />
+      </Button>
+    </section>
+  );
+}
+
+export function ContactStays({
+  stays,
+  error = false,
+  onOpenStay,
+}: {
+  stays: ContactStay[];
+  error?: boolean;
+  onOpenStay: (reservationId: string) => void;
+}) {
+  const t = useTranslations('Contacts.detailView');
+  const locale = useLocale();
+
+  if (error) {
+    return (
+      <p className="bg-muted/45 text-muted-foreground rounded-xl p-4 text-sm">
+        {t('staysTab.loadError')}
+      </p>
     );
   }
 
   if (stays.length === 0) {
     return (
-      <Card size="sm" className="border-dashed text-center">
-        <CardHeader>
-          <CardTitle>{t('staysTab.empty')}</CardTitle>
-          <CardDescription>{t('staysTab.emptyHint')}</CardDescription>
-        </CardHeader>
-      </Card>
+      <div className="rounded-xl border border-dashed px-5 py-8 text-center">
+        <Hotel className="text-muted-foreground mx-auto mb-3 size-5" />
+        <p className="text-sm font-medium">{t('staysTab.empty')}</p>
+        <p className="text-muted-foreground mt-1 text-xs">
+          {t('staysTab.emptyHint')}
+        </p>
+      </div>
     );
   }
 
   const groups = groupStays(stays);
   const sections = [
+    { id: 'current', title: t('staysTab.currentGroup'), items: groups.current },
     {
       id: 'upcoming',
-      title: t('staysTab.upcomingCurrent'),
-      items: groups.upcomingCurrent,
+      title: t('staysTab.upcomingGroup'),
+      items: groups.upcoming,
     },
     { id: 'past', title: t('staysTab.past'), items: groups.past },
     {
@@ -107,20 +188,20 @@ export function ContactStays({
   ];
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       {sections.map((section) =>
         section.items.length === 0 ? null : (
-          <section key={section.id} className="flex flex-col gap-2">
-            <CardTitle className="text-muted-foreground text-xs">
+          <section key={section.id} className="space-y-2">
+            <p className="text-muted-foreground text-[11px] font-semibold tracking-[0.16em] uppercase">
               {section.title}
-            </CardTitle>
-            <div className="flex flex-col gap-2">
+            </p>
+            <div className="divide-border/60 border-border/70 bg-card divide-y overflow-hidden rounded-xl border">
               {section.items.map((stay) => (
-                <StayCard
+                <StayRow
                   key={stay.id}
                   stay={stay}
                   locale={locale}
-                  onOpen={() => setSelectedId(stay.id)}
+                  onOpen={() => onOpenStay(stay.id)}
                 />
               ))}
             </div>
@@ -131,166 +212,278 @@ export function ContactStays({
   );
 }
 
-function StayCard({
+function StayRow({
   stay,
   locale,
+  emphasized = false,
   onOpen,
 }: {
   stay: ContactStay;
   locale: string;
+  emphasized?: boolean;
   onOpen: () => void;
 }) {
   const t = useTranslations('Contacts.detailView');
-  const occupancy = occupancyLabel(stay, t);
+  const guests = guestCount(stay);
+
   return (
-    <Card size="sm" className="py-0">
-      <Button
-        type="button"
-        variant="ghost"
-        onClick={onOpen}
-        className="h-auto w-full flex-col items-stretch gap-2 whitespace-normal px-3 py-3 text-left sm:px-4"
-      >
-        <CardHeader className="w-full px-0 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            {stay.propertyName && (
-              <CardTitle className="truncate">{stay.propertyName}</CardTitle>
-            )}
-            {stay.reservationCode && (
-              <CardDescription>{stay.reservationCode}</CardDescription>
-            )}
-          </div>
-          <CardAction className="static row-auto justify-self-start sm:justify-self-end">
-            <StatusBadge status={stay.status} />
-          </CardAction>
-        </CardHeader>
-        <CardContent className="text-muted-foreground flex w-full flex-col gap-1 px-0 text-xs sm:flex-row sm:flex-wrap sm:gap-x-3">
-          {stay.timing === 'current' && <span>{t('staysTab.current')}</span>}
-          {stay.timing === 'upcoming' && <span>{t('staysTab.upcoming')}</span>}
-          {(stay.checkIn || stay.checkOut) && (
-            <span>
-              {stay.checkIn ? formatStayDate(stay.checkIn, locale) : ''}
-              {stay.checkIn && stay.checkOut ? ' – ' : ''}
-              {stay.checkOut ? formatStayDate(stay.checkOut, locale) : ''}
-            </span>
-          )}
-          {stay.nights !== null && (
-            <span>{t('staysTab.nights', { count: stay.nights })}</span>
-          )}
-          {occupancy && <span>{occupancy}</span>}
-          {stay.channel && <span>{stay.channel}</span>}
-          {stay.totalAmount !== null && (
-            <span>
-              {formatStayTotal(stay.totalAmount, stay.currency, locale)}
-            </span>
-          )}
-        </CardContent>
-      </Button>
-    </Card>
+    <button
+      type="button"
+      onClick={onOpen}
+      className={cn(
+        'group hover:bg-muted/55 focus-visible:ring-ring flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset',
+        emphasized &&
+          'border-primary/15 bg-primary-soft/70 rounded-xl border py-3.5'
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-foreground truncate text-sm font-semibold">
+            {stay.propertyName ?? t('staysTab.property')}
+          </p>
+          <StayStatusBadge stay={stay} />
+        </div>
+
+        {(stay.checkIn || stay.checkOut || stay.nights !== null) && (
+          <p className="text-muted-foreground mt-1 text-xs">
+            {stay.checkIn ? formatStayDateShort(stay.checkIn, locale) : ''}
+            {stay.checkIn && stay.checkOut ? ' → ' : ''}
+            {stay.checkOut ? formatStayDateShort(stay.checkOut, locale) : ''}
+            {stay.nights !== null
+              ? ` · ${t('staysTab.nights', { count: stay.nights })}`
+              : ''}
+          </p>
+        )}
+
+        {(guests !== null || stay.channel || stay.totalAmount !== null) && (
+          <p className="text-muted-foreground mt-1 truncate text-xs">
+            {[
+              guests !== null ? t('staysTab.guests', { count: guests }) : null,
+              stay.channel,
+              stay.totalAmount !== null
+                ? formatStayTotal(stay.totalAmount, stay.currency, locale)
+                : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+        )}
+
+        {stay.reservationCode && (
+          <p className="text-muted-foreground/80 mt-1 truncate text-[11px]">
+            {t('staysTab.bookingReference', {
+              reference: stay.reservationCode,
+            })}
+          </p>
+        )}
+      </div>
+      <ChevronRight className="text-muted-foreground group-hover:text-foreground size-4 shrink-0 transition-transform group-hover:translate-x-0.5" />
+    </button>
   );
 }
 
-function StayDetail({
+export function ReservationDetailSheet({
+  open,
+  onOpenChange,
+  stay,
+  guest,
+  loading = false,
+  error = false,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  stay: ContactStay | null;
+  guest: StayGuest;
+  loading?: boolean;
+  error?: boolean;
+}) {
+  const t = useTranslations('Contacts.detailView');
+  const locale = useLocale();
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="border-border bg-popover w-full gap-0 overflow-y-auto p-0 sm:max-w-lg"
+      >
+        {loading ? (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="text-primary size-5 animate-spin" />
+          </div>
+        ) : error || !stay ? (
+          <div className="text-muted-foreground flex h-full items-center justify-center p-8 text-center text-sm">
+            {t('staysTab.detailLoadError')}
+          </div>
+        ) : (
+          <>
+            <SheetHeader className="sr-only">
+              <SheetTitle>{t('staysTab.reservationDetails')}</SheetTitle>
+              <SheetDescription>
+                {stay.propertyName ?? t('staysTab.property')}
+              </SheetDescription>
+            </SheetHeader>
+            <ReservationDetails stay={stay} guest={guest} locale={locale} />
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+export function ReservationDetails({
   stay,
   guest,
   locale,
-  onBack,
 }: {
   stay: ContactStay;
   guest: StayGuest;
   locale: string;
-  onBack: () => void;
 }) {
   const t = useTranslations('Contacts.detailView');
   const synced = stay.lastSyncedAt
     ? formatSyncedAt(stay.lastSyncedAt, locale)
     : null;
-  const occupancy = occupancyParts(stay, t);
   const hasBooking = Boolean(
-    stay.reservationCode || stay.channel || stay.providerStatus
+    stay.reservationCode || stay.channel || stay.status || stay.providerStatus
   );
   const hasGuest = Boolean(guest.name || guest.phone || guest.email);
+
   return (
-    <div className="flex flex-col gap-4">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="w-fit px-2"
-        onClick={onBack}
-      >
-        <ArrowLeft className="size-3.5" />
-        {t('staysTab.back')}
-      </Button>
-      <StaySection title={t('staysTab.stay')}>
-        <DetailField
-          label={t('staysTab.property')}
-          value={stay.propertyName}
-        />
-        <DetailField
-          label={t('staysTab.status')}
-          value={stayStatusLabel(stay.status)}
-        />
-        <DetailField
-          label={t('staysTab.checkIn')}
-          value={stay.checkIn ? formatStayDate(stay.checkIn, locale) : null}
-        />
-        <DetailField
-          label={t('staysTab.checkOut')}
-          value={stay.checkOut ? formatStayDate(stay.checkOut, locale) : null}
-        />
-        <DetailField
-          label={t('staysTab.nightsLabel')}
-          value={
-            stay.nights !== null
-              ? t('staysTab.nights', { count: stay.nights })
-              : null
-          }
-        />
-        {occupancy.map((part) => (
-          <DetailField key={part.label} label={part.label} value={part.value} />
-        ))}
-      </StaySection>
-      {hasBooking && (
-        <StaySection title={t('staysTab.booking')}>
+    <div className="min-h-full">
+      <header className="border-border/60 bg-muted/30 border-b px-5 py-5 pr-14">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-muted-foreground mb-1 text-[11px] font-semibold tracking-[0.16em] uppercase">
+              {t('staysTab.reservationDetails')}
+            </p>
+            <h2 className="truncate text-lg font-semibold">
+              {stay.propertyName ?? t('staysTab.property')}
+            </h2>
+          </div>
+          <StayStatusBadge stay={stay} />
+        </div>
+        <p className="text-muted-foreground text-xs">
+          {stay.checkIn ? formatStayDate(stay.checkIn, locale) : ''}
+          {stay.checkIn && stay.checkOut ? ' → ' : ''}
+          {stay.checkOut ? formatStayDate(stay.checkOut, locale) : ''}
+          {stay.nights !== null
+            ? ` · ${t('staysTab.nights', { count: stay.nights })}`
+            : ''}
+        </p>
+      </header>
+
+      <div className="px-5 py-1">
+        <DetailSection title={t('staysTab.stay')}>
           <DetailField
-            label={t('staysTab.reference')}
-            value={stay.reservationCode}
+            label={t('staysTab.checkIn')}
+            value={stay.checkIn ? formatStayDate(stay.checkIn, locale) : null}
           />
-          <DetailField label={t('staysTab.channel')} value={stay.channel} />
           <DetailField
-            label={t('staysTab.providerStatus')}
+            label={t('staysTab.checkOut')}
+            value={stay.checkOut ? formatStayDate(stay.checkOut, locale) : null}
+          />
+          <DetailField
+            label={t('staysTab.nightsLabel')}
             value={
-              stay.providerStatus ? stayStatusLabel(stay.providerStatus) : null
+              stay.nights !== null
+                ? t('staysTab.nights', { count: stay.nights })
+                : null
             }
           />
-        </StaySection>
-      )}
-      {hasGuest && (
-        <StaySection title={t('staysTab.guest')}>
-          <DetailField label={t('name')} value={guest.name} />
-          <DetailField label={t('phone')} value={guest.phone} />
-          <DetailField label={t('email')} value={guest.email} />
-        </StaySection>
-      )}
-      {stay.totalAmount !== null && (
-        <StaySection title={t('staysTab.financial')}>
           <DetailField
-            label={t('staysTab.total')}
-            value={formatStayTotal(stay.totalAmount, null, locale)}
+            label={t('staysTab.adultsLabel')}
+            value={
+              stay.adults !== null
+                ? t('staysTab.adults', { count: stay.adults })
+                : null
+            }
           />
-          <DetailField label={t('staysTab.currency')} value={stay.currency} />
-        </StaySection>
-      )}
-      {synced && (
-        <StaySection title={t('staysTab.sync')}>
-          <DetailField label={t('staysTab.lastSynced')} value={synced} />
-        </StaySection>
-      )}
+          <DetailField
+            label={t('staysTab.childrenLabel')}
+            value={
+              stay.children !== null
+                ? t('staysTab.children', { count: stay.children })
+                : null
+            }
+          />
+          <DetailField
+            label={t('staysTab.infantsLabel')}
+            value={
+              stay.infants !== null
+                ? t('staysTab.infants', { count: stay.infants })
+                : null
+            }
+          />
+          <DetailField
+            label={t('staysTab.petsLabel')}
+            value={
+              stay.pets !== null
+                ? t('staysTab.pets', { count: stay.pets })
+                : null
+            }
+          />
+        </DetailSection>
+
+        {hasBooking && (
+          <DetailSection title={t('staysTab.booking')}>
+            <DetailField
+              label={t('staysTab.reference')}
+              value={stay.reservationCode}
+            />
+            <DetailField label={t('staysTab.channel')} value={stay.channel} />
+            <DetailField
+              label={t('staysTab.status')}
+              value={stayStatusLabel(stay.status)}
+            />
+            <DetailField
+              label={t('staysTab.providerStatus')}
+              value={
+                stay.providerStatus
+                  ? stayStatusLabel(stay.providerStatus)
+                  : null
+              }
+            />
+          </DetailSection>
+        )}
+
+        {hasGuest && (
+          <DetailSection title={t('staysTab.guest')}>
+            <DetailField label={t('name')} value={guest.name} />
+            <DetailField label={t('phone')} value={guest.phone} />
+            <DetailField label={t('email')} value={guest.email} />
+          </DetailSection>
+        )}
+
+        {stay.totalAmount !== null && (
+          <DetailSection title={t('staysTab.payment')}>
+            <DetailField
+              label={t('staysTab.total')}
+              value={formatStayTotal(stay.totalAmount, stay.currency, locale)}
+            />
+            <DetailField label={t('staysTab.currency')} value={stay.currency} />
+          </DetailSection>
+        )}
+
+        {stay.propertyName && (
+          <DetailSection title={t('staysTab.property')}>
+            <DetailField
+              label={t('staysTab.propertyName')}
+              value={stay.propertyName}
+            />
+          </DetailSection>
+        )}
+
+        {synced && (
+          <DetailSection title={t('staysTab.system')}>
+            <DetailField label={t('staysTab.lastSynced')} value={synced} />
+          </DetailSection>
+        )}
+      </div>
     </div>
   );
 }
 
-function StaySection({
+function DetailSection({
   title,
   children,
 }: {
@@ -298,14 +491,14 @@ function StaySection({
   children: ReactNode;
 }) {
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="text-muted-foreground text-xs">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <section className="border-border/60 border-b py-5 last:border-b-0">
+      <p className="text-muted-foreground mb-3 text-[11px] font-semibold tracking-[0.16em] uppercase">
+        {title}
+      </p>
+      <div className="grid grid-cols-1 gap-x-5 gap-y-3 sm:grid-cols-2">
         {children}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }
 
@@ -319,64 +512,31 @@ function DetailField({
   if (!value) return null;
   return (
     <div className="min-w-0">
-      <Label className="text-muted-foreground text-xs">{label}</Label>
-      <CardDescription className="text-foreground mt-0.5 text-sm">
-        {value}
-      </CardDescription>
+      <Label className="text-muted-foreground text-[11px]">{label}</Label>
+      <p className="text-foreground mt-0.5 text-sm break-words">{value}</p>
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+export function StayStatusBadge({ stay }: { stay: ContactStay }) {
+  const t = useTranslations('Contacts.detailView');
+  const presentation = stayPresentationStatus(stay);
   return (
     <Badge
       variant="outline"
-      className={cn('border-transparent', TONE_CLASS[stayStatusTone(status)])}
+      className={cn(
+        'shrink-0 border-transparent text-[10px] font-semibold',
+        TONE_CLASS[presentation]
+      )}
     >
-      {stayStatusLabel(status)}
+      {presentation === 'default'
+        ? stayStatusLabel(stay.status)
+        : t(`staysTab.presentation.${presentation}`)}
     </Badge>
   );
 }
 
-function occupancyLabel(
-  stay: ContactStay,
-  t: ReturnType<typeof useTranslations<'Contacts.detailView'>>
-): string | null {
-  return (
-    occupancyParts(stay, t)
-      .map((part) => part.value)
-      .join(' · ') || null
-  );
-}
-
-function occupancyParts(
-  stay: ContactStay,
-  t: ReturnType<typeof useTranslations<'Contacts.detailView'>>
-): { label: string; value: string }[] {
-  const parts: { label: string; value: string }[] = [];
-  if (stay.adults !== null) {
-    parts.push({
-      label: t('staysTab.adultsLabel'),
-      value: t('staysTab.adults', { count: stay.adults }),
-    });
-  }
-  if (stay.children !== null) {
-    parts.push({
-      label: t('staysTab.childrenLabel'),
-      value: t('staysTab.children', { count: stay.children }),
-    });
-  }
-  if (stay.infants !== null) {
-    parts.push({
-      label: t('staysTab.infantsLabel'),
-      value: t('staysTab.infants', { count: stay.infants }),
-    });
-  }
-  if (stay.pets !== null) {
-    parts.push({
-      label: t('staysTab.petsLabel'),
-      value: t('staysTab.pets', { count: stay.pets }),
-    });
-  }
-  return parts;
+function guestCount(stay: ContactStay): number | null {
+  if (stay.adults === null && stay.children === null) return null;
+  return (stay.adults ?? 0) + (stay.children ?? 0);
 }

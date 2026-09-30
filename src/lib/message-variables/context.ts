@@ -1,6 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
+import {
+  PROPERTY_COMMUNICATION_FIELDS,
+  type PropertyCommunicationValues,
+} from '@/lib/properties/communication-settings';
 
 export interface MessageContactContext {
   id: string;
@@ -27,7 +31,7 @@ export interface MessageReservationContext {
   currency: string | null;
 }
 
-export interface MessagePropertyContext {
+export interface MessagePropertyContext extends PropertyCommunicationValues {
   id: string;
   name: string | null;
 }
@@ -99,6 +103,8 @@ interface PropertyRow {
   account_id: string;
   name: string | null;
 }
+
+type PropertyCommunicationRow = PropertyCommunicationValues;
 
 function clean(value: string | null | undefined): string | null {
   const normalized = value?.trim();
@@ -246,6 +252,7 @@ export async function buildMessageContext(
   }
   const propertyId = derivedPropertyId ?? input.propertyId ?? null;
   let property: PropertyRow | null = null;
+  let propertyCommunication: PropertyCommunicationRow | null = null;
   if (propertyId) {
     property = await maybeSingle<PropertyRow>(
       db
@@ -262,6 +269,16 @@ export async function buildMessageContext(
         'Property not found in this workspace.'
       );
     }
+
+    propertyCommunication = await maybeSingle<PropertyCommunicationRow>(
+      db
+        .from('property_communication_settings')
+        .select(PROPERTY_COMMUNICATION_FIELDS.join(', '))
+        .eq('pms_property_id', property.id)
+        .eq('account_id', input.accountId)
+        .maybeSingle(),
+      'Property communication settings lookup failed.'
+    );
   }
 
   const associatedContactId = reservation?.contact_id ?? null;
@@ -301,7 +318,18 @@ export async function buildMessageContext(
     ...(contact ? { contact: normalizeContact(contact) } : {}),
     ...(reservation ? { reservation: normalizeReservation(reservation) } : {}),
     ...(property
-      ? { property: { id: property.id, name: clean(property.name) } }
+      ? {
+          property: {
+            id: property.id,
+            name: clean(property.name),
+            ...Object.fromEntries(
+              PROPERTY_COMMUNICATION_FIELDS.map((field) => [
+                field,
+                clean(propertyCommunication?.[field]) ?? null,
+              ])
+            ),
+          } as MessagePropertyContext,
+        }
       : {}),
     workspace: { id: workspace.id, name: clean(workspace.name) },
   };

@@ -888,9 +888,9 @@ describe('send_template semantic variable mappings', () => {
         {
           component: 'body',
           position: 2,
-          value: 'Lakeside Meadows',
+          value: 'https://maps.example/lakeside',
           source_type: 'catalog_variable',
-          variable_key: 'property.name',
+          variable_key: 'property.map_url',
         },
         {
           component: 'header',
@@ -940,9 +940,56 @@ describe('send_template semantic variable mappings', () => {
     expect(h.state.metaSendCalls[0]).toMatchObject({
       messageParams: {
         headerText: 'ABC123',
-        body: ['Sandeep', 'Lakeside Meadows', '2026-10-15'],
+        body: ['Sandeep', 'https://maps.example/lakeside', '2026-10-15'],
       },
     });
+  });
+
+  it('does not call the sender when a required property variable is missing', async () => {
+    configure({
+      variable_mappings: [
+        {
+          component: 'body',
+          position: 1,
+          source_type: 'catalog_variable',
+          variable_key: 'property.wifi_password',
+        },
+      ],
+    });
+    h.state.variableResolution = {
+      success: false,
+      values: [],
+      missing: [
+        {
+          component: 'body',
+          position: 1,
+          source_type: 'catalog_variable',
+          variable_key: 'property.wifi_password',
+          label: 'Wi-Fi password',
+          source_scope: 'property',
+          reason: 'MISSING_CONTEXT_VALUE',
+        },
+      ],
+      errors: [],
+    };
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'reservation_confirmed',
+      contactId: 'c1',
+      context: {
+        conversation_id: 'conversation-1',
+        reservation: {
+          reservation_id: 'reservation-1',
+          property_id: 'property-1',
+        } as never,
+      },
+    });
+
+    expect(h.state.metaSendCalls).toEqual([]);
+    expect(JSON.stringify(h.state.logUpdates)).not.toContain(
+      'private-password'
+    );
   });
 
   it('does not send and logs identity-only diagnostics when resolution fails', async () => {

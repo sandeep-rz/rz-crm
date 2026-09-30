@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import type { MessageVariableContext } from './context';
+import { emptyPropertyCommunicationValues } from '@/lib/properties/communication-settings';
 import { resolveContextPath } from './resolve-context-path';
 
 const context: MessageVariableContext = {
@@ -28,7 +29,11 @@ const context: MessageVariableContext = {
     amount: '12500.00',
     currency: 'INR',
   },
-  property: { id: 'property-a', name: 'Lakeside Meadows' },
+  property: {
+    id: 'property-a',
+    name: 'Lakeside Meadows',
+    ...emptyPropertyCommunicationValues(),
+  },
   workspace: { id: 'account-a', name: 'Workspace A' },
 };
 

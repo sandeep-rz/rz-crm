@@ -51,6 +51,24 @@ const property = {
   id: 'property-a',
   account_id: 'account-a',
   name: 'Lakeside Meadows',
+  timezone: 'Asia/Kolkata',
+};
+const communicationSettings = {
+  id: 'settings-a',
+  account_id: 'account-a',
+  pms_property_id: 'property-a',
+  map_url: 'https://maps.example/lakeside',
+  checkin_method: 'Self check-in',
+  directions: 'Turn left at the lake',
+  parking_instructions: 'Park beside the gate',
+  nearby_landmark: 'Lakeside Café',
+  caretaker_name: 'Anil',
+  caretaker_phone: '+919876543210',
+  emergency_phone: '+919876543211',
+  wifi_name: 'LakesideGuest',
+  wifi_password: 'private-password',
+  house_manual: 'Read the printed guide',
+  checkout_instructions: 'Return the key at reception',
 };
 const reservation = {
   id: 'reservation-a',
@@ -77,6 +95,7 @@ function baseSeed(overrides: Record<string, Row[]> = {}) {
     contacts: [contact],
     pms_properties: [property],
     pms_reservations: [reservation],
+    property_communication_settings: [],
     ...overrides,
   };
 }
@@ -136,9 +155,11 @@ describe('buildMessageContext', () => {
       amount: '12500.50',
       currency: 'INR',
     });
-    expect(result.property).toEqual({
+    expect(result.property).toMatchObject({
       id: 'property-a',
       name: 'Lakeside Meadows',
+      map_url: null,
+      wifi_password: null,
     });
     expect(result.contact?.id).toBe('contact-a');
   });
@@ -184,6 +205,62 @@ describe('buildMessageContext', () => {
       ),
       'entity_not_found'
     );
+  });
+
+  it('loads communication settings only for the canonical property and account', async () => {
+    const { client, calls } = fakeDb(
+      baseSeed({ property_communication_settings: [communicationSettings] })
+    );
+    const result = await buildMessageContext(
+      { accountId: 'account-a', propertyId: 'property-a' },
+      client
+    );
+    expect(result.property).toMatchObject({
+      id: 'property-a',
+      name: 'Lakeside Meadows',
+      map_url: 'https://maps.example/lakeside',
+      checkin_method: 'Self check-in',
+      caretaker_name: 'Anil',
+      caretaker_phone: '+919876543210',
+      wifi_name: 'LakesideGuest',
+      wifi_password: 'private-password',
+      house_manual: 'Read the printed guide',
+    });
+    expect(calls).toContainEqual({
+      table: 'property_communication_settings',
+      filters: [
+        ['pms_property_id', 'property-a'],
+        ['account_id', 'account-a'],
+      ],
+    });
+  });
+
+  it('does not leak settings from another property or account', async () => {
+    const { client } = fakeDb(
+      baseSeed({
+        property_communication_settings: [
+          { ...communicationSettings, pms_property_id: 'property-b' },
+          { ...communicationSettings, account_id: 'account-b' },
+        ],
+      })
+    );
+    const result = await buildMessageContext(
+      { accountId: 'account-a', propertyId: 'property-a' },
+      client
+    );
+    expect(result.property?.map_url).toBeNull();
+    expect(result.property?.caretaker_phone).toBeNull();
+    expect(result.property?.wifi_password).toBeNull();
+  });
+
+  it('keeps canonical property name behavior and leaves timezone in pms_properties', async () => {
+    const { client } = fakeDb(baseSeed());
+    const result = await buildMessageContext(
+      { accountId: 'account-a', propertyId: 'property-a' },
+      client
+    );
+    expect(result.property?.name).toBe('Lakeside Meadows');
+    expect(result.property).not.toHaveProperty('timezone');
   });
 
   it('rejects conflicting reservation and property ids', async () => {

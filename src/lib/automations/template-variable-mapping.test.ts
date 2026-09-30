@@ -92,6 +92,31 @@ describe('automation template variable mapping', () => {
     ).toEqual([]);
   });
 
+  it('accepts new property catalog keys without hospitality-specific mapping logic', () => {
+    expect(
+      validateTemplateVariableMappings(template(), [
+        {
+          component: 'body',
+          position: 1,
+          source_type: 'catalog_variable',
+          variable_key: 'property.map_url',
+        },
+        {
+          component: 'body',
+          position: 2,
+          source_type: 'catalog_variable',
+          variable_key: 'property.caretaker_phone',
+        },
+        {
+          component: 'body',
+          position: 3,
+          source_type: 'catalog_variable',
+          variable_key: 'property.wifi_password',
+        },
+      ])
+    ).toEqual([]);
+  });
+
   it('surfaces unsupported dynamic URL buttons clearly', () => {
     expect(
       inspectTemplateVariableSlots(

@@ -18,6 +18,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { createClient } from '@/lib/supabase/client';
 import {
   parseReservation,
+  updateReservationQuery,
   type ReservationLifecycle,
   type ReservationRecord,
 } from '@/lib/reservations';
@@ -58,6 +59,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PropertySelector } from '@/components/properties/property-selector';
+import { useWorkspaceProperties } from '@/hooks/use-workspace-properties';
+import { selectedProperty } from '@/lib/properties/property-context';
 
 const PAGE_SIZE = 25;
 const LIFECYCLES = [
@@ -68,16 +72,6 @@ const LIFECYCLES = [
   'all',
 ] as const;
 type View = (typeof LIFECYCLES)[number];
-
-interface PropertyOption {
-  id: string;
-  name: string | null;
-  initial_sync_status: string;
-}
-interface IntegrationState {
-  status: string;
-  last_sync_at: string | null;
-}
 
 export function ReservationsPage() {
   const { accountId } = useAuth();
@@ -96,8 +90,7 @@ export function ReservationsPage() {
 
   const [searchDraft, setSearchDraft] = useState(search);
   const [rows, setRows] = useState<ReservationRecord[]>([]);
-  const [properties, setProperties] = useState<PropertyOption[]>([]);
-  const [integrations, setIntegrations] = useState<IntegrationState[]>([]);
+  const propertyContext = useWorkspaceProperties(accountId);
   const [channels, setChannels] = useState<string[]>([]);
   const [statuses, setStatuses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,12 +99,10 @@ export function ReservationsPage() {
 
   const setParams = useCallback(
     (changes: Record<string, string | null>) => {
-      const next = new URLSearchParams(params.toString());
-      for (const [key, value] of Object.entries(changes)) {
-        if (!value || value === 'all') next.delete(key);
-        else next.set(key, value);
-      }
-      if (!('page' in changes)) next.delete('page');
+      const next = updateReservationQuery(
+        new URLSearchParams(params.toString()),
+        changes
+      );
       router.replace(`/reservations${next.size ? `?${next}` : ''}`);
     },
     [params, router]
@@ -120,34 +111,45 @@ export function ReservationsPage() {
   useEffect(() => {
     if (!accountId) return;
     let active = true;
-    Promise.all([
-      supabase
-        .from('pms_properties')
-        .select('id, name, initial_sync_status')
-        .eq('account_id', accountId)
-        .order('name'),
-      supabase
-        .from('pms_integrations')
-        .select('status, last_sync_at')
-        .eq('account_id', accountId),
-      supabase.rpc('get_crm_reservation_filter_options', {
+    supabase
+      .rpc('get_crm_reservation_filter_options', {
         p_account_id: accountId,
-      }),
-    ]).then(([propertyResult, integrationResult, optionResult]) => {
-      if (!active) return;
-      setProperties((propertyResult.data ?? []) as PropertyOption[]);
-      setIntegrations((integrationResult.data ?? []) as IntegrationState[]);
-      const options = optionResult.data as {
-        channels?: unknown;
-        statuses?: unknown;
-      } | null;
-      setChannels(stringList(options?.channels));
-      setStatuses(stringList(options?.statuses));
-    });
+      })
+      .then((optionResult) => {
+        if (!active) return;
+        const options = optionResult.data as {
+          channels?: unknown;
+          statuses?: unknown;
+        } | null;
+        setChannels(stringList(options?.channels));
+        setStatuses(stringList(options?.statuses));
+      });
     return () => {
       active = false;
     };
   }, [accountId, supabase]);
+
+  useEffect(() => {
+    if (
+      property === 'all' ||
+      propertyContext.loading ||
+      selectedProperty(propertyContext.options, property)
+    ) {
+      return;
+    }
+    const next = new URLSearchParams(params.toString());
+    next.delete('property');
+    next.delete('page');
+    router.replace(`/reservations${next.size ? `?${next}` : ''}`, {
+      scroll: false,
+    });
+  }, [
+    params,
+    property,
+    propertyContext.loading,
+    propertyContext.options,
+    router,
+  ]);
 
   useEffect(() => {
     if (!accountId) return;
@@ -206,17 +208,19 @@ export function ReservationsPage() {
     from ||
     to
   );
-  const connected = integrations.some((item) => item.status === 'connected');
+  const connected = propertyContext.integrations.some(
+    (item) => item.status === 'connected'
+  );
   const syncing =
-    properties.some(
+    propertyContext.options.some(
       (item) =>
-        item.initial_sync_status === 'pending' ||
-        item.initial_sync_status === 'syncing'
+        item.initialSyncStatus === 'pending' ||
+        item.initialSyncStatus === 'syncing'
     ) ||
-    integrations.some(
+    propertyContext.integrations.some(
       (item) => item.status === 'provisioning' || item.status === 'pending'
     );
-  const lastSync = integrations
+  const lastSync = propertyContext.integrations
     .map((item) => item.last_sync_at)
     .filter(Boolean)
     .sort()
@@ -224,21 +228,29 @@ export function ReservationsPage() {
 
   return (
     <div className="space-y-4 px-4 py-3 sm:px-6 sm:py-4">
-      <header className="flex min-h-8 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <header className="flex min-h-9 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-muted-foreground text-sm">
           Guest stays synchronized from your connected PMS.
         </p>
-        {connected && (
-          <div className="border-border/70 bg-card text-muted-foreground inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs shadow-sm">
-            <span className="relative flex size-2">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-40" />
-              <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
-            </span>
-            <Wifi className="size-3.5" />
-            Connected
-            {lastSync ? ` · ${new Date(lastSync).toLocaleDateString()}` : ''}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <PropertySelector
+            options={propertyContext.options}
+            loading={propertyContext.loading}
+            value={property === 'all' ? null : property}
+            onValueChange={(propertyId) => setParams({ property: propertyId })}
+          />
+          {connected && (
+            <div className="border-border/70 bg-card text-muted-foreground inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs shadow-sm">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-40" />
+                <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+              </span>
+              <Wifi className="size-3.5" />
+              Connected
+              {lastSync ? ` · ${new Date(lastSync).toLocaleDateString()}` : ''}
+            </div>
+          )}
+        </div>
       </header>
 
       <Tabs
@@ -291,16 +303,7 @@ export function ReservationsPage() {
             </button>
           </div>
         </form>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:flex xl:shrink-0">
-          <FilterSelect
-            label="Property"
-            value={property}
-            values={properties.map((item) => ({
-              value: item.id,
-              label: item.name ?? 'Unnamed property',
-            }))}
-            onChange={(value) => setParams({ property: value })}
-          />
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:flex xl:shrink-0">
           <FilterSelect
             label="Channel"
             value={channel}

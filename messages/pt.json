@@ -474,6 +474,7 @@
         "nextStay": "Próxima estadia",
         "lastStay": "Última estadia",
         "bookingValue": "Valor das reservas",
+        "stayedAt": "Hospedou-se em",
         "guestSince": "Hóspede desde {date}",
         "viewAll": "Ver todas as {count} estadias",
         "currentGroup": "Atual",

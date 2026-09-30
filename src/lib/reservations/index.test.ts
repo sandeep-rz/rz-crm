@@ -4,6 +4,7 @@ import {
   classifyReservation,
   parseReservation,
   propertyDate,
+  updateReservationQuery,
 } from '.';
 
 const base = {
@@ -81,5 +82,30 @@ describe('reservation presentation', () => {
       ['INR', 150],
       ['USD', 20],
     ]);
+  });
+});
+
+describe('reservation URL property context', () => {
+  it('preserves property across lifecycle changes and resets pagination', () => {
+    const next = updateReservationQuery(
+      new URLSearchParams('property=p-1&channel=Airbnb&page=4'),
+      { view: 'cancelled' }
+    );
+    expect(next.get('property')).toBe('p-1');
+    expect(next.get('channel')).toBe('Airbnb');
+    expect(next.get('view')).toBe('cancelled');
+    expect(next.has('page')).toBe(false);
+  });
+
+  it('preserves property while paging and clears it on reset', () => {
+    const paged = updateReservationQuery(
+      new URLSearchParams('property=p-1&view=upcoming'),
+      { page: '2' }
+    );
+    expect(paged.get('property')).toBe('p-1');
+    expect(paged.get('page')).toBe('2');
+    expect(
+      updateReservationQuery(paged, { property: null }).has('property')
+    ).toBe(false);
   });
 });

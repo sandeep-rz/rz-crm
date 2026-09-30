@@ -29,6 +29,7 @@ import {
 } from '@/lib/contacts/pms-stays';
 import { cn } from '@/lib/utils';
 import { bookingTotalsByCurrency } from '@/lib/reservations';
+import { contactPropertyNames } from '@/lib/properties/property-context';
 
 export interface StayGuest {
   name: string | null;
@@ -100,6 +101,7 @@ export function ContactStaySummary({
   const totals = [...bookingTotalsByCurrency(stays)].map(([currency, amount]) =>
     formatStayTotal(amount, currency, locale)
   );
+  const stayedAt = contactPropertyNames(stays);
 
   return (
     <section aria-labelledby="stay-summary-title" className="space-y-3.5">
@@ -157,6 +159,24 @@ export function ContactStaySummary({
           value={totals.length ? totals.join(' · ') : '—'}
         />
       </dl>
+
+      {stayedAt.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-muted-foreground text-[11px] font-medium">
+            {t('staysTab.stayedAt')}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {stayedAt.map((propertyName) => (
+              <span
+                key={propertyName}
+                className="border-border bg-card rounded-full border px-2.5 py-1 text-xs font-medium"
+              >
+                {propertyName}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {relevant && (
         <StayRow

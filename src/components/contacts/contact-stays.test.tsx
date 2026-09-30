@@ -167,7 +167,7 @@ describe('ContactStays', () => {
     expect(html).toContain('sm:grid-cols-2');
   });
 
-  it('renders only the most relevant stay in the details summary', () => {
+  it('renders the most relevant stay plus a derived property summary', () => {
     const html = renderToStaticMarkup(
       <NextIntlClientProvider locale="en" messages={en}>
         <ContactStaySummary
@@ -187,8 +187,10 @@ describe('ContactStays', () => {
     );
     expect(html).toContain('Stay summary');
     expect(html).toContain('Current Villa');
-    expect(html).not.toContain('Old Cottage');
-    expect(html).not.toContain('Future Lodge');
+    expect(html).toContain('Stayed at');
+    expect(html).toContain('Old Cottage');
+    expect(html).toContain('Future Lodge');
+    expect(html.match(/Booking RZ-100/g)).toHaveLength(1);
     expect(html).toContain('View all 3 stays');
   });
 });

@@ -474,6 +474,7 @@
         "nextStay": "다음 숙박",
         "lastStay": "최근 숙박",
         "bookingValue": "예약 금액",
+        "stayedAt": "숙박한 숙소",
         "guestSince": "{date}부터 투숙객",
         "viewAll": "숙박 {count}건 모두 보기",
         "currentGroup": "현재",

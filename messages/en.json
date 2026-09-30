@@ -474,6 +474,7 @@
         "nextStay": "Next stay",
         "lastStay": "Last stay",
         "bookingValue": "Booking value",
+        "stayedAt": "Stayed at",
         "guestSince": "Guest since {date}",
         "viewAll": "View all {count} stays",
         "currentGroup": "Current",

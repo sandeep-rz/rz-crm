@@ -1,6 +1,19 @@
 export type ReservationLifecycle =
   'upcoming' | 'staying_now' | 'checked_out' | 'cancelled';
 
+export function updateReservationQuery(
+  current: URLSearchParams,
+  changes: Record<string, string | null>
+): URLSearchParams {
+  const next = new URLSearchParams(current.toString());
+  for (const [key, value] of Object.entries(changes)) {
+    if (!value || value === 'all') next.delete(key);
+    else next.set(key, value);
+  }
+  if (!('page' in changes)) next.delete('page');
+  return next;
+}
+
 export interface ReservationRecord {
   id: string;
   contactId: string | null;

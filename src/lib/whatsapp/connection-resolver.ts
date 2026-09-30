@@ -1,46 +1,46 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { decrypt } from '@/lib/whatsapp/encryption';
 
 export type WhatsAppConnectionEntity =
   | { type: 'broadcast'; id: string }
   | { type: 'automation'; id: string }
   | { type: 'flow'; id: string }
-  | { type: 'template'; id: string }
+  | { type: 'template'; id: string };
 
 export interface ResolveWhatsAppConnectionInput {
-  accountId: string
-  connectionId?: string | null
-  conversationId?: string | null
-  entity?: WhatsAppConnectionEntity | null
+  accountId: string;
+  connectionId?: string | null;
+  conversationId?: string | null;
+  entity?: WhatsAppConnectionEntity | null;
 }
 
 export interface ResolvedWhatsAppConnection {
-  id: string
-  accountId: string
-  userId: string
-  displayName: string
-  isPrimary: boolean
-  phoneNumberId: string
-  wabaId: string | null
-  accessToken: string
-  encryptedAccessToken: string
-  status: string
+  id: string;
+  accountId: string;
+  userId: string;
+  displayName: string;
+  isPrimary: boolean;
+  phoneNumberId: string;
+  wabaId: string | null;
+  accessToken: string;
+  encryptedAccessToken: string;
+  status: string;
 }
 
 export class WhatsAppConnectionError extends Error {
-  readonly code: 'not_found' | 'not_configured' | 'invalid_credentials'
-  readonly status: number
+  readonly code: 'not_found' | 'not_configured' | 'invalid_credentials';
+  readonly status: number;
 
   constructor(
     code: WhatsAppConnectionError['code'],
     message: string,
-    status: number,
+    status: number
   ) {
-    super(message)
-    this.name = 'WhatsAppConnectionError'
-    this.code = code
-    this.status = status
+    super(message);
+    this.name = 'WhatsAppConnectionError';
+    this.code = code;
+    this.status = status;
   }
 }
 
@@ -49,7 +49,7 @@ const ENTITY_TABLE = {
   automation: 'automations',
   flow: 'flows',
   template: 'message_templates',
-} as const
+} as const;
 
 /**
  * Resolve the one WhatsApp connection a server-side operation must use.
@@ -59,10 +59,10 @@ const ENTITY_TABLE = {
  */
 export async function resolveWhatsAppConnection(
   db: SupabaseClient,
-  input: ResolveWhatsAppConnectionInput,
+  input: ResolveWhatsAppConnectionInput
 ): Promise<ResolvedWhatsAppConnection> {
-  const { accountId } = input
-  let connectionId = input.connectionId ?? null
+  const { accountId } = input;
+  let connectionId = input.connectionId ?? null;
 
   if (!connectionId && input.conversationId) {
     const { data, error } = await db
@@ -70,9 +70,14 @@ export async function resolveWhatsAppConnection(
       .select('whatsapp_config_id')
       .eq('id', input.conversationId)
       .eq('account_id', accountId)
-      .maybeSingle()
-    if (error) throw new WhatsAppConnectionError('not_found', 'Conversation not found', 404)
-    connectionId = data?.whatsapp_config_id ?? null
+      .maybeSingle();
+    if (error)
+      throw new WhatsAppConnectionError(
+        'not_found',
+        'Conversation not found',
+        404
+      );
+    connectionId = data?.whatsapp_config_id ?? null;
   }
 
   if (!connectionId && input.entity) {
@@ -81,46 +86,56 @@ export async function resolveWhatsAppConnection(
       .select('whatsapp_config_id')
       .eq('id', input.entity.id)
       .eq('account_id', accountId)
-      .maybeSingle()
+      .maybeSingle();
     if (error || !data) {
-      throw new WhatsAppConnectionError('not_found', `${input.entity.type} not found`, 404)
+      throw new WhatsAppConnectionError(
+        'not_found',
+        `${input.entity.type} not found`,
+        404
+      );
     }
-    connectionId = data.whatsapp_config_id ?? null
+    connectionId = data.whatsapp_config_id ?? null;
   }
 
   let query = db
     .from('whatsapp_config')
-    .select('id, account_id, user_id, display_name, is_primary, phone_number_id, waba_id, access_token, status')
-    .eq('account_id', accountId)
+    .select(
+      'id, account_id, user_id, display_name, is_primary, phone_number_id, waba_id, access_token, status'
+    )
+    .eq('account_id', accountId);
 
   query = connectionId
     ? query.eq('id', connectionId)
-    : query.eq('is_primary', true)
+    : query.eq('is_primary', true);
 
-  const { data: rows, error } = await query.limit(2)
+  const { data: rows, error } = await query.limit(2);
   if (error) {
-    throw new WhatsAppConnectionError('not_configured', 'Failed to load WhatsApp connection', 500)
+    throw new WhatsAppConnectionError(
+      'not_configured',
+      'Failed to load WhatsApp connection',
+      500
+    );
   }
-  const config = rows?.[0]
+  const config = rows?.[0];
   if (!config) {
     throw new WhatsAppConnectionError(
       connectionId ? 'not_found' : 'not_configured',
       connectionId
         ? 'WhatsApp connection not found for this workspace'
         : 'No primary WhatsApp connection is configured for this workspace',
-      connectionId ? 404 : 400,
-    )
+      connectionId ? 404 : 400
+    );
   }
 
-  let accessToken: string
+  let accessToken: string;
   try {
-    accessToken = decrypt(config.access_token)
+    accessToken = decrypt(config.access_token);
   } catch {
     throw new WhatsAppConnectionError(
       'invalid_credentials',
       'The selected WhatsApp connection credentials cannot be decrypted',
-      500,
-    )
+      500
+    );
   }
 
   return {
@@ -134,5 +149,5 @@ export async function resolveWhatsAppConnection(
     accessToken,
     encryptedAccessToken: config.access_token,
     status: config.status,
-  }
+  };
 }

@@ -73,19 +73,13 @@ function propertyFrom(value: unknown): PmsProperty {
   };
 }
 
-const reservationStatus = (
-  value: unknown
-): PmsReservation["status"] => {
-  if (
-    value === "pending" ||
-    value === "confirmed" ||
-    value === "cancelled"
-  ) {
+const reservationStatus = (value: unknown): PmsReservation['status'] => {
+  if (value === 'pending' || value === 'confirmed' || value === 'cancelled') {
     return value;
   }
 
   throw new PmsProviderError(
-    "invalid_response",
+    'invalid_response',
     `RZ PMS response has an invalid canonical reservation status: ${String(value)}.`
   );
 };
@@ -103,10 +97,7 @@ function reservationFrom(value: unknown): PmsReservation {
     externalListingId: stringValue(item.listing_id, 'listing_id')!,
     reservationCode: stringValue(item.reservation_code, 'reservation_code')!,
     status: reservationStatus(item.status),
-    providerStatus: stringValue(
-      item.provider_status,
-      'provider_status'
-    )!,
+    providerStatus: stringValue(item.provider_status, 'provider_status')!,
     checkIn: nullableString(item.check_in),
     checkOut: nullableString(item.check_out),
     guest: {

@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     if (!message_id || typeof emoji !== 'string') {
       return NextResponse.json(
         { error: 'message_id and emoji are required' },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -59,14 +59,18 @@ export async function POST(request: Request) {
       // No Meta ID yet — usually a sending/failed agent message. We can't
       // tell Meta to react to a message it never received.
       return NextResponse.json(
-        { error: 'Cannot react to a message that has not been sent to WhatsApp' },
-        { status: 400 },
+        {
+          error: 'Cannot react to a message that has not been sent to WhatsApp',
+        },
+        { status: 400 }
       );
     }
 
     const { data: conversation, error: convError } = await supabase
       .from('conversations')
-      .select('id, account_id, whatsapp_config_id, contact:contacts(phone, wa_user_id)')
+      .select(
+        'id, account_id, whatsapp_config_id, contact:contacts(phone, wa_user_id)'
+      )
       .eq('id', targetMessage.conversation_id)
       .eq('account_id', accountId)
       .maybeSingle();
@@ -74,7 +78,7 @@ export async function POST(request: Request) {
     if (convError || !conversation) {
       return NextResponse.json(
         { error: 'Conversation not found' },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -87,7 +91,7 @@ export async function POST(request: Request) {
     if (!sendTarget) {
       return NextResponse.json(
         { error: 'Contact has no phone number or WhatsApp user ID' },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -110,7 +114,7 @@ export async function POST(request: Request) {
       console.error('[whatsapp/react] Meta send failed:', message);
       return NextResponse.json(
         { error: `Meta API error: ${message}` },
-        { status: 502 },
+        { status: 502 }
       );
     }
 
@@ -127,28 +131,33 @@ export async function POST(request: Request) {
         console.error('[whatsapp/react] DB delete failed:', delError.message);
         return NextResponse.json(
           { error: 'Reaction sent to Meta but DB delete failed' },
-          { status: 500 },
+          { status: 500 }
         );
       }
     } else {
       // Upsert. The unique constraint (message_id, actor_type, actor_id)
       // lets us swap emoji in a single statement.
-      const { error: upsertError } = await supabase.from('message_reactions').upsert(
-        {
-          message_id: targetMessage.id,
-          conversation_id: targetMessage.conversation_id,
-          actor_type: 'agent',
-          actor_id: userId,
-          emoji,
-        },
-        { onConflict: 'message_id,actor_type,actor_id' },
-      );
+      const { error: upsertError } = await supabase
+        .from('message_reactions')
+        .upsert(
+          {
+            message_id: targetMessage.id,
+            conversation_id: targetMessage.conversation_id,
+            actor_type: 'agent',
+            actor_id: userId,
+            emoji,
+          },
+          { onConflict: 'message_id,actor_type,actor_id' }
+        );
 
       if (upsertError) {
-        console.error('[whatsapp/react] DB upsert failed:', upsertError.message);
+        console.error(
+          '[whatsapp/react] DB upsert failed:',
+          upsertError.message
+        );
         return NextResponse.json(
           { error: 'Reaction sent to Meta but DB upsert failed' },
-          { status: 500 },
+          { status: 500 }
         );
       }
     }

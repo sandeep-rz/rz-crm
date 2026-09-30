@@ -25,7 +25,8 @@ export default function NewBroadcastPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.new');
   const { accountId } = useAuth();
-  const { createAndSendBroadcast, isProcessing, progress } = useBroadcastSending();
+  const { createAndSendBroadcast, isProcessing, progress } =
+    useBroadcastSending();
 
   const [currentStep, setCurrentStep] = useState(0);
   const [template, setTemplate] = useState<MessageTemplate | null>(null);
@@ -45,7 +46,9 @@ export default function NewBroadcastPage() {
   >({});
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
-  const [connections, setConnections] = useState<Array<{ id: string; display_name: string; is_primary: boolean }>>([]);
+  const [connections, setConnections] = useState<
+    Array<{ id: string; display_name: string; is_primary: boolean }>
+  >([]);
   const [whatsappConfigId, setWhatsappConfigId] = useState('');
 
   useEffect(() => {
@@ -54,7 +57,11 @@ export default function NewBroadcastPage() {
       .then((payload) => {
         const rows = payload.connections ?? [];
         setConnections(rows);
-        setWhatsappConfigId(rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ?? rows[0]?.id ?? '');
+        setWhatsappConfigId(
+          rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ??
+            rows[0]?.id ??
+            ''
+        );
       })
       .catch(() => undefined);
   }, []);
@@ -148,15 +155,18 @@ export default function NewBroadcastPage() {
     <div className="mx-auto max-w-3xl space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('subtitle')}
-        </p>
+        <h1 className="text-foreground text-2xl font-bold">{t('title')}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t('subtitle')}</p>
       </div>
 
       {connections.length > 1 && (
         <div className="space-y-2">
-          <label htmlFor="broadcast-connection" className="text-sm font-medium text-foreground">Send from</label>
+          <label
+            htmlFor="broadcast-connection"
+            className="text-foreground text-sm font-medium"
+          >
+            Send from
+          </label>
           <select
             id="broadcast-connection"
             value={whatsappConfigId}
@@ -164,10 +174,12 @@ export default function NewBroadcastPage() {
               setWhatsappConfigId(event.target.value);
               setTemplate(null);
             }}
-            className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm"
+            className="border-border bg-background h-10 w-full rounded-md border px-3 text-sm"
           >
             {connections.map((connection) => (
-              <option key={connection.id} value={connection.id}>{connection.display_name}</option>
+              <option key={connection.id} value={connection.id}>
+                {connection.display_name}
+              </option>
             ))}
           </select>
         </div>
@@ -187,15 +199,19 @@ export default function NewBroadcastPage() {
                     isCompleted
                       ? 'bg-primary text-primary-foreground'
                       : isActive
-                        ? 'border-2 border-primary bg-primary/10 text-primary'
-                        : 'border border-border bg-muted text-muted-foreground'
+                        ? 'border-primary bg-primary/10 text-primary border-2'
+                        : 'border-border bg-muted text-muted-foreground border'
                   }`}
                 >
                   {isCompleted ? <Check className="h-4 w-4" /> : index + 1}
                 </div>
                 <span
                   className={`hidden text-sm font-medium sm:block ${
-                    isActive ? 'text-foreground' : isCompleted ? 'text-primary' : 'text-muted-foreground'
+                    isActive
+                      ? 'text-foreground'
+                      : isCompleted
+                        ? 'text-primary'
+                        : 'text-muted-foreground'
                   }`}
                 >
                   {t(`steps.${step.label}`)}

@@ -18,17 +18,27 @@ import type {
   WaitStepConfig,
   CreateDealStepConfig,
   AssignConversationStepConfig,
-} from '@/types'
-import { supabaseAdmin } from './admin-client'
-import { addContactTagIfAbsent, removeContactTag } from '@/lib/contacts/tag-write'
-import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from '@/lib/contacts/tag-chain'
-import { engineSendText, engineSendTemplate, engineSendInteractive } from './meta-send'
-import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
-import { isDeliverableUrl } from '@/lib/webhooks/ssrf'
-import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver'
-import { resolveConversationForContact } from '@/lib/whatsapp/resolve-conversation'
-import type { ReservationAutomationContext } from './pms-context'
-import { matchesReservationTriggerConfig } from './pms-scheduler'
+} from '@/types';
+import { supabaseAdmin } from './admin-client';
+import {
+  addContactTagIfAbsent,
+  removeContactTag,
+} from '@/lib/contacts/tag-write';
+import {
+  MAX_TAG_CHAIN_DEPTH,
+  getTagChainDepth,
+} from '@/lib/contacts/tag-chain';
+import {
+  engineSendText,
+  engineSendTemplate,
+  engineSendInteractive,
+} from './meta-send';
+import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
+import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
+import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
+import { resolveConversationForContact } from '@/lib/whatsapp/resolve-conversation';
+import type { ReservationAutomationContext } from './pms-context';
+import { matchesReservationTriggerConfig } from './pms-scheduler';
 
 // ------------------------------------------------------------
 // Public API
@@ -36,37 +46,37 @@ import { matchesReservationTriggerConfig } from './pms-scheduler'
 
 export interface AutomationContext {
   /** Raw message text, for keyword_match + message_content conditions. */
-  message_text?: string
+  message_text?: string;
   /** Conversation the event belongs to, if any. */
-  conversation_id?: string
+  conversation_id?: string;
   /** Arbitrary variables accumulated during execution. */
-  vars?: Record<string, unknown>
+  vars?: Record<string, unknown>;
   /** The tag id that was added, for tag_added trigger. */
-  tag_id?: string
+  tag_id?: string;
   /** Agent the conversation was assigned to, for conversation_assigned. */
-  agent_id?: string
+  agent_id?: string;
   /** Button / list-row id the customer tapped, for interactive_reply. */
-  interactive_reply_id?: string
+  interactive_reply_id?: string;
   /** Canonical, credential-free PMS projection for reservation triggers. */
-  reservation?: ReservationAutomationContext
+  reservation?: ReservationAutomationContext;
 }
 
 export interface AutomationExecutionResult {
-  logId: string | null
-  status: 'success' | 'partial' | 'failed' | 'processing' | 'suppressed'
-  errorMessage: string | null
+  logId: string | null;
+  status: 'success' | 'partial' | 'failed' | 'processing' | 'suppressed';
+  errorMessage: string | null;
   disposition:
     | 'executed'
     | 'already_completed'
     | 'already_running'
     | 'ineligible'
-    | 'reservation_changed'
+    | 'reservation_changed';
 }
 
 export interface AutomationExecutionIdentity {
-  triggerJobId: string
-  attemptCount: number
-  expectedReservationUpdatedAt: string
+  triggerJobId: string;
+  attemptCount: number;
+  expectedReservationUpdatedAt: string;
 }
 
 type PmsExecutionGateDisposition =
@@ -74,7 +84,7 @@ type PmsExecutionGateDisposition =
   | 'already_completed'
   | 'already_running'
   | 'ineligible'
-  | 'reservation_changed'
+  | 'reservation_changed';
 
 export interface DispatchInput {
   /** Account-level tenancy key. Drives the lookup of which active
@@ -82,10 +92,10 @@ export interface DispatchInput {
    *  isolation after migration 017. Replaces the previous `userId`
    *  field; the per-automation user_id is read off each row when
    *  needed (sender identity for outbound messages, log audit). */
-  accountId: string
-  triggerType: AutomationTriggerType
-  contactId?: string | null
-  context?: AutomationContext
+  accountId: string;
+  triggerType: AutomationTriggerType;
+  contactId?: string | null;
+  context?: AutomationContext;
 }
 
 /**
@@ -96,9 +106,11 @@ export interface DispatchInput {
  * All errors are caught and logged; per-automation failures are
  * recorded into automation_logs with status='failed'.
  */
-export async function runAutomationsForTrigger(input: DispatchInput): Promise<void> {
+export async function runAutomationsForTrigger(
+  input: DispatchInput
+): Promise<void> {
   try {
-    const db = supabaseAdmin()
+    const db = supabaseAdmin();
 
     // Tenant isolation. `contactId` can be caller-supplied (the manual
     // POST /api/automations/engine entrypoint reads it straight from the
@@ -113,14 +125,17 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
         .select('id')
         .eq('id', input.contactId)
         .eq('account_id', input.accountId)
-        .maybeSingle()
+        .maybeSingle();
       if (ownErr) {
-        console.error('[automations] contact ownership check failed:', ownErr)
-        return
+        console.error('[automations] contact ownership check failed:', ownErr);
+        return;
       }
       if (!owned) {
-        console.warn('[automations] contact not in account, refusing dispatch', input.contactId)
-        return
+        console.warn(
+          '[automations] contact not in account, refusing dispatch',
+          input.contactId
+        );
+        return;
       }
     }
 
@@ -129,24 +144,24 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
       .select('*')
       .eq('account_id', input.accountId)
       .eq('trigger_type', input.triggerType)
-      .eq('is_active', true)
+      .eq('is_active', true);
 
     if (error) {
-      console.error('[automations] fetch failed:', error)
-      return
+      console.error('[automations] fetch failed:', error);
+      return;
     }
-    if (!automations || automations.length === 0) return
+    if (!automations || automations.length === 0) return;
 
     for (const automation of automations as Automation[]) {
-      if (!triggerMatches(automation, input.context)) continue
+      if (!triggerMatches(automation, input.context)) continue;
       try {
-        await executeAutomation(automation, input)
+        await executeAutomation(automation, input);
       } catch (err) {
-        console.error('[automations] execute failed:', automation.id, err)
+        console.error('[automations] execute failed:', automation.id, err);
       }
     }
   } catch (err) {
-    console.error('[automations] dispatch failed:', err)
+    console.error('[automations] dispatch failed:', err);
   }
 }
 
@@ -158,18 +173,18 @@ export async function runAutomationsForTrigger(input: DispatchInput): Promise<vo
 export async function runAutomationForTrigger(
   automationId: string,
   input: DispatchInput,
-  executionIdentity?: AutomationExecutionIdentity,
+  executionIdentity?: AutomationExecutionIdentity
 ): Promise<AutomationExecutionResult | null> {
-  const db = supabaseAdmin()
+  const db = supabaseAdmin();
   if (input.contactId) {
     const { data: contact, error } = await db
       .from('contacts')
       .select('id')
       .eq('id', input.contactId)
       .eq('account_id', input.accountId)
-      .maybeSingle()
-    if (error) throw new Error('automation contact ownership check failed')
-    if (!contact) return null
+      .maybeSingle();
+    if (error) throw new Error('automation contact ownership check failed');
+    if (!contact) return null;
   }
   const { data, error } = await db
     .from('automations')
@@ -178,12 +193,12 @@ export async function runAutomationForTrigger(
     .eq('account_id', input.accountId)
     .eq('trigger_type', input.triggerType)
     .eq('is_active', true)
-    .maybeSingle()
-  if (error) throw new Error('automation lookup failed')
-  if (!data) return null
-  const automation = data as Automation
-  if (!triggerMatches(automation, input.context)) return null
-  return executeAutomation(automation, input, executionIdentity)
+    .maybeSingle();
+  if (error) throw new Error('automation lookup failed');
+  if (!data) return null;
+  const automation = data as Automation;
+  if (!triggerMatches(automation, input.context)) return null;
+  return executeAutomation(automation, input, executionIdentity);
 }
 
 /**
@@ -191,43 +206,47 @@ export async function runAutomationForTrigger(
  * endpoint after it grabs a due `automation_pending_executions` row.
  */
 export async function resumePendingExecution(pending: {
-  id: string
-  automation_id: string
+  id: string;
+  automation_id: string;
   /** Audit-only; the automation row carries account_id for tenancy. */
-  user_id: string
+  user_id: string;
   /** Account-scoped lookups read from the automation row, so this
    *  field is just here to mirror the row shape and keep the cron's
    *  pass-through self-documenting. */
-  account_id: string
-  contact_id: string | null
-  log_id: string | null
-  parent_step_id: string | null
-  branch: 'yes' | 'no' | null
-  next_step_position: number
-  context: AutomationContext
+  account_id: string;
+  contact_id: string | null;
+  log_id: string | null;
+  parent_step_id: string | null;
+  branch: 'yes' | 'no' | null;
+  next_step_position: number;
+  context: AutomationContext;
 }): Promise<void> {
-  const db = supabaseAdmin()
+  const db = supabaseAdmin();
   const { data: automation, error } = await db
     .from('automations')
     .select('*')
     .eq('id', pending.automation_id)
     .eq('account_id', pending.account_id)
     .eq('is_active', true)
-    .maybeSingle()
+    .maybeSingle();
 
   if (error) {
-    console.error('[automations] resume: automation lookup failed', pending.automation_id, error)
-    throw new Error('automation lookup failed while resuming continuation')
+    console.error(
+      '[automations] resume: automation lookup failed',
+      pending.automation_id,
+      error
+    );
+    throw new Error('automation lookup failed while resuming continuation');
   }
   if (!automation) {
     // Deactivation is a hard boundary for delayed continuations too. Treat a
     // missing/inactive/cross-account definition as terminally suppressed.
-    await markPending(pending.id, 'done')
-    return
+    await markPending(pending.id, 'done');
+    return;
   }
 
   if (!pending.log_id) {
-    throw new Error('wait continuation is missing its automation log identity')
+    throw new Error('wait continuation is missing its automation log identity');
   }
   const { data: log, error: logError } = await db
     .from('automation_logs')
@@ -235,13 +254,14 @@ export async function resumePendingExecution(pending: {
     .eq('id', pending.log_id)
     .eq('account_id', pending.account_id)
     .eq('automation_id', pending.automation_id)
-    .maybeSingle()
-  if (logError) throw new Error('wait continuation completion lookup failed')
-  if (!log) throw new Error('wait continuation automation log is invalid')
-  const completedIds = (log.completed_wait_continuation_ids as string[] | null) ?? []
+    .maybeSingle();
+  if (logError) throw new Error('wait continuation completion lookup failed');
+  if (!log) throw new Error('wait continuation automation log is invalid');
+  const completedIds =
+    (log.completed_wait_continuation_ids as string[] | null) ?? [];
   if (completedIds.includes(pending.id)) {
-    await markPending(pending.id, 'done')
-    return
+    await markPending(pending.id, 'done');
+    return;
   }
 
   await executeStepsFrom({
@@ -255,8 +275,8 @@ export async function resumePendingExecution(pending: {
     triggerEvent: 'resumed_wait',
     triggerJobExecution: false,
     continuationId: pending.id,
-  })
-  await markPending(pending.id, 'done')
+  });
+  await markPending(pending.id, 'done');
 }
 
 // ------------------------------------------------------------
@@ -266,11 +286,11 @@ export async function resumePendingExecution(pending: {
 async function executeAutomation(
   automation: Automation,
   input: DispatchInput,
-  executionIdentity?: AutomationExecutionIdentity,
+  executionIdentity?: AutomationExecutionIdentity
 ): Promise<AutomationExecutionResult | null> {
-  const db = supabaseAdmin()
+  const db = supabaseAdmin();
 
-  let log: { id: string }
+  let log: { id: string };
   if (executionIdentity) {
     const { data: gateData, error: gateError } = await db.rpc(
       'begin_pms_automation_execution',
@@ -280,44 +300,56 @@ async function executeAutomation(
         p_contact_id: input.contactId ?? null,
         p_expected_reservation_updated_at:
           executionIdentity.expectedReservationUpdatedAt,
-      },
-    )
-    const gate = (Array.isArray(gateData) ? gateData[0] : gateData) as
-      | { automation_log_id: string; disposition: PmsExecutionGateDisposition }
-      | null
+      }
+    );
+    const gate = (Array.isArray(gateData) ? gateData[0] : gateData) as {
+      automation_log_id: string;
+      disposition: PmsExecutionGateDisposition;
+    } | null;
     if (gateError || !gate) {
-      throw new Error(`cannot acquire PMS automation execution: ${gateError?.message ?? 'unknown error'}`)
+      throw new Error(
+        `cannot acquire PMS automation execution: ${gateError?.message ?? 'unknown error'}`
+      );
     }
-    if (gate.disposition === 'ineligible' || gate.disposition === 'reservation_changed') {
+    if (
+      gate.disposition === 'ineligible' ||
+      gate.disposition === 'reservation_changed'
+    ) {
       return {
         logId: null,
         status: 'suppressed',
         errorMessage: null,
         disposition: gate.disposition,
-      }
+      };
     }
     if (!gate.automation_log_id) {
-      throw new Error('cannot acquire PMS automation execution: missing log identity')
+      throw new Error(
+        'cannot acquire PMS automation execution: missing log identity'
+      );
     }
-    log = { id: gate.automation_log_id }
-    if (gate.disposition === 'already_completed' || gate.disposition === 'already_running') {
+    log = { id: gate.automation_log_id };
+    if (
+      gate.disposition === 'already_completed' ||
+      gate.disposition === 'already_running'
+    ) {
       const { data: existingLog, error: existingLogError } = await db
         .from('automation_logs')
         .select('status, error_message')
         .eq('id', log.id)
         .eq('trigger_job_id', executionIdentity.triggerJobId)
-        .single()
+        .single();
       if (existingLogError || !existingLog) {
-        throw new Error('cannot read existing PMS automation execution')
+        throw new Error('cannot read existing PMS automation execution');
       }
       return {
         logId: log.id,
-        status: gate.disposition === 'already_running'
-          ? 'processing'
-          : existingLog.status as AutomationExecutionResult['status'],
+        status:
+          gate.disposition === 'already_running'
+            ? 'processing'
+            : (existingLog.status as AutomationExecutionResult['status']),
         errorMessage: existingLog.error_message as string | null,
         disposition: gate.disposition,
-      }
+      };
     }
   } else {
     const { data: insertedLog, error: logErr } = await db
@@ -338,12 +370,14 @@ async function executeAutomation(
         status: 'failed',
       })
       .select()
-      .single()
+      .single();
 
     if (logErr || !insertedLog) {
-      throw new Error(`cannot create automation log: ${logErr?.message ?? 'unknown error'}`)
+      throw new Error(
+        `cannot create automation log: ${logErr?.message ?? 'unknown error'}`
+      );
     }
-    log = { id: insertedLog.id as string }
+    log = { id: insertedLog.id as string };
   }
 
   await executeStepsFrom({
@@ -356,88 +390,98 @@ async function executeAutomation(
     logId: log.id,
     triggerEvent: input.triggerType,
     triggerJobExecution: Boolean(executionIdentity),
-  })
+  });
 
   // Atomic counter update via the SQL function from migration 007.
   // Doing this with a client-side read-modify-write raced when the
   // same automation fired for two contacts simultaneously — both
   // would read N and both write N+1, losing one count permanently.
-  const { error: rpcErr } = await db.rpc('increment_automation_execution_count', {
-    p_automation_id: automation.id,
-  })
+  const { error: rpcErr } = await db.rpc(
+    'increment_automation_execution_count',
+    {
+      p_automation_id: automation.id,
+    }
+  );
   if (rpcErr) {
-    console.error('[automations] increment counter failed:', rpcErr)
+    console.error('[automations] increment counter failed:', rpcErr);
   }
 
   const { data: finalLog, error: finalLogError } = await db
     .from('automation_logs')
     .select('status, error_message')
     .eq('id', log.id)
-    .single()
+    .single();
   if (finalLogError || !finalLog) {
-    throw new Error('cannot read final automation execution status')
+    throw new Error('cannot read final automation execution status');
   }
   return {
     logId: log.id as string,
     status: finalLog.status as AutomationExecutionResult['status'],
     errorMessage: finalLog.error_message as string | null,
     disposition: 'executed',
-  }
+  };
 }
 
 interface ExecuteArgs {
-  automation: Automation
-  contactId: string | null
-  context: AutomationContext
-  parentStepId: string | null
-  branch: 'yes' | 'no' | null
-  startPosition: number
-  logId: string | null
-  triggerEvent: string
-  triggerJobExecution: boolean
+  automation: Automation;
+  contactId: string | null;
+  context: AutomationContext;
+  parentStepId: string | null;
+  branch: 'yes' | 'no' | null;
+  startPosition: number;
+  logId: string | null;
+  triggerEvent: string;
+  triggerJobExecution: boolean;
   /** Stable automation_pending_executions.id for a resumed Wait segment. */
-  continuationId?: string | null
+  continuationId?: string | null;
 }
 
 async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
-  const db = supabaseAdmin()
+  const db = supabaseAdmin();
 
   const baseQuery = db
     .from('automation_steps')
     .select('*')
     .eq('automation_id', args.automation.id)
     .gte('position', args.startPosition)
-    .order('position', { ascending: true })
+    .order('position', { ascending: true });
 
   const scoped =
     args.parentStepId === null
       ? baseQuery.is('parent_step_id', null)
-      : baseQuery.eq('parent_step_id', args.parentStepId).eq('branch', args.branch ?? 'yes')
+      : baseQuery
+          .eq('parent_step_id', args.parentStepId)
+          .eq('branch', args.branch ?? 'yes');
 
-  const { data: steps, error: stepsErr } = await scoped
+  const { data: steps, error: stepsErr } = await scoped;
 
   if (stepsErr) {
-    await finalizeLog(args.logId, 'failed', stepsErr.message, args.triggerJobExecution)
-    throw new Error('wait continuation step lookup failed')
+    await finalizeLog(
+      args.logId,
+      'failed',
+      stepsErr.message,
+      args.triggerJobExecution
+    );
+    throw new Error('wait continuation step lookup failed');
   }
   if (!steps || steps.length === 0) {
     if (args.parentStepId === null && args.logId) {
-      await finalizeLog(args.logId, 'success', null, args.triggerJobExecution)
+      await finalizeLog(args.logId, 'success', null, args.triggerJobExecution);
     }
-    await recordWaitContinuationCompleted(args)
-    return
+    await recordWaitContinuationCompleted(args);
+    return;
   }
 
-  const results: AutomationLogStepResult[] = []
-  let status: 'success' | 'partial' | 'failed' = 'success'
-  let errorMessage: string | null = null
+  const results: AutomationLogStepResult[] = [];
+  let status: 'success' | 'partial' | 'failed' = 'success';
+  let errorMessage: string | null = null;
 
   for (const step of steps as AutomationStep[]) {
     // `wait` is the suspension point: enqueue and stop processing this
     // scope. The cron endpoint will pick it up later.
     if (step.step_type === 'wait') {
-      const cfg = step.step_config as WaitStepConfig
-      const ms = waitMs(cfg)
+      const cfg = step.step_config as WaitStepConfig;
+      const ms = waitMs(cfg);
       await db.from('automation_pending_executions').insert({
         automation_id: args.automation.id,
         // Tenancy: account_id required NOT NULL post-017.
@@ -451,29 +495,35 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         context: args.context,
         run_at: new Date(Date.now() + ms).toISOString(),
         status: 'pending',
-      })
+      });
       results.push({
         step_id: step.id,
         step_type: step.step_type,
         status: 'success',
         detail: `waiting ${cfg.amount} ${cfg.unit}`,
-      })
-      status = 'partial'
-      await appendResults(args.logId, results, status, errorMessage, args.triggerJobExecution)
-      await recordWaitContinuationCompleted(args)
-      return
+      });
+      status = 'partial';
+      await appendResults(
+        args.logId,
+        results,
+        status,
+        errorMessage,
+        args.triggerJobExecution
+      );
+      await recordWaitContinuationCompleted(args);
+      return;
     }
 
     try {
       if (step.step_type === 'condition') {
-        const cfg = step.step_config as ConditionStepConfig
-        const taken = await evaluateCondition(cfg, args)
+        const cfg = step.step_config as ConditionStepConfig;
+        const taken = await evaluateCondition(cfg, args);
         results.push({
           step_id: step.id,
           step_type: 'condition',
           status: 'success',
           detail: `branch=${taken ? 'yes' : 'no'}`,
-        })
+        });
         // Recurse into the chosen branch at position 0 (children use their
         // own ordering within the branch scope).
         await executeStepsFrom({
@@ -483,85 +533,102 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
           startPosition: 0,
           logId: args.logId,
           continuationId: null,
-        })
-        continue
+        });
+        continue;
       }
 
-      const detail = await runStep(step, args)
+      const detail = await runStep(step, args);
       results.push({
         step_id: step.id,
         step_type: step.step_type,
         status: 'success',
         detail,
-      })
+      });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = err instanceof Error ? err.message : String(err);
       results.push({
         step_id: step.id,
         step_type: step.step_type,
         status: 'failed',
         detail: msg,
-      })
-      status = 'failed'
-      errorMessage = msg
-      break
+      });
+      status = 'failed';
+      errorMessage = msg;
+      break;
     }
   }
 
   if (args.parentStepId === null) {
-    await appendResults(args.logId, results, status, errorMessage, args.triggerJobExecution)
+    await appendResults(
+      args.logId,
+      results,
+      status,
+      errorMessage,
+      args.triggerJobExecution
+    );
   } else {
     // Nested branch — just append results; parent scope decides final status.
-    await appendResults(args.logId, results, null, errorMessage, args.triggerJobExecution)
+    await appendResults(
+      args.logId,
+      results,
+      null,
+      errorMessage,
+      args.triggerJobExecution
+    );
   }
-  await recordWaitContinuationCompleted(args)
+  await recordWaitContinuationCompleted(args);
 }
 
-async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string> {
-  const db = supabaseAdmin()
+async function runStep(
+  step: AutomationStep,
+  args: ExecuteArgs
+): Promise<string> {
+  const db = supabaseAdmin();
 
   switch (step.step_type) {
     case 'send_message': {
-      const cfg = step.step_config as SendMessageStepConfig
-      if (!args.contactId) throw new Error('send_message needs a contact')
-      const text = interpolate(cfg.text, args)
-      if (!text.trim()) throw new Error('send_message has empty text')
-      const conversationId = await resolveConversationId(args)
+      const cfg = step.step_config as SendMessageStepConfig;
+      if (!args.contactId) throw new Error('send_message needs a contact');
+      const text = interpolate(cfg.text, args);
+      if (!text.trim()) throw new Error('send_message has empty text');
+      const conversationId = await resolveConversationId(args);
       const { whatsapp_message_id } = await engineSendText({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
         conversationId,
         contactId: args.contactId,
         text,
-      })
-      return `sent via Meta (${whatsapp_message_id})`
+      });
+      return `sent via Meta (${whatsapp_message_id})`;
     }
 
     case 'send_buttons':
     case 'send_list': {
-      const payload = step.step_config as SendButtonsStepConfig | SendListStepConfig
-      if (!args.contactId) throw new Error(`${step.step_type} needs a contact`)
+      const payload = step.step_config as
+        SendButtonsStepConfig | SendListStepConfig;
+      if (!args.contactId) throw new Error(`${step.step_type} needs a contact`);
       // Validate against Meta's limits before the network call so a bad
       // payload surfaces as a clear failed-step detail rather than a raw
       // Meta 400 mid-conversation.
-      const check = validateInteractivePayload(payload)
-      if (!check.ok) throw new Error(check.error)
-      const conversationId = await resolveConversationId(args)
+      const check = validateInteractivePayload(payload);
+      if (!check.ok) throw new Error(check.error);
+      const conversationId = await resolveConversationId(args);
       const { whatsapp_message_id } = await engineSendInteractive({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
         conversationId,
         contactId: args.contactId,
         payload,
-      })
-      return `interactive sent via Meta (${whatsapp_message_id})`
+      });
+      return `interactive sent via Meta (${whatsapp_message_id})`;
     }
 
     case 'send_template': {
-      const cfg = step.step_config as SendTemplateStepConfig
-      if (!args.contactId) throw new Error('send_template needs a contact')
-      if (!cfg.template_name) throw new Error('send_template needs template_name')
-      const conversationId = await resolveConversationId(args)
+      const cfg = step.step_config as SendTemplateStepConfig;
+      if (!args.contactId) throw new Error('send_template needs a contact');
+      if (!cfg.template_name)
+        throw new Error('send_template needs template_name');
+      const conversationId = await resolveConversationId(args);
       // Meta templates use positional {{1}}, {{2}}, … placeholders, so
       // we MUST emit params in strict numeric order. Lexicographic sort
       // of "1", "2", …, "10" yields "1", "10", "2", … which silently
@@ -569,17 +636,17 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       const params = cfg.variables
         ? Object.keys(cfg.variables)
             .sort((a, b) => {
-              const na = Number(a)
-              const nb = Number(b)
-              const aNum = Number.isFinite(na)
-              const bNum = Number.isFinite(nb)
-              if (aNum && bNum) return na - nb
-              if (aNum) return -1
-              if (bNum) return 1
-              return a.localeCompare(b)
+              const na = Number(a);
+              const nb = Number(b);
+              const aNum = Number.isFinite(na);
+              const bNum = Number.isFinite(nb);
+              if (aNum && bNum) return na - nb;
+              if (aNum) return -1;
+              if (bNum) return 1;
+              return a.localeCompare(b);
             })
             .map((k) => interpolate(String(cfg.variables![k]), args))
-        : []
+        : [];
       const { whatsapp_message_id } = await engineSendTemplate({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
@@ -588,29 +655,30 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         templateName: cfg.template_name,
         language: cfg.language,
         params,
-      })
-      return `template sent via Meta (${whatsapp_message_id})`
+      });
+      return `template sent via Meta (${whatsapp_message_id})`;
     }
 
     case 'add_tag': {
-      const cfg = step.step_config as TagStepConfig
-      if (!args.contactId || !cfg.tag_id) throw new Error('add_tag needs contact + tag_id')
+      const cfg = step.step_config as TagStepConfig;
+      if (!args.contactId || !cfg.tag_id)
+        throw new Error('add_tag needs contact + tag_id');
       const added = await addContactTagIfAbsent(db, {
         accountId: args.automation.account_id,
         contactId: args.contactId,
         tagId: cfg.tag_id,
-      })
-      if (!added) return `tag ${cfg.tag_id} already present`
+      });
+      if (!added) return `tag ${cfg.tag_id} already present`;
 
-      const depth = getTagChainDepth(args.context)
+      const depth = getTagChainDepth(args.context);
       if (depth >= MAX_TAG_CHAIN_DEPTH) {
         console.warn('[automations] tag_added chain depth limit reached', {
           automationId: args.automation.id,
           contactId: args.contactId,
           tagId: cfg.tag_id,
           depth,
-        })
-        return `tag ${cfg.tag_id} added; tag_added dispatch skipped at depth ${depth}`
+        });
+        return `tag ${cfg.tag_id} added; tag_added dispatch skipped at depth ${depth}`;
       }
 
       await runAutomationsForTrigger({
@@ -625,63 +693,70 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
             _tag_chain_depth: depth + 1,
           },
         },
-      })
-      return `tag ${cfg.tag_id} added and tag_added dispatched`
+      });
+      return `tag ${cfg.tag_id} added and tag_added dispatched`;
     }
 
     case 'remove_tag': {
-      const cfg = step.step_config as TagStepConfig
-      if (!args.contactId || !cfg.tag_id) throw new Error('remove_tag needs contact + tag_id')
+      const cfg = step.step_config as TagStepConfig;
+      if (!args.contactId || !cfg.tag_id)
+        throw new Error('remove_tag needs contact + tag_id');
       await removeContactTag(db, {
         accountId: args.automation.account_id,
         contactId: args.contactId,
         tagId: cfg.tag_id,
-      })
-      return `tag ${cfg.tag_id} removed`
+      });
+      return `tag ${cfg.tag_id} removed`;
     }
 
     case 'assign_conversation': {
-      const cfg = step.step_config as AssignConversationStepConfig
-      if (!args.contactId) throw new Error('assign_conversation needs a contact')
-      let agentId = cfg.agent_id
+      const cfg = step.step_config as AssignConversationStepConfig;
+      if (!args.contactId)
+        throw new Error('assign_conversation needs a contact');
+      let agentId = cfg.agent_id;
       if (cfg.mode === 'round_robin') {
-        const { data, error } = await db.rpc('claim_automation_round_robin_assignee', {
-          p_account_id: args.automation.account_id,
-        })
-        if (error) throw new Error('round-robin assignment failed')
-        agentId = data as string | undefined
+        const { data, error } = await db.rpc(
+          'claim_automation_round_robin_assignee',
+          {
+            p_account_id: args.automation.account_id,
+          }
+        );
+        if (error) throw new Error('round-robin assignment failed');
+        agentId = data as string | undefined;
       } else if (agentId) {
         const { data: membership, error } = await db
           .from('account_members')
           .select('user_id')
           .eq('account_id', args.automation.account_id)
           .eq('user_id', agentId)
-          .maybeSingle()
-        if (error) throw new Error('conversation assignee validation failed')
-        if (!membership) throw new Error('conversation assignee is not eligible')
+          .maybeSingle();
+        if (error) throw new Error('conversation assignee validation failed');
+        if (!membership)
+          throw new Error('conversation assignee is not eligible');
       }
-      if (!agentId) return 'no agent resolved'
+      if (!agentId) return 'no agent resolved';
       await db
         .from('conversations')
         .update({ assigned_agent_id: agentId })
         .eq('account_id', args.automation.account_id)
-        .eq('contact_id', args.contactId)
-      return `assigned to ${agentId}`
+        .eq('contact_id', args.contactId);
+      return `assigned to ${agentId}`;
     }
 
     case 'update_contact_field': {
-      const cfg = step.step_config as UpdateContactFieldStepConfig
-      if (!args.contactId) throw new Error('update_contact_field needs a contact')
+      const cfg = step.step_config as UpdateContactFieldStepConfig;
+      if (!args.contactId)
+        throw new Error('update_contact_field needs a contact');
       // Resolve workflow variables ({{ vars.* }}, {{ message.text }}) so custom
       // values can be populated dynamically from the triggering context.
-      const value = interpolate(cfg.value, args)
+      const value = interpolate(cfg.value, args);
 
       // Custom fields are encoded as `custom:<custom_field_id>`; anything else
       // is a built-in contact column.
       if (cfg.field.startsWith('custom:')) {
-        const customFieldId = cfg.field.slice('custom:'.length)
+        const customFieldId = cfg.field.slice('custom:'.length);
         if (!customFieldId) {
-          return `field ${cfg.field} not writable from automations`
+          return `field ${cfg.field} not writable from automations`;
         }
         // Defense in depth: the service-role client bypasses RLS, so confirm
         // the field definition belongs to this account before writing.
@@ -690,25 +765,27 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
           .select('id')
           .eq('id', customFieldId)
           .eq('account_id', args.automation.account_id)
-          .maybeSingle()
+          .maybeSingle();
         if (!field) {
-          return `field ${cfg.field} not writable from automations`
+          return `field ${cfg.field} not writable from automations`;
         }
         // Upsert on the table's UNIQUE(contact_id, custom_field_id) so repeated
         // runs overwrite rather than duplicate. Tenancy is enforced above and,
         // for the contact side, by the entry-point ownership guard.
-        await db
-          .from('contact_custom_values')
-          .upsert(
-            { contact_id: args.contactId, custom_field_id: customFieldId, value },
-            { onConflict: 'contact_id,custom_field_id' },
-          )
-        return `custom field updated`
+        await db.from('contact_custom_values').upsert(
+          {
+            contact_id: args.contactId,
+            custom_field_id: customFieldId,
+            value,
+          },
+          { onConflict: 'contact_id,custom_field_id' }
+        );
+        return `custom field updated`;
       }
 
-      const allowed = new Set(['name', 'email', 'company'])
+      const allowed = new Set(['name', 'email', 'company']);
       if (!allowed.has(cfg.field)) {
-        return `field ${cfg.field} not writable from automations`
+        return `field ${cfg.field} not writable from automations`;
       }
       // Defense in depth: scope the service-role write to the account so
       // a future caller that skips the entry-point ownership guard still
@@ -717,33 +794,42 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         .from('contacts')
         .update({ [cfg.field]: value, updated_at: new Date().toISOString() })
         .eq('id', args.contactId)
-        .eq('account_id', args.automation.account_id)
-      return `${cfg.field} updated`
+        .eq('account_id', args.automation.account_id);
+      return `${cfg.field} updated`;
     }
 
     case 'create_deal': {
-      const cfg = step.step_config as CreateDealStepConfig
-      if (!cfg.pipeline_id || !cfg.stage_id) throw new Error('create_deal needs pipeline + stage')
-      if (!args.contactId) throw new Error('create_deal needs a contact')
+      const cfg = step.step_config as CreateDealStepConfig;
+      if (!cfg.pipeline_id || !cfg.stage_id)
+        throw new Error('create_deal needs pipeline + stage');
+      if (!args.contactId) throw new Error('create_deal needs a contact');
       const [contactResult, pipelineResult, stageResult] = await Promise.all([
-        db.from('contacts').select('id')
+        db
+          .from('contacts')
+          .select('id')
           .eq('id', args.contactId)
           .eq('account_id', args.automation.account_id)
           .maybeSingle(),
-        db.from('pipelines').select('id')
+        db
+          .from('pipelines')
+          .select('id')
           .eq('id', cfg.pipeline_id)
           .eq('account_id', args.automation.account_id)
           .maybeSingle(),
-        db.from('pipeline_stages').select('id')
+        db
+          .from('pipeline_stages')
+          .select('id')
           .eq('id', cfg.stage_id)
           .eq('pipeline_id', cfg.pipeline_id)
           .maybeSingle(),
-      ])
+      ]);
       if (contactResult.error || pipelineResult.error || stageResult.error) {
-        throw new Error('create_deal resource validation failed')
+        throw new Error('create_deal resource validation failed');
       }
       if (!contactResult.data || !pipelineResult.data || !stageResult.data) {
-        throw new Error('create_deal resources are not valid for this workspace')
+        throw new Error(
+          'create_deal resources are not valid for this workspace'
+        );
       }
       // Match the account's configured default currency rather than
       // the static `deals.currency` DB default — keeps automation-
@@ -754,7 +840,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         .from('accounts')
         .select('default_currency')
         .eq('id', args.automation.account_id)
-        .maybeSingle()
+        .maybeSingle();
       const { error: insertError } = await db.from('deals').insert({
         // Tenancy + audit, same split as automation_logs above.
         account_id: args.automation.account_id,
@@ -766,22 +852,24 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         value: cfg.value ?? 0,
         currency: acct?.default_currency ?? 'USD',
         status: 'open',
-      })
-      if (insertError) throw new Error('create_deal insert failed')
-      return 'deal created'
+      });
+      if (insertError) throw new Error('create_deal insert failed');
+      return 'deal created';
     }
 
     case 'send_webhook': {
-      const cfg = step.step_config as SendWebhookStepConfig
-      if (!cfg.url) throw new Error('send_webhook needs url')
+      const cfg = step.step_config as SendWebhookStepConfig;
+      if (!cfg.url) throw new Error('send_webhook needs url');
       // SSRF guard: the URL and headers are account-controlled and the
       // server makes the request, so refuse any destination that resolves
       // to a private / loopback / link-local / reserved address. Mirrors
       // the webhook_endpoints delivery path (see lib/webhooks/deliver.ts).
       if (!(await isDeliverableUrl(cfg.url))) {
-        throw new Error('send_webhook: destination not allowed')
+        throw new Error('send_webhook: destination not allowed');
       }
-      const body = cfg.body_template ? interpolate(cfg.body_template, args) : JSON.stringify(args.context)
+      const body = cfg.body_template
+        ? interpolate(cfg.body_template, args)
+        : JSON.stringify(args.context);
       const res = await fetch(cfg.url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}) },
@@ -791,23 +879,24 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         // so a hung/slow internal host can't tie up the runner.
         redirect: 'manual',
         signal: AbortSignal.timeout(10_000),
-      })
-      if (!res.ok) throw new Error(`webhook returned ${res.status}`)
-      return `webhook ${res.status}`
+      });
+      if (!res.ok) throw new Error(`webhook returned ${res.status}`);
+      return `webhook ${res.status}`;
     }
 
     case 'close_conversation': {
-      if (!args.contactId) throw new Error('close_conversation needs a contact')
+      if (!args.contactId)
+        throw new Error('close_conversation needs a contact');
       await db
         .from('conversations')
         .update({ status: 'closed', updated_at: new Date().toISOString() })
         .eq('account_id', args.automation.account_id)
-        .eq('contact_id', args.contactId)
-      return 'conversation closed'
+        .eq('contact_id', args.contactId);
+      return 'conversation closed';
     }
 
     default:
-      return `unknown step: ${step.step_type}`
+      return `unknown step: ${step.step_type}`;
   }
 }
 
@@ -823,49 +912,54 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
  * no meaningful target without a conversation.
  */
 async function resolveConversationId(args: ExecuteArgs): Promise<string> {
-  const fromCtx = args.context.conversation_id
+  const fromCtx = args.context.conversation_id;
   if (fromCtx) {
-    if (!args.contactId) throw new Error('cannot validate conversation: no contact')
+    if (!args.contactId)
+      throw new Error('cannot validate conversation: no contact');
     const { data, error } = await supabaseAdmin()
       .from('conversations')
       .select('id')
       .eq('id', fromCtx)
       .eq('account_id', args.automation.account_id)
       .eq('contact_id', args.contactId)
-      .maybeSingle()
-    if (error) throw new Error('conversation ownership check failed')
-    if (!data) throw new Error('conversation is not valid for this workspace contact')
-    return data.id as string
+      .maybeSingle();
+    if (error) throw new Error('conversation ownership check failed');
+    if (!data)
+      throw new Error('conversation is not valid for this workspace contact');
+    return data.id as string;
   }
-  if (!args.contactId) throw new Error('cannot resolve conversation: no contact')
+  if (!args.contactId)
+    throw new Error('cannot resolve conversation: no contact');
   const connection = await resolveWhatsAppConnection(supabaseAdmin(), {
     accountId: args.automation.account_id,
     connectionId: args.automation.whatsapp_config_id,
     entity: { type: 'automation', id: args.automation.id },
-  })
-  const db = supabaseAdmin()
+  });
+  const db = supabaseAdmin();
   const { data, error } = await db
     .from('conversations')
     .select('id')
     .eq('account_id', args.automation.account_id)
     .eq('contact_id', args.contactId)
     .eq('whatsapp_config_id', connection.id)
-    .maybeSingle()
-  if (error) throw new Error(`conversation lookup failed: ${error.message}`)
-  if (data?.id) return data.id as string
+    .maybeSingle();
+  if (error) throw new Error(`conversation lookup failed: ${error.message}`);
+  if (data?.id) return data.id as string;
   if (args.triggerEvent === 'tag_added') {
-    throw new Error('tag_added automation cannot send: contact has no existing conversation')
+    throw new Error(
+      'tag_added automation cannot send: contact has no existing conversation'
+    );
   }
   const resolved = await resolveConversationForContact(db, {
     accountId: args.automation.account_id,
     contactId: args.contactId,
     connectionId: connection.id,
-  })
-  return resolved.conversationId
+  });
+  return resolved.conversationId;
 }
 
 /** Letter, digit or underscore in any script — the "inside a word" test. */
-const WORD_CHAR = '[\\p{L}\\p{N}_]'
+const WORD_CHAR = '[\\p{L}\\p{N}_]';
 
 /**
  * Whole-word keyword test, behind `match_type: 'word'` (issue #409 — a
@@ -890,53 +984,60 @@ const WORD_CHAR = '[\\p{L}\\p{N}_]'
 export function matchesWholeWord(
   text: string,
   keyword: string,
-  caseSensitive = false,
+  caseSensitive = false
 ): boolean {
-  if (!keyword) return false
+  if (!keyword) return false;
   // The keyword is account-supplied free text, so metacharacters have to
   // be literal — otherwise "(" is an unterminated group and RegExp throws.
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(
     `(?<!${WORD_CHAR})${escaped}(?!${WORD_CHAR})`,
-    caseSensitive ? 'u' : 'iu',
-  )
-  return pattern.test(text)
+    caseSensitive ? 'u' : 'iu'
+  );
+  return pattern.test(text);
 }
 
-export function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {
+export function triggerMatches(
+  automation: Automation,
+  ctx: AutomationContext | undefined
+): boolean {
   if (automation.trigger_type === 'keyword_match') {
-    const cfg = automation.trigger_config as KeywordMatchTriggerConfig
-    if (!cfg?.keywords || cfg.keywords.length === 0) return false
-    const text = (ctx?.message_text ?? '').toString()
-    if (!text) return false
+    const cfg = automation.trigger_config as KeywordMatchTriggerConfig;
+    if (!cfg?.keywords || cfg.keywords.length === 0) return false;
+    const text = (ctx?.message_text ?? '').toString();
+    if (!text) return false;
     if (cfg.match_type === 'word') {
       return cfg.keywords.some((raw) =>
-        matchesWholeWord(text, raw, cfg.case_sensitive),
-      )
+        matchesWholeWord(text, raw, cfg.case_sensitive)
+      );
     }
-    const haystack = cfg.case_sensitive ? text : text.toLowerCase()
+    const haystack = cfg.case_sensitive ? text : text.toLowerCase();
     return cfg.keywords.some((raw) => {
-      const k = cfg.case_sensitive ? raw : raw.toLowerCase()
-      return cfg.match_type === 'exact' ? haystack === k : haystack.includes(k)
-    })
+      const k = cfg.case_sensitive ? raw : raw.toLowerCase();
+      return cfg.match_type === 'exact' ? haystack === k : haystack.includes(k);
+    });
   }
 
   // Match on the tapped button / list-row id (exact). Lets multi-step
   // menus be chained: automation A sends buttons, automation B fires on
   // the reply id and sends the next step.
   if (automation.trigger_type === 'interactive_reply') {
-    const cfg = automation.trigger_config as InteractiveReplyTriggerConfig
-    const replyId = ctx?.interactive_reply_id
-    if (!replyId || !Array.isArray(cfg?.reply_ids) || cfg.reply_ids.length === 0) {
-      return false
+    const cfg = automation.trigger_config as InteractiveReplyTriggerConfig;
+    const replyId = ctx?.interactive_reply_id;
+    if (
+      !replyId ||
+      !Array.isArray(cfg?.reply_ids) ||
+      cfg.reply_ids.length === 0
+    ) {
+      return false;
     }
-    return cfg.reply_ids.includes(replyId)
+    return cfg.reply_ids.includes(replyId);
   }
 
   if (automation.trigger_type === 'tag_added') {
-    const cfg = automation.trigger_config as TagTriggerConfig
-    const tagId = ctx?.tag_id
-    return Boolean(tagId && cfg?.tag_id && cfg.tag_id === tagId)
+    const cfg = automation.trigger_config as TagTriggerConfig;
+    const tagId = ctx?.tag_id;
+    return Boolean(tagId && cfg?.tag_id && cfg.tag_id === tagId);
   }
 
   if (
@@ -951,19 +1052,22 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
       ctx?.reservation &&
       matchesReservationTriggerConfig(
         automation.trigger_config as PmsTriggerConfig,
-        ctx.reservation,
+        ctx.reservation
       )
-    )
+    );
   }
 
-  return true
+  return true;
 }
 
-async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): Promise<boolean> {
-  const db = supabaseAdmin()
+async function evaluateCondition(
+  cfg: ConditionStepConfig,
+  args: ExecuteArgs
+): Promise<boolean> {
+  const db = supabaseAdmin();
   switch (cfg.subject) {
     case 'tag_presence': {
-      if (!args.contactId || !cfg.operand) return false
+      if (!args.contactId || !cfg.operand) return false;
       // contact_tags has no account_id column (its RLS keys off the parent
       // contact), so tenant scoping here relies on the contact-ownership
       // guard in runAutomationsForTrigger.
@@ -971,11 +1075,11 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
         .from('contact_tags')
         .select('id', { count: 'exact', head: true })
         .eq('contact_id', args.contactId)
-        .eq('tag_id', cfg.operand)
-      return (count ?? 0) > 0
+        .eq('tag_id', cfg.operand);
+      return (count ?? 0) > 0;
     }
     case 'contact_field': {
-      if (!args.contactId || !cfg.operand) return false
+      if (!args.contactId || !cfg.operand) return false;
       // Scope to the account so the condition can't be turned into a
       // cross-tenant read oracle via the service-role client.
       const { data } = await db
@@ -983,67 +1087,76 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
         .select(cfg.operand)
         .eq('id', args.contactId)
         .eq('account_id', args.automation.account_id)
-        .maybeSingle()
-      const v = (data as Record<string, unknown> | null)?.[cfg.operand]
-      return v != null && String(v) === String(cfg.value ?? '')
+        .maybeSingle();
+      const v = (data as Record<string, unknown> | null)?.[cfg.operand];
+      return v != null && String(v) === String(cfg.value ?? '');
     }
     case 'message_content': {
-      const text = (args.context.message_text ?? '').toString()
-      return text.toLowerCase().includes((cfg.value ?? '').toLowerCase())
+      const text = (args.context.message_text ?? '').toString();
+      return text.toLowerCase().includes((cfg.value ?? '').toLowerCase());
     }
     case 'time_of_day': {
       // operand form "HH:mm-HH:mm" — true if now is within that window
       // (supports over-midnight ranges like "18:00-09:00").
-      const [from, to] = (cfg.operand ?? '').split('-')
-      if (!from || !to) return false
-      const now = new Date()
-      const mins = now.getHours() * 60 + now.getMinutes()
+      const [from, to] = (cfg.operand ?? '').split('-');
+      if (!from || !to) return false;
+      const now = new Date();
+      const mins = now.getHours() * 60 + now.getMinutes();
       const parse = (s: string) => {
-        const [h, m] = s.split(':').map(Number)
-        return (h || 0) * 60 + (m || 0)
-      }
-      const f = parse(from)
-      const t = parse(to)
-      return f <= t ? mins >= f && mins < t : mins >= f || mins < t
+        const [h, m] = s.split(':').map(Number);
+        return (h || 0) * 60 + (m || 0);
+      };
+      const f = parse(from);
+      const t = parse(to);
+      return f <= t ? mins >= f && mins < t : mins >= f || mins < t;
     }
     case 'property':
       return Boolean(
         args.context.reservation &&
         (args.context.reservation.property_id === (cfg.value ?? cfg.operand) ||
-          args.context.reservation.property_name === (cfg.value ?? cfg.operand)),
-      )
+          args.context.reservation.property_name === (cfg.value ?? cfg.operand))
+      );
     case 'channel':
       return Boolean(
         args.context.reservation &&
         (args.context.reservation.channel === (cfg.value ?? cfg.operand) ||
-          args.context.reservation.channel_name === (cfg.value ?? cfg.operand)),
-      )
+          args.context.reservation.channel_name === (cfg.value ?? cfg.operand))
+      );
     case 'reservation_status':
       return Boolean(
-        args.context.reservation?.reservation_status === (cfg.value ?? cfg.operand),
-      )
+        args.context.reservation?.reservation_status ===
+        (cfg.value ?? cfg.operand)
+      );
     default:
-      return false
+      return false;
   }
 }
 
 function waitMs(cfg: WaitStepConfig): number {
-  const unitMs = cfg.unit === 'days' ? 86_400_000 : cfg.unit === 'hours' ? 3_600_000 : 60_000
-  return Math.max(1_000, cfg.amount * unitMs)
+  const unitMs =
+    cfg.unit === 'days'
+      ? 86_400_000
+      : cfg.unit === 'hours'
+        ? 3_600_000
+        : 60_000;
+  return Math.max(1_000, cfg.amount * unitMs);
 }
 
 function interpolate(s: string, args: ExecuteArgs): string {
   return s.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, key) => {
-    const [ns, prop] = String(key).split('.')
-    if (ns === 'message' && prop === 'text') return String(args.context.message_text ?? '')
-    if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '')
+    const [ns, prop] = String(key).split('.');
+    if (ns === 'message' && prop === 'text')
+      return String(args.context.message_text ?? '');
+    if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '');
     if (ns === 'reservation' && prop) {
       return String(
-        args.context.reservation?.[prop as keyof ReservationAutomationContext] ?? '',
-      )
+        args.context.reservation?.[
+          prop as keyof ReservationAutomationContext
+        ] ?? ''
+      );
     }
-    return ''
-  })
+    return '';
+  });
 }
 
 async function appendResults(
@@ -1051,53 +1164,61 @@ async function appendResults(
   newItems: AutomationLogStepResult[],
   status: 'success' | 'partial' | 'failed' | null,
   errorMessage: string | null,
-  triggerJobExecution = false,
+  triggerJobExecution = false
 ) {
-  if (!logId) return
-  const db = supabaseAdmin()
+  if (!logId) return;
+  const db = supabaseAdmin();
   const { data: existing } = await db
     .from('automation_logs')
     .select('steps_executed, status')
     .eq('id', logId)
-    .single()
+    .single();
   const merged = [
-    ...((existing?.steps_executed as AutomationLogStepResult[] | undefined) ?? []),
+    ...((existing?.steps_executed as AutomationLogStepResult[] | undefined) ??
+      []),
     ...newItems,
-  ]
-  const update: Record<string, unknown> = { steps_executed: merged }
+  ];
+  const update: Record<string, unknown> = { steps_executed: merged };
   // Only overwrite status on the outermost scope — nested branches pass null.
   if (status !== null) {
-    update.status = status
+    update.status = status;
     if (triggerJobExecution) {
-      update.trigger_job_execution_state = status === 'failed' ? 'failed' : 'completed'
+      update.trigger_job_execution_state =
+        status === 'failed' ? 'failed' : 'completed';
     }
   }
-  if (errorMessage) update.error_message = errorMessage
-  await db.from('automation_logs').update(update).eq('id', logId)
+  if (errorMessage) update.error_message = errorMessage;
+  await db.from('automation_logs').update(update).eq('id', logId);
 }
 
 async function finalizeLog(
   logId: string | null,
   status: 'success' | 'partial' | 'failed',
   errorMessage: string | null,
-  triggerJobExecution = false,
+  triggerJobExecution = false
 ) {
-  if (!logId) return
+  if (!logId) return;
   await supabaseAdmin()
     .from('automation_logs')
     .update({
       status,
       error_message: errorMessage,
       ...(triggerJobExecution
-        ? { trigger_job_execution_state: status === 'failed' ? 'failed' : 'completed' }
+        ? {
+            trigger_job_execution_state:
+              status === 'failed' ? 'failed' : 'completed',
+          }
         : {}),
     })
-    .eq('id', logId)
+    .eq('id', logId);
 }
 
-async function recordWaitContinuationCompleted(args: ExecuteArgs): Promise<void> {
-  if (!args.continuationId) return
-  if (!args.logId) throw new Error('wait continuation is missing its automation log identity')
+async function recordWaitContinuationCompleted(
+  args: ExecuteArgs
+): Promise<void> {
+  if (!args.continuationId) return;
+  if (!args.logId)
+    throw new Error('wait continuation is missing its automation log identity');
   const { data, error } = await supabaseAdmin().rpc(
     'complete_automation_wait_continuation',
     {
@@ -1105,10 +1226,10 @@ async function recordWaitContinuationCompleted(args: ExecuteArgs): Promise<void>
       p_pending_execution_id: args.continuationId,
       p_account_id: args.automation.account_id,
       p_automation_id: args.automation.id,
-    },
-  )
+    }
+  );
   if (error || data !== true) {
-    throw new Error('wait continuation completion could not be recorded')
+    throw new Error('wait continuation completion could not be recorded');
   }
 }
 
@@ -1121,6 +1242,6 @@ async function markPending(id: string, status: 'done') {
       next_attempt_at: null,
       last_error: null,
     })
-    .eq('id', id)
-  if (error) throw new Error(`cannot mark pending execution ${status}`)
+    .eq('id', id);
+  if (error) throw new Error(`cannot mark pending execution ${status}`);
 }

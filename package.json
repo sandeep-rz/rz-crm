@@ -34,8 +34,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "prettier --config .prettierrc --write \"**/*.{ts,tsx,md,js,jsx,json}\"",
+    "format:check": "prettier --config .prettierrc --check \"**/*.{ts,tsx,md,js,jsx,json}\"",
     "test": "vitest run",
     "test:watch": "vitest"
   },

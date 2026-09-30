@@ -60,7 +60,10 @@ type PeekResult = PeekOk | PeekFail;
 // Message keys per peek failure reason — resolved through `t` inside
 // the component (hooks can't run at module level). Snake_case reasons
 // come from the API; the catalogue uses camelCase leaves.
-const FAIL_KEY: Record<PeekFail['reason'], 'notFound' | 'used' | 'expired' | 'serverError'> = {
+const FAIL_KEY: Record<
+  PeekFail['reason'],
+  'notFound' | 'used' | 'expired' | 'serverError'
+> = {
   not_found: 'notFound',
   used: 'used',
   expired: 'expired',
@@ -80,7 +83,7 @@ export default function JoinPage() {
   // route group, so it doesn't reach this page. We hit Supabase
   // directly the same way `/login` and `/signup` do.
   const [authedUserId, setAuthedUserId] = useState<string | null | undefined>(
-    undefined, // undefined = unknown / still loading; null = signed out
+    undefined // undefined = unknown / still loading; null = signed out
   );
   const [accepting, setAccepting] = useState(false);
 
@@ -144,7 +147,7 @@ export default function JoinPage() {
     try {
       const res = await fetch(
         `/api/invitations/${encodeURIComponent(token)}/redeem`,
-        { method: 'POST' },
+        { method: 'POST' }
       );
       if (!res.ok) {
         const payload = (await res.json().catch(() => ({}))) as {
@@ -170,10 +173,10 @@ export default function JoinPage() {
   // ----- Loading state (peek pending OR auth not yet resolved) -----
   if (peek === null || authedUserId === undefined) {
     return (
-      <Card className="w-full max-w-md border-border bg-card">
+      <Card className="border-border bg-card w-full max-w-md">
         <CardContent className="flex flex-col items-center gap-3 py-12">
-          <Loader2 className="size-6 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">{t('verifying')}</p>
+          <Loader2 className="text-primary size-6 animate-spin" />
+          <p className="text-muted-foreground text-sm">{t('verifying')}</p>
         </CardContent>
       </Card>
     );
@@ -183,12 +186,12 @@ export default function JoinPage() {
   if (!peek.ok) {
     const failKey = FAIL_KEY[peek.reason];
     return (
-      <Card className="w-full max-w-md border-border bg-card">
+      <Card className="border-border bg-card w-full max-w-md">
         <CardHeader className="items-center text-center">
           <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10">
             <MailX className="h-6 w-6 text-red-400" />
           </div>
-          <CardTitle className="text-xl text-foreground">
+          <CardTitle className="text-foreground text-xl">
             {t(`fail.${failKey}Title`)}
           </CardTitle>
           <CardDescription className="text-muted-foreground">
@@ -207,14 +210,14 @@ export default function JoinPage() {
             <>
               <Button
                 onClick={loadPeekAndAuth}
-                className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 w-full"
               >
                 {t('tryAgain')}
               </Button>
               <Link href="/signup">
                 <Button
                   variant="outline"
-                  className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                  className="border-border text-muted-foreground hover:bg-muted hover:text-foreground w-full"
                 >
                   {t('createNewAccount')}
                 </Button>
@@ -223,14 +226,14 @@ export default function JoinPage() {
           ) : (
             <>
               <Link href="/signup">
-                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+                <Button className="bg-primary text-primary-foreground hover:bg-primary/90 w-full">
                   {t('createNewAccount')}
                 </Button>
               </Link>
               <Link href="/login">
                 <Button
                   variant="outline"
-                  className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                  className="border-border text-muted-foreground hover:bg-muted hover:text-foreground w-full"
                 >
                   {t('signIn')}
                 </Button>
@@ -245,10 +248,10 @@ export default function JoinPage() {
   // ----- Peek OK -----
   const inviteHeader = (
     <CardHeader className="items-center text-center">
-      <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-        <UsersRound className="h-6 w-6 text-primary" />
+      <div className="bg-primary/10 mb-2 flex h-12 w-12 items-center justify-center rounded-xl">
+        <UsersRound className="text-primary h-6 w-6" />
       </div>
-      <CardTitle className="text-xl text-foreground">
+      <CardTitle className="text-foreground text-xl">
         {t.rich('invitedTo', {
           name: peek.account_name,
           account: (chunks) => <span className="text-primary">{chunks}</span>,
@@ -263,8 +266,8 @@ export default function JoinPage() {
             day: 'numeric',
           }),
           badge: (chunks) => (
-            <span className="inline-flex items-center gap-1 text-foreground">
-              <ShieldCheck className="size-3.5 text-primary" />
+            <span className="text-foreground inline-flex items-center gap-1">
+              <ShieldCheck className="text-primary size-3.5" />
               {chunks}
             </span>
           ),
@@ -277,13 +280,13 @@ export default function JoinPage() {
   if (authedUserId) {
     return (
       <>
-        <Card className="w-full max-w-md border-border bg-card">
+        <Card className="border-border bg-card w-full max-w-md">
           {inviteHeader}
           <CardContent className="flex flex-col gap-3">
             <Button
               onClick={handleAccept}
               disabled={accepting}
-              className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 w-full"
             >
               {accepting ? (
                 <>
@@ -297,30 +300,29 @@ export default function JoinPage() {
                 </>
               )}
             </Button>
-            <p className="text-center text-xs text-muted-foreground">
+            <p className="text-muted-foreground text-center text-xs">
               {t('acceptNote', { name: peek.account_name })}
             </p>
           </CardContent>
         </Card>
-
       </>
     );
   }
 
   // ----- Not authed: prompt to sign up or sign in -----
   return (
-    <Card className="w-full max-w-md border-border bg-card">
+    <Card className="border-border bg-card w-full max-w-md">
       {inviteHeader}
       <CardContent className="flex flex-col gap-2">
         <Link href={`/signup?invite=${encodeURIComponent(token!)}`}>
-          <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+          <Button className="bg-primary text-primary-foreground hover:bg-primary/90 w-full">
             {t('createAndJoin')}
           </Button>
         </Link>
         <Link href={`/login?invite=${encodeURIComponent(token!)}`}>
           <Button
             variant="outline"
-            className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="border-border text-muted-foreground hover:bg-muted hover:text-foreground w-full"
           >
             {t('haveAccount')}
           </Button>

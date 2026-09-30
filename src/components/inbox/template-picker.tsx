@@ -1,11 +1,11 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-import type { MessageTemplate } from "@/types";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useEffect, useMemo, useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import type { MessageTemplate } from '@/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -13,17 +13,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
-import {
-  ArrowLeft,
-  ChevronRight,
-  LayoutTemplate,
-  Loader2,
-} from "lucide-react";
-import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
-import { useTranslations } from "next-intl";
-import { useAuth } from "@/hooks/use-auth";
+} from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import { ArrowLeft, ChevronRight, LayoutTemplate, Loader2 } from 'lucide-react';
+import { extractVariableIndices } from '@/lib/whatsapp/template-validators';
+import { useTranslations } from 'next-intl';
+import { useAuth } from '@/hooks/use-auth';
 
 export interface TemplateSendValues {
   body: string[];
@@ -64,12 +59,12 @@ function collectVariableSlots(template: MessageTemplate): {
 } {
   const bodyVars = extractVariableIndices(template.body_text);
   const headerVarCount =
-    template.header_type === "text" && template.header_content
+    template.header_type === 'text' && template.header_content
       ? extractVariableIndices(template.header_content).length
       : 0;
   const urlButtonSlots: UrlButtonSlot[] = [];
   (template.buttons ?? []).forEach((b, i) => {
-    if (b.type === "URL" && extractVariableIndices(b.url).length > 0) {
+    if (b.type === 'URL' && extractVariableIndices(b.url).length > 0) {
       urlButtonSlots.push({ index: i, text: b.text, url: b.url });
     }
   });
@@ -82,14 +77,14 @@ export function TemplatePicker({
   onSelect,
   whatsappConfigId,
 }: TemplatePickerProps) {
-  const t = useTranslations("Inbox.templatePicker");
+  const t = useTranslations('Inbox.templatePicker');
   const { accountId } = useAuth();
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<MessageTemplate | null>(null);
   const [params, setParams] = useState<string[]>([]);
-  const [headerText, setHeaderText] = useState<string>("");
+  const [headerText, setHeaderText] = useState<string>('');
   const [buttonParams, setButtonParams] = useState<Record<number, string>>({});
 
   useEffect(() => {
@@ -117,19 +112,24 @@ export function TemplatePicker({
       if (!connectionId) {
         const response = await fetch('/api/whatsapp/config');
         const payload = await response.json();
-        connectionId = payload.connections?.find((row: { is_primary: boolean }) => row.is_primary)?.id ?? null;
+        connectionId =
+          payload.connections?.find(
+            (row: { is_primary: boolean }) => row.is_primary
+          )?.id ?? null;
       }
       let query = supabase
-        .from("message_templates")
-        .select("*")
-        .eq("account_id", accountId)
-        .eq("status", "APPROVED")
-      if (connectionId) query = query.eq('whatsapp_config_id', connectionId)
-      const { data, error } = await query.order("created_at", { ascending: false });
+        .from('message_templates')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('status', 'APPROVED');
+      if (connectionId) query = query.eq('whatsapp_config_id', connectionId);
+      const { data, error } = await query.order('created_at', {
+        ascending: false,
+      });
 
       if (cancelled) return;
       if (error) {
-        console.error("Failed to fetch templates:", error);
+        console.error('Failed to fetch templates:', error);
         setTemplates([]);
       } else {
         setTemplates((data as MessageTemplate[]) ?? []);
@@ -145,7 +145,7 @@ export function TemplatePicker({
   function resetSelection() {
     setSelected(null);
     setParams([]);
-    setHeaderText("");
+    setHeaderText('');
     setButtonParams({});
   }
 
@@ -166,8 +166,8 @@ export function TemplatePicker({
       return;
     }
     setSelected(template);
-    setParams(new Array(slots.bodyVars.length).fill(""));
-    setHeaderText("");
+    setParams(new Array(slots.bodyVars.length).fill(''));
+    setHeaderText('');
     setButtonParams({});
   }
 
@@ -177,7 +177,7 @@ export function TemplatePicker({
     if (headerText.trim()) values.headerText = headerText.trim();
     if (Object.keys(buttonParams).length > 0) {
       values.buttonParams = Object.fromEntries(
-        Object.entries(buttonParams).map(([k, v]) => [Number(k), v.trim()]),
+        Object.entries(buttonParams).map(([k, v]) => [Number(k), v.trim()])
       );
     }
     onSelect(selected, values);
@@ -186,29 +186,27 @@ export function TemplatePicker({
 
   const slots = useMemo(
     () => (selected ? collectVariableSlots(selected) : null),
-    [selected],
+    [selected]
   );
   const canConfirm =
     !!selected &&
     !!slots &&
-    slots.bodyVars.every((_, i) => (params[i] ?? "").trim().length > 0) &&
+    slots.bodyVars.every((_, i) => (params[i] ?? '').trim().length > 0) &&
     (slots.headerVarCount === 0 || headerText.trim().length > 0) &&
     slots.urlButtonSlots.every(
-      (s) => (buttonParams[s.index] ?? "").trim().length > 0,
+      (s) => (buttonParams[s.index] ?? '').trim().length > 0
     );
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="border-border bg-popover sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-popover-foreground">
-            <LayoutTemplate className="h-4 w-4 text-primary" />
-            {selected ? selected.name : t("sendTemplate")}
+          <DialogTitle className="text-popover-foreground flex items-center gap-2">
+            <LayoutTemplate className="text-primary h-4 w-4" />
+            {selected ? selected.name : t('sendTemplate')}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            {selected
-              ? t("fillPlaceholders")
-              : t("pickTemplate")}
+            {selected ? t('fillPlaceholders') : t('pickTemplate')}
           </DialogDescription>
         </DialogHeader>
 
@@ -216,13 +214,15 @@ export function TemplatePicker({
           <div className="max-h-[60vh] space-y-2 overflow-y-auto">
             {loading ? (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <Loader2 className="text-primary h-5 w-5 animate-spin" />
               </div>
             ) : templates.length === 0 ? (
-              <div className="rounded-md border border-border bg-background/50 p-6 text-center">
-                <p className="text-sm text-popover-foreground">{t("noApprovedTemplates")}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("noApprovedTemplatesHint")}
+              <div className="border-border bg-background/50 rounded-md border p-6 text-center">
+                <p className="text-popover-foreground text-sm">
+                  {t('noApprovedTemplates')}
+                </p>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  {t('noApprovedTemplatesHint')}
                 </p>
               </div>
             ) : (
@@ -231,28 +231,28 @@ export function TemplatePicker({
                   key={t.id}
                   type="button"
                   onClick={() => pickTemplate(t)}
-                  className="w-full rounded-md border border-border bg-background/50 p-3 text-left transition-colors hover:border-primary/40 hover:bg-popover"
+                  className="border-border bg-background/50 hover:border-primary/40 hover:bg-popover w-full rounded-md border p-3 text-left transition-colors"
                 >
                   <div className="flex items-start gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-sm font-medium text-popover-foreground">
+                        <p className="text-popover-foreground truncate text-sm font-medium">
                           {t.name}
                         </p>
-                        <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
+                        <Badge className="border-primary/30 bg-primary/20 text-primary border text-[10px]">
                           {t.category}
                         </Badge>
                         {t.language && (
-                          <span className="text-[10px] uppercase text-muted-foreground">
+                          <span className="text-muted-foreground text-[10px] uppercase">
                             {t.language}
                           </span>
                         )}
                       </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                      <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
                         {t.body_text}
                       </p>
                     </div>
-                    <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                    <ChevronRight className="text-muted-foreground h-4 w-4 flex-shrink-0" />
                   </div>
                 </button>
               ))
@@ -260,63 +260,71 @@ export function TemplatePicker({
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="rounded-md border border-border bg-background/50 p-3">
-              <p className="mb-1 text-xs text-muted-foreground">{t("preview")}</p>
-              <p className="whitespace-pre-wrap text-sm text-popover-foreground">
+            <div className="border-border bg-background/50 rounded-md border p-3">
+              <p className="text-muted-foreground mb-1 text-xs">
+                {t('preview')}
+              </p>
+              <p className="text-popover-foreground text-sm whitespace-pre-wrap">
                 {renderBodyPreview(selected.body_text, params)}
               </p>
               {selected.footer_text && (
-                <p className="mt-2 text-xs italic text-muted-foreground">
+                <p className="text-muted-foreground mt-2 text-xs italic">
                   {selected.footer_text}
                 </p>
               )}
             </div>
             {slots && slots.headerVarCount > 0 && (
               <div className="space-y-1">
-                <Label className="text-xs text-popover-foreground">
+                <Label className="text-popover-foreground text-xs">
                   {`Header {{1}}`}
                 </Label>
                 <Input
                   value={headerText}
                   onChange={(e) => setHeaderText(e.target.value)}
-                  placeholder={t("headerValuePlaceholder")}
+                  placeholder={t('headerValuePlaceholder')}
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
               </div>
             )}
             {slots?.bodyVars.map((v, i) => (
               <div key={v} className="space-y-1">
-                <Label className="text-xs text-popover-foreground">{`Body {{${v}}}`}</Label>
+                <Label className="text-popover-foreground text-xs">{`Body {{${v}}}`}</Label>
                 <Input
-                  value={params[i] ?? ""}
+                  value={params[i] ?? ''}
                   onChange={(e) => {
                     const next = [...params];
                     next[i] = e.target.value;
                     setParams(next);
                   }}
-                  placeholder={t("bodyValuePlaceholder", { val: `{{${v}}}` })}
+                  placeholder={t('bodyValuePlaceholder', { val: `{{${v}}}` })}
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
               </div>
             ))}
             {slots?.urlButtonSlots.map((slot) => (
               <div key={slot.index} className="space-y-1">
-                <Label className="text-xs text-popover-foreground">
-                  {`URL button "${slot.text}" — value for `}{`{{1}}`}
+                <Label className="text-popover-foreground text-xs">
+                  {`URL button "${slot.text}" — value for `}
+                  {`{{1}}`}
                 </Label>
                 <Input
-                  value={buttonParams[slot.index] ?? ""}
+                  value={buttonParams[slot.index] ?? ''}
                   onChange={(e) =>
                     setButtonParams((prev) => ({
                       ...prev,
                       [slot.index]: e.target.value,
                     }))
                   }
-                  placeholder={t("urlSuffixValuePlaceholder")}
+                  placeholder={t('urlSuffixValuePlaceholder')}
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
-                <p className="text-[10px] text-muted-foreground break-all">
-                  {t("finalUrl", { url: slot.url.replace(/\{\{1\}\}/g, buttonParams[slot.index] || "{{1}}") })}
+                <p className="text-muted-foreground text-[10px] break-all">
+                  {t('finalUrl', {
+                    url: slot.url.replace(
+                      /\{\{1\}\}/g,
+                      buttonParams[slot.index] || '{{1}}'
+                    ),
+                  })}
                 </p>
               </div>
             ))}
@@ -332,14 +340,14 @@ export function TemplatePicker({
                 className="border-border text-popover-foreground hover:bg-muted"
               >
                 <ArrowLeft className="h-4 w-4" />
-                {t("back")}
+                {t('back')}
               </Button>
               <Button
                 disabled={!canConfirm}
                 onClick={confirm}
                 className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
-                {t("send")}
+                {t('send')}
               </Button>
             </>
           ) : (
@@ -348,7 +356,7 @@ export function TemplatePicker({
               onClick={() => handleOpenChange(false)}
               className="border-border text-popover-foreground hover:bg-muted"
             >
-              {t("cancel")}
+              {t('cancel')}
             </Button>
           )}
         </DialogFooter>

@@ -10,7 +10,7 @@ export async function POST(request: Request) {
   if (authorization === 'not_configured') {
     return NextResponse.json(
       { error: 'PMS automation worker is not configured.' },
-      { status: 503 },
+      { status: 503 }
     );
   }
   if (authorization === 'unauthorized') {
@@ -19,6 +19,9 @@ export async function POST(request: Request) {
   try {
     return NextResponse.json(await runPmsAutomationJobWorker());
   } catch {
-    return NextResponse.json({ error: 'PMS automation worker failed.' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'PMS automation worker failed.' },
+      { status: 500 }
+    );
   }
 }

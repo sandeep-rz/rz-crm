@@ -90,7 +90,6 @@ export async function authenticateRukiyeZaraProvider(
   if (error) {
     invalidCredentials();
   }
-  
 
   const credential = parseCredential(data);
   if (!credential) invalidCredentials();

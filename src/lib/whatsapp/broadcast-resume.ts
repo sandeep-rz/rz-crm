@@ -18,7 +18,10 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { BroadcastError, type BroadcastPlan } from '@/lib/whatsapp/broadcast-core';
+import {
+  BroadcastError,
+  type BroadcastPlan,
+} from '@/lib/whatsapp/broadcast-core';
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
@@ -166,7 +169,10 @@ export async function planBroadcastResume(
     .order('created_at', { ascending: true });
 
   if (recError) {
-    console.error('[broadcast-resume] recipient load failed:', recError.message);
+    console.error(
+      '[broadcast-resume] recipient load failed:',
+      recError.message
+    );
     throw new BroadcastError('internal', 'Failed to load recipients', 500);
   }
 
@@ -223,7 +229,7 @@ export async function planBroadcastResume(
     accountId,
     broadcast.template_name,
     broadcast.template_language,
-    config.id,
+    config.id
   );
   if (resolvedTemplate.malformed) {
     throw new BroadcastError(

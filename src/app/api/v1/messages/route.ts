@@ -105,7 +105,7 @@ export async function POST(request: Request) {
       typeof body.name === 'string' ? body.name : null,
       typeof body.whatsapp_config_id === 'string'
         ? body.whatsapp_config_id
-        : null,
+        : null
     );
 
     const result = await sendMessageToConversation(

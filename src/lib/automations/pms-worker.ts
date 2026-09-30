@@ -1,6 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import type { Automation, PmsAutomationTriggerType, PmsTriggerConfig } from '@/types';
+import type {
+  Automation,
+  PmsAutomationTriggerType,
+  PmsTriggerConfig,
+} from '@/types';
 import { supabaseAdmin } from './admin-client';
 import { runAutomationForTrigger } from './engine';
 import {
@@ -32,22 +36,45 @@ export interface AutomationTriggerJobClaim {
 }
 
 export interface PmsAutomationJobStore {
-  claimJobs(input: { limit: number; now: string; staleBefore: string }): Promise<AutomationTriggerJobClaim[]>;
-  findCompletedExecution(job: AutomationTriggerJobClaim): Promise<{ logId: string } | null>;
+  claimJobs(input: {
+    limit: number;
+    now: string;
+    staleBefore: string;
+  }): Promise<AutomationTriggerJobClaim[]>;
+  findCompletedExecution(
+    job: AutomationTriggerJobClaim
+  ): Promise<{ logId: string } | null>;
   loadAutomation(job: AutomationTriggerJobClaim): Promise<Automation | null>;
-  markCompleted(job: AutomationTriggerJobClaim, completedAt: string): Promise<void>;
-  markSuppressed(job: AutomationTriggerJobClaim, completedAt: string, reason: string): Promise<void>;
-  markRescheduled(job: AutomationTriggerJobClaim, runAt: string, reason: string): Promise<void>;
-  markFailed(job: AutomationTriggerJobClaim, input: {
-    error: string;
-    retryable: boolean;
-    nextAttemptAt: string | null;
-    completedAt: string | null;
-  }): Promise<void>;
+  markCompleted(
+    job: AutomationTriggerJobClaim,
+    completedAt: string
+  ): Promise<void>;
+  markSuppressed(
+    job: AutomationTriggerJobClaim,
+    completedAt: string,
+    reason: string
+  ): Promise<void>;
+  markRescheduled(
+    job: AutomationTriggerJobClaim,
+    runAt: string,
+    reason: string
+  ): Promise<void>;
+  markFailed(
+    job: AutomationTriggerJobClaim,
+    input: {
+      error: string;
+      retryable: boolean;
+      nextAttemptAt: string | null;
+      completedAt: string | null;
+    }
+  ): Promise<void>;
 }
 
 export class PmsAutomationJobError extends Error {
-  constructor(message: string, public readonly retryable: boolean) {
+  constructor(
+    message: string,
+    public readonly retryable: boolean
+  ) {
     super(message);
     this.name = 'PmsAutomationJobError';
   }
@@ -55,7 +82,8 @@ export class PmsAutomationJobError extends Error {
 
 function retryAt(attemptCount: number, now: Date): string | null {
   if (attemptCount >= PMS_AUTOMATION_JOB_MAX_ATTEMPTS) return null;
-  const delay = RETRY_DELAYS_MS[Math.min(attemptCount - 1, RETRY_DELAYS_MS.length - 1)];
+  const delay =
+    RETRY_DELAYS_MS[Math.min(attemptCount - 1, RETRY_DELAYS_MS.length - 1)];
   return new Date(now.getTime() + delay).toISOString();
 }
 
@@ -70,10 +98,13 @@ export async function processPmsAutomationJob(
     loadContext?: typeof loadReservationAutomationContext;
     dispatch?: typeof runAutomationForTrigger;
     now?: () => Date;
-  } = {},
-): Promise<'completed' | 'failed' | 'suppressed' | 'rescheduled' | 'inProgress'> {
+  } = {}
+): Promise<
+  'completed' | 'failed' | 'suppressed' | 'rescheduled' | 'inProgress'
+> {
   const store = dependencies.store ?? new SupabasePmsAutomationJobStore();
-  const loadContext = dependencies.loadContext ?? loadReservationAutomationContext;
+  const loadContext =
+    dependencies.loadContext ?? loadReservationAutomationContext;
   const dispatch = dependencies.dispatch ?? runAutomationForTrigger;
   const now = dependencies.now ?? (() => new Date());
 
@@ -89,42 +120,80 @@ export async function processPmsAutomationJob(
 
     const automation = await store.loadAutomation(job);
     if (!automation) {
-      throw new PmsAutomationJobError('Automation/account relationship is invalid.', false);
+      throw new PmsAutomationJobError(
+        'Automation/account relationship is invalid.',
+        false
+      );
     }
     if (!automation.is_active) {
-      await store.markSuppressed(job, now().toISOString(), 'Automation is inactive.');
+      await store.markSuppressed(
+        job,
+        now().toISOString(),
+        'Automation is inactive.'
+      );
       return 'suppressed';
     }
     if (automation.trigger_type !== job.triggerType) {
-      throw new PmsAutomationJobError('Automation trigger no longer matches the job.', false);
+      throw new PmsAutomationJobError(
+        'Automation trigger no longer matches the job.',
+        false
+      );
     }
 
     const reservation = await loadContext(job.reservationId, job.accountId);
     if (!reservation || reservation.account_id !== job.accountId) {
-      throw new PmsAutomationJobError('Reservation/account relationships are invalid.', false);
+      throw new PmsAutomationJobError(
+        'Reservation/account relationships are invalid.',
+        false
+      );
     }
-    if (!matchesReservationTriggerConfig(automation.trigger_config as PmsTriggerConfig, reservation)) {
-      await store.markSuppressed(job, now().toISOString(), 'Reservation no longer matches trigger filters.');
+    if (
+      !matchesReservationTriggerConfig(
+        automation.trigger_config as PmsTriggerConfig,
+        reservation
+      )
+    ) {
+      await store.markSuppressed(
+        job,
+        now().toISOString(),
+        'Reservation no longer matches trigger filters.'
+      );
       return 'suppressed';
     }
-    if (job.triggerType !== 'reservation_cancelled' && isCancelled(reservation.reservation_status)) {
-      await store.markSuppressed(job, now().toISOString(), 'Reservation is cancelled.');
+    if (
+      job.triggerType !== 'reservation_cancelled' &&
+      isCancelled(reservation.reservation_status)
+    ) {
+      await store.markSuppressed(
+        job,
+        now().toISOString(),
+        'Reservation is cancelled.'
+      );
       return 'suppressed';
     }
 
-    if (PMS_SCHEDULED_AUTOMATION_TRIGGERS.includes(
-      job.triggerType as (typeof PMS_SCHEDULED_AUTOMATION_TRIGGERS)[number],
-    )) {
+    if (
+      PMS_SCHEDULED_AUTOMATION_TRIGGERS.includes(
+        job.triggerType as (typeof PMS_SCHEDULED_AUTOMATION_TRIGGERS)[number]
+      )
+    ) {
       const expectedRunAt = computeScheduledRunAt(
         job.triggerType,
         automation.trigger_config as PmsTriggerConfig,
-        reservation,
+        reservation
       );
       if (!expectedRunAt) {
-        throw new PmsAutomationJobError('Scheduled trigger configuration is invalid.', false);
+        throw new PmsAutomationJobError(
+          'Scheduled trigger configuration is invalid.',
+          false
+        );
       }
       if (Date.parse(expectedRunAt) > now().getTime()) {
-        await store.markRescheduled(job, expectedRunAt, 'Reservation schedule changed.');
+        await store.markRescheduled(
+          job,
+          expectedRunAt,
+          'Reservation schedule changed.'
+        );
         return 'rescheduled';
       }
     }
@@ -144,10 +213,14 @@ export async function processPmsAutomationJob(
         triggerJobId: job.id,
         attemptCount: job.attemptCount,
         expectedReservationUpdatedAt: reservation.reservation_updated_at,
-      },
+      }
     );
     if (!execution) {
-      await store.markSuppressed(job, now().toISOString(), 'Automation is no longer eligible.');
+      await store.markSuppressed(
+        job,
+        now().toISOString(),
+        'Automation is no longer eligible.'
+      );
       return 'suppressed';
     }
     if (execution.disposition === 'already_running') {
@@ -159,25 +232,31 @@ export async function processPmsAutomationJob(
       await store.markSuppressed(
         job,
         now().toISOString(),
-        'Reservation changed after eligibility validation.',
+        'Reservation changed after eligibility validation.'
       );
       return 'suppressed';
     }
     if (execution.disposition === 'ineligible') {
-      await store.markSuppressed(job, now().toISOString(), 'Automation is no longer eligible.');
+      await store.markSuppressed(
+        job,
+        now().toISOString(),
+        'Automation is no longer eligible.'
+      );
       return 'suppressed';
     }
     if (execution.status === 'failed') {
       throw new PmsAutomationJobError(
         execution.errorMessage ?? 'Automation execution failed.',
-        true,
+        true
       );
     }
     await store.markCompleted(job, now().toISOString());
     return 'completed';
   } catch (error) {
-    const retryable = error instanceof PmsAutomationJobError ? error.retryable : true;
-    const message = error instanceof Error ? error.message : 'PMS automation job failed.';
+    const retryable =
+      error instanceof PmsAutomationJobError ? error.retryable : true;
+    const message =
+      error instanceof Error ? error.message : 'PMS automation job failed.';
     const nextAttemptAt = retryable ? retryAt(job.attemptCount, now()) : null;
     const canRetry = retryable && nextAttemptAt !== null;
     await store.markFailed(job, {
@@ -194,7 +273,7 @@ export async function runPmsAutomationJobWorker(
   dependencies: Parameters<typeof processPmsAutomationJob>[1] & {
     store?: PmsAutomationJobStore;
     limit?: number;
-  } = {},
+  } = {}
 ) {
   const store = dependencies.store ?? new SupabasePmsAutomationJobStore();
   const now = dependencies.now ?? (() => new Date());
@@ -202,7 +281,9 @@ export async function runPmsAutomationJobWorker(
   const jobs = await store.claimJobs({
     limit: dependencies.limit ?? PMS_AUTOMATION_JOB_BATCH_SIZE,
     now: claimTime.toISOString(),
-    staleBefore: new Date(claimTime.getTime() - PMS_AUTOMATION_JOB_STALE_MS).toISOString(),
+    staleBefore: new Date(
+      claimTime.getTime() - PMS_AUTOMATION_JOB_STALE_MS
+    ).toISOString(),
   });
   const summary = {
     claimed: jobs.length,
@@ -214,7 +295,11 @@ export async function runPmsAutomationJobWorker(
   };
   for (const job of jobs) {
     try {
-      const result = await processPmsAutomationJob(job, { ...dependencies, store, now });
+      const result = await processPmsAutomationJob(job, {
+        ...dependencies,
+        store,
+        now,
+      });
       summary[result] += 1;
     } catch {
       summary.failed += 1;
@@ -232,7 +317,8 @@ export class SupabasePmsAutomationJobStore implements PmsAutomationJobStore {
       p_now: input.now,
       p_stale_before: input.staleBefore,
     });
-    if (error) throw new PmsAutomationJobError('Automation job claim failed.', true);
+    if (error)
+      throw new PmsAutomationJobError('Automation job claim failed.', true);
     return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
       id: row.job_id as string,
       accountId: row.account_id as string,
@@ -253,7 +339,8 @@ export class SupabasePmsAutomationJobStore implements PmsAutomationJobStore {
       .eq('id', job.automationId)
       .eq('account_id', job.accountId)
       .maybeSingle();
-    if (error) throw new PmsAutomationJobError('Automation lookup failed.', true);
+    if (error)
+      throw new PmsAutomationJobError('Automation lookup failed.', true);
     return data as Automation | null;
   }
 
@@ -267,12 +354,18 @@ export class SupabasePmsAutomationJobStore implements PmsAutomationJobStore {
       .eq('trigger_job_execution_state', 'completed')
       .maybeSingle();
     if (error) {
-      throw new PmsAutomationJobError('Automation execution recovery lookup failed.', true);
+      throw new PmsAutomationJobError(
+        'Automation execution recovery lookup failed.',
+        true
+      );
     }
     return data ? { logId: data.id as string } : null;
   }
 
-  private async updateClaim(job: AutomationTriggerJobClaim, patch: Record<string, unknown>) {
+  private async updateClaim(
+    job: AutomationTriggerJobClaim,
+    patch: Record<string, unknown>
+  ) {
     const { error } = await this.db
       .from('automation_trigger_jobs')
       .update(patch)
@@ -280,36 +373,70 @@ export class SupabasePmsAutomationJobStore implements PmsAutomationJobStore {
       .eq('account_id', job.accountId)
       .eq('status', 'processing')
       .eq('attempt_count', job.attemptCount);
-    if (error) throw new PmsAutomationJobError('Automation job state update failed.', true);
+    if (error)
+      throw new PmsAutomationJobError(
+        'Automation job state update failed.',
+        true
+      );
   }
 
   async markCompleted(job: AutomationTriggerJobClaim, completedAt: string) {
     await this.updateClaim(job, {
-      status: 'completed', processing_started_at: null, retryable: false,
-      next_attempt_at: null, last_error: null, completed_at: completedAt,
+      status: 'completed',
+      processing_started_at: null,
+      retryable: false,
+      next_attempt_at: null,
+      last_error: null,
+      completed_at: completedAt,
     });
   }
 
-  async markSuppressed(job: AutomationTriggerJobClaim, completedAt: string, reason: string) {
+  async markSuppressed(
+    job: AutomationTriggerJobClaim,
+    completedAt: string,
+    reason: string
+  ) {
     await this.updateClaim(job, {
-      status: 'suppressed', processing_started_at: null, retryable: false,
-      next_attempt_at: null, last_error: reason, completed_at: completedAt,
+      status: 'suppressed',
+      processing_started_at: null,
+      retryable: false,
+      next_attempt_at: null,
+      last_error: reason,
+      completed_at: completedAt,
     });
   }
 
-  async markRescheduled(job: AutomationTriggerJobClaim, runAt: string, reason: string) {
+  async markRescheduled(
+    job: AutomationTriggerJobClaim,
+    runAt: string,
+    reason: string
+  ) {
     await this.updateClaim(job, {
-      status: 'scheduled', run_at: runAt, processing_started_at: null,
-      retryable: false, next_attempt_at: null, last_error: reason, completed_at: null,
+      status: 'scheduled',
+      run_at: runAt,
+      processing_started_at: null,
+      retryable: false,
+      next_attempt_at: null,
+      last_error: reason,
+      completed_at: null,
     });
   }
 
-  async markFailed(job: AutomationTriggerJobClaim, input: {
-    error: string; retryable: boolean; nextAttemptAt: string | null; completedAt: string | null;
-  }) {
+  async markFailed(
+    job: AutomationTriggerJobClaim,
+    input: {
+      error: string;
+      retryable: boolean;
+      nextAttemptAt: string | null;
+      completedAt: string | null;
+    }
+  ) {
     await this.updateClaim(job, {
-      status: 'failed', processing_started_at: null, retryable: input.retryable,
-      next_attempt_at: input.nextAttemptAt, last_error: input.error,
+      status: 'failed',
+      processing_started_at: null,
+      retryable: input.retryable,
+      next_attempt_at: input.nextAttemptAt,
+      last_error: input.error,
       completed_at: input.completedAt,
     });
   }

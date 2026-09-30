@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Shared mock state for the service-role client. Lives in a hoisted block
 // so the vi.mock factory below can close over it.
@@ -20,26 +20,29 @@ const h = vi.hoisted(() => ({
     automations: [] as Record<string, unknown>[],
     steps: [] as Record<string, unknown>[],
     fromCalls: [] as string[],
-    updateCalls: [] as { table: string; filters: [string, string, unknown][] }[],
+    updateCalls: [] as {
+      table: string;
+      filters: [string, string, unknown][];
+    }[],
     upsertCalls: [] as { table: string; payload: unknown }[],
     insertCalls: [] as { table: string; payload: unknown }[],
     logInserts: [] as Record<string, unknown>[],
     logUpdates: [] as Record<string, unknown>[],
     whatsappConnection: {
-      id: "connection-primary",
-      account_id: "acct-1",
-      user_id: "u1",
-      display_name: "Main",
+      id: 'connection-primary',
+      account_id: 'acct-1',
+      user_id: 'u1',
+      display_name: 'Main',
       is_primary: true,
-      phone_number_id: "pn-1",
-      waba_id: "waba-1",
-      access_token: "encrypted-token",
-      status: "connected",
+      phone_number_id: 'pn-1',
+      waba_id: 'waba-1',
+      access_token: 'encrypted-token',
+      status: 'connected',
     } as Record<string, unknown> | null,
   },
 }));
 
-vi.mock("./admin-client", () => {
+vi.mock('./admin-client', () => {
   const { state } = h;
 
   function resolve(ops: {
@@ -49,76 +52,86 @@ vi.mock("./admin-client", () => {
     filters: [string, string, unknown][];
   }) {
     const { table, type } = ops;
-    if (table === "contacts") {
-      if (type === "update") {
+    if (table === 'contacts') {
+      if (type === 'update') {
         state.updateCalls.push({ table, filters: ops.filters });
         return { data: null, error: null };
       }
       // ownership guard / condition read
       return { data: state.owned, error: null };
     }
-    if (table === "conversations" && type === "update") {
+    if (table === 'conversations' && type === 'update') {
       state.updateCalls.push({ table, filters: ops.filters });
       return { data: null, error: null };
     }
-    if (table === "conversations") return { data: state.ownedConversation, error: null };
-    if (table === "pipelines") return { data: state.ownedPipeline, error: null };
-    if (table === "pipeline_stages") return { data: state.ownedStage, error: null };
-    if (table === "account_members") return { data: state.membership, error: null };
-    if (table === "accounts") return { data: { default_currency: "INR" }, error: null };
-    if (table === "deals" && type === "insert") {
+    if (table === 'conversations')
+      return { data: state.ownedConversation, error: null };
+    if (table === 'pipelines')
+      return { data: state.ownedPipeline, error: null };
+    if (table === 'pipeline_stages')
+      return { data: state.ownedStage, error: null };
+    if (table === 'account_members')
+      return { data: state.membership, error: null };
+    if (table === 'accounts')
+      return { data: { default_currency: 'INR' }, error: null };
+    if (table === 'deals' && type === 'insert') {
       state.insertCalls.push({ table, payload: ops.payload });
       return { data: null, error: null };
     }
-    if (table === "tags") return { data: state.ownedTag, error: null };
-    if (table === "contact_tags" && type === "insert") {
+    if (table === 'tags') return { data: state.ownedTag, error: null };
+    if (table === 'contact_tags' && type === 'insert') {
       state.insertCalls.push({ table, payload: ops.payload });
-      return { data: { id: "contact-tag-1" }, error: null };
+      return { data: { id: 'contact-tag-1' }, error: null };
     }
-    if (table === "custom_fields") {
+    if (table === 'custom_fields') {
       // account-scoped ownership lookup for a custom field definition
       return { data: state.ownedCustomField, error: null };
     }
-    if (table === "contact_custom_values") {
-      if (type === "upsert") {
+    if (table === 'contact_custom_values') {
+      if (type === 'upsert') {
         state.upsertCalls.push({ table, payload: ops.payload });
         return { data: null, error: null };
       }
       return { data: null, error: null };
     }
-    if (table === "automations") {
-      const byId = ops.filters.some(([kind, key]) => kind === "eq" && key === "id");
-      return { data: byId ? (state.automations[0] ?? null) : state.automations, error: null };
+    if (table === 'automations') {
+      const byId = ops.filters.some(
+        ([kind, key]) => kind === 'eq' && key === 'id'
+      );
+      return {
+        data: byId ? (state.automations[0] ?? null) : state.automations,
+        error: null,
+      };
     }
-    if (table === "whatsapp_config") {
+    if (table === 'whatsapp_config') {
       return {
         data: state.whatsappConnection,
         error: null,
       };
     }
-    if (table === "automation_logs") {
-      if (type === "insert") {
+    if (table === 'automation_logs') {
+      if (type === 'insert') {
         state.logInserts.push(ops.payload as Record<string, unknown>);
-        return { data: { id: "log1" }, error: null };
+        return { data: { id: 'log1' }, error: null };
       }
-      if (type === "update") {
+      if (type === 'update') {
         state.logUpdates.push(ops.payload as Record<string, unknown>);
         return { data: null, error: null };
       }
       return {
         data: {
           steps_executed: [],
-          status: "success",
+          status: 'success',
           completed_wait_continuation_ids: state.completedWaitIds,
         },
         error: null,
       };
     }
-    if (table === "automation_steps") {
+    if (table === 'automation_steps') {
       state.stepQueryFilters = [...ops.filters];
       return { data: state.steps, error: null };
     }
-    if (table === "automation_pending_executions" && type === "update") {
+    if (table === 'automation_pending_executions' && type === 'update') {
       state.updateCalls.push({ table, filters: ops.filters });
       return { data: null, error: null };
     }
@@ -128,24 +141,27 @@ vi.mock("./admin-client", () => {
   function builder(table: string) {
     const ops = {
       table,
-      type: "select",
+      type: 'select',
       payload: undefined as unknown,
       filters: [] as [string, string, unknown][],
     };
     const b: Record<string, unknown> = {
       select: () => b,
-      insert: (p: unknown) => ((ops.type = "insert"), (ops.payload = p), b),
-      update: (p: unknown) => ((ops.type = "update"), (ops.payload = p), b),
-      delete: () => ((ops.type = "delete"), b),
-      upsert: (p: unknown) => ((ops.type = "upsert"), (ops.payload = p), b),
-      eq: (k: string, v: unknown) => (ops.filters.push(["eq", k, v]), b),
-      gte: (k: string, v: unknown) => (ops.filters.push(["gte", k, v]), b),
-      is: (k: string, v: unknown) => (ops.filters.push(["is", k, v]), b),
+      insert: (p: unknown) => ((ops.type = 'insert'), (ops.payload = p), b),
+      update: (p: unknown) => ((ops.type = 'update'), (ops.payload = p), b),
+      delete: () => ((ops.type = 'delete'), b),
+      upsert: (p: unknown) => ((ops.type = 'upsert'), (ops.payload = p), b),
+      eq: (k: string, v: unknown) => (ops.filters.push(['eq', k, v]), b),
+      gte: (k: string, v: unknown) => (ops.filters.push(['gte', k, v]), b),
+      is: (k: string, v: unknown) => (ops.filters.push(['is', k, v]), b),
       order: () => b,
       limit: () => {
-        if (table === "whatsapp_config") {
+        if (table === 'whatsapp_config') {
           const result = resolve(ops) as { data: unknown; error: unknown };
-          return Promise.resolve({ data: result.data ? [result.data] : [], error: result.error });
+          return Promise.resolve({
+            data: result.data ? [result.data] : [],
+            error: result.error,
+          });
         }
         return b;
       },
@@ -165,16 +181,17 @@ vi.mock("./admin-client", () => {
       },
       rpc: (name: string, args: unknown) => {
         state.rpcCalls.push({ name, args });
-        if (name === "complete_automation_wait_continuation") {
+        if (name === 'complete_automation_wait_continuation') {
           return Promise.resolve({
             data: state.completionRpcError ? null : true,
             error: state.completionRpcError,
           });
         }
         return Promise.resolve({
-          data: name === "claim_automation_round_robin_assignee"
-            ? state.roundRobinAssignee
-            : null,
+          data:
+            name === 'claim_automation_round_robin_assignee'
+              ? state.roundRobinAssignee
+              : null,
           error: null,
         });
       },
@@ -182,23 +199,27 @@ vi.mock("./admin-client", () => {
   };
 });
 
-vi.mock("./meta-send", () => ({
+vi.mock('./meta-send', () => ({
   engineSendText: vi.fn(async (args: Record<string, unknown>) => {
     h.state.metaSendCalls.push(args);
-    return { whatsapp_message_id: "m1" };
+    return { whatsapp_message_id: 'm1' };
   }),
-  engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
-  engineSendInteractive: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
+  engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: 'm1' })),
+  engineSendInteractive: vi.fn(async () => ({ whatsapp_message_id: 'm1' })),
 }));
 
-vi.mock("@/lib/whatsapp/encryption", () => ({
+vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: (value: string) => value,
 }));
 
-import { resumePendingExecution, runAutomationsForTrigger, triggerMatches } from "./engine";
-import type { Automation, KeywordMatchTriggerConfig } from "@/types";
+import {
+  resumePendingExecution,
+  runAutomationsForTrigger,
+  triggerMatches,
+} from './engine';
+import type { Automation, KeywordMatchTriggerConfig } from '@/types';
 
-const ACCOUNT = "acct-1";
+const ACCOUNT = 'acct-1';
 
 beforeEach(() => {
   h.state.owned = null;
@@ -223,20 +244,20 @@ beforeEach(() => {
   h.state.logInserts = [];
   h.state.logUpdates = [];
   h.state.whatsappConnection = {
-    id: "connection-primary",
+    id: 'connection-primary',
     account_id: ACCOUNT,
-    user_id: "u1",
-    display_name: "Main",
+    user_id: 'u1',
+    display_name: 'Main',
     is_primary: true,
-    phone_number_id: "pn-1",
-    waba_id: "waba-1",
-    access_token: "encrypted-token",
-    status: "connected",
+    phone_number_id: 'pn-1',
+    waba_id: 'waba-1',
+    access_token: 'encrypted-token',
+    status: 'connected',
   };
 });
 
-describe("runAutomationsForTrigger — tenant isolation", () => {
-  it("refuses to dispatch when the contact is not in the account (GHSA-63cv-2c49-m5v3)", async () => {
+describe('runAutomationsForTrigger — tenant isolation', () => {
+  it('refuses to dispatch when the contact is not in the account (GHSA-63cv-2c49-m5v3)', async () => {
     // Ownership lookup returns nothing — the contact belongs to another tenant.
     h.state.owned = null;
     // If the guard failed, this automation would run an update_contact_field step.
@@ -245,76 +266,76 @@ describe("runAutomationsForTrigger — tenant isolation", () => {
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "victim-contact-uuid",
-      context: { message_text: "manual trigger" },
+      triggerType: 'new_message_received',
+      contactId: 'victim-contact-uuid',
+      context: { message_text: 'manual trigger' },
     });
 
     // Bailed at the guard: never fetched automations, never wrote a contact.
-    expect(h.state.fromCalls).toContain("contacts");
-    expect(h.state.fromCalls).not.toContain("automations");
+    expect(h.state.fromCalls).toContain('contacts');
+    expect(h.state.fromCalls).not.toContain('automations');
     expect(h.state.updateCalls).toHaveLength(0);
   });
 
-  it("proceeds past the guard when the contact belongs to the account", async () => {
-    h.state.owned = { id: "c1" };
+  it('proceeds past the guard when the contact belongs to the account', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.automations = []; // no matching automations; just prove we got past the guard
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
-    expect(h.state.fromCalls).toContain("automations");
+    expect(h.state.fromCalls).toContain('automations');
   });
 
   it("scopes the update_contact_field write to the automation's account", async () => {
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [updateStep()];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
     expect(h.state.updateCalls).toHaveLength(1);
     const filters = h.state.updateCalls[0].filters;
-    expect(filters).toContainEqual(["eq", "id", "c1"]);
-    expect(filters).toContainEqual(["eq", "account_id", ACCOUNT]);
+    expect(filters).toContainEqual(['eq', 'id', 'c1']);
+    expect(filters).toContainEqual(['eq', 'account_id', ACCOUNT]);
   });
 
-  it("executes a CRM-only automation without resolving WhatsApp", async () => {
-    h.state.owned = { id: "c1" };
+  it('executes a CRM-only automation without resolving WhatsApp', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [updateStep()];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
     expect(h.state.updateCalls).toHaveLength(1);
-    expect(h.state.fromCalls).not.toContain("whatsapp_config");
+    expect(h.state.fromCalls).not.toContain('whatsapp_config');
   });
 });
 
-describe("automation_logs — status is seeded pessimistically (issue #409)", () => {
+describe('automation_logs — status is seeded pessimistically (issue #409)', () => {
   it("writes the log row as 'failed' before any step runs", async () => {
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [updateStep()];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
@@ -322,167 +343,205 @@ describe("automation_logs — status is seeded pessimistically (issue #409)", ()
     // not leave behind a row that claims it succeeded.
     expect(h.state.logInserts).toHaveLength(1);
     expect(h.state.logInserts[0]).toMatchObject({
-      status: "failed",
+      status: 'failed',
       steps_executed: [],
     });
   });
 
   it("still promotes the log to 'success' once the steps complete", async () => {
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
     h.state.steps = [updateStep()];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
     // The seed is only a floor — the outermost scope still writes the real
     // verdict, so a completed run reports success as it always did.
-    const withStatus = h.state.logUpdates.filter((u) => "status" in u);
-    expect(withStatus.at(-1)).toMatchObject({ status: "success" });
+    const withStatus = h.state.logUpdates.filter((u) => 'status' in u);
+    expect(withStatus.at(-1)).toMatchObject({ status: 'success' });
   });
 });
 
-describe("Wait continuation replay safety", () => {
+describe('Wait continuation replay safety', () => {
   const pending = (overrides: Record<string, unknown> = {}) => ({
-    id: "pending-1",
-    automation_id: "a1",
+    id: 'pending-1',
+    automation_id: 'a1',
     account_id: ACCOUNT,
-    user_id: "u1",
-    contact_id: "c1",
-    log_id: "log1",
+    user_id: 'u1',
+    contact_id: 'c1',
+    log_id: 'log1',
     parent_step_id: null,
     branch: null,
     next_step_position: 1,
-    context: { vars: { source: "wait-context" } },
+    context: { vars: { source: 'wait-context' } },
     ...overrides,
   });
 
   function configure(step: Record<string, unknown>) {
-    h.state.owned = { id: "c1" };
-    h.state.automations = [{
-      id: "a1",
-      account_id: ACCOUNT,
-      user_id: "u1",
-      trigger_type: "tag_added",
-      trigger_config: { tag_id: "different-tag" },
-      is_active: true,
-      whatsapp_config_id: null,
-    }];
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [
+      {
+        id: 'a1',
+        account_id: ACCOUNT,
+        user_id: 'u1',
+        trigger_type: 'tag_added',
+        trigger_config: { tag_id: 'different-tag' },
+        is_active: true,
+        whatsapp_config_id: null,
+      },
+    ];
     h.state.steps = [step];
   }
 
-  it("executes a normal continuation once, records its stable identity, then marks it done", async () => {
+  it('executes a normal continuation once, records its stable identity, then marks it done', async () => {
     configure(updateStep());
 
     await resumePendingExecution(pending());
 
-    expect(h.state.updateCalls).toContainEqual(expect.objectContaining({ table: "contacts" }));
+    expect(h.state.updateCalls).toContainEqual(
+      expect.objectContaining({ table: 'contacts' })
+    );
     expect(h.state.rpcCalls).toContainEqual({
-      name: "complete_automation_wait_continuation",
+      name: 'complete_automation_wait_continuation',
       args: {
-        p_log_id: "log1",
-        p_pending_execution_id: "pending-1",
+        p_log_id: 'log1',
+        p_pending_execution_id: 'pending-1',
         p_account_id: ACCOUNT,
-        p_automation_id: "a1",
+        p_automation_id: 'a1',
       },
     });
-    expect(h.state.updateCalls).toContainEqual(expect.objectContaining({
-      table: "automation_pending_executions",
-      filters: [["eq", "id", "pending-1"]],
-    }));
+    expect(h.state.updateCalls).toContainEqual(
+      expect.objectContaining({
+        table: 'automation_pending_executions',
+        filters: [['eq', 'id', 'pending-1']],
+      })
+    );
   });
 
-  it("does not replay actions when a stale reclaim finds the completion marker", async () => {
+  it('does not replay actions when a stale reclaim finds the completion marker', async () => {
     configure(updateStep());
-    h.state.completedWaitIds = ["pending-1"];
+    h.state.completedWaitIds = ['pending-1'];
 
     await resumePendingExecution(pending());
 
-    expect(h.state.updateCalls.filter((call) => call.table === "contacts")).toHaveLength(0);
-    expect(h.state.rpcCalls.some((call) => call.name === "complete_automation_wait_continuation")).toBe(false);
-    expect(h.state.updateCalls).toContainEqual(expect.objectContaining({
-      table: "automation_pending_executions",
-    }));
+    expect(
+      h.state.updateCalls.filter((call) => call.table === 'contacts')
+    ).toHaveLength(0);
+    expect(
+      h.state.rpcCalls.some(
+        (call) => call.name === 'complete_automation_wait_continuation'
+      )
+    ).toBe(false);
+    expect(h.state.updateCalls).toContainEqual(
+      expect.objectContaining({
+        table: 'automation_pending_executions',
+      })
+    );
   });
 
-  it("throws when durable completion cannot be recorded so the worker can retry", async () => {
+  it('throws when durable completion cannot be recorded so the worker can retry', async () => {
     configure(updateStep());
-    h.state.completionRpcError = { message: "database unavailable" };
+    h.state.completionRpcError = { message: 'database unavailable' };
 
     await expect(resumePendingExecution(pending())).rejects.toThrow(
-      "wait continuation completion could not be recorded",
+      'wait continuation completion could not be recorded'
     );
-    expect(h.state.updateCalls.filter((call) => call.table === "automation_pending_executions")).toHaveLength(0);
+    expect(
+      h.state.updateCalls.filter(
+        (call) => call.table === 'automation_pending_executions'
+      )
+    ).toHaveLength(0);
   });
 
-  it("resumes Wait → Add Tag and records completion", async () => {
+  it('resumes Wait → Add Tag and records completion', async () => {
     configure({
-      id: "tag-step", automation_id: "a1", step_type: "add_tag",
-      position: 1, parent_step_id: null, step_config: { tag_id: "tag-1" },
+      id: 'tag-step',
+      automation_id: 'a1',
+      step_type: 'add_tag',
+      position: 1,
+      parent_step_id: null,
+      step_config: { tag_id: 'tag-1' },
     });
-    h.state.ownedTag = { id: "tag-1" };
+    h.state.ownedTag = { id: 'tag-1' };
 
     await resumePendingExecution(pending());
 
     expect(h.state.insertCalls).toContainEqual({
-      table: "contact_tags",
-      payload: { contact_id: "c1", tag_id: "tag-1" },
+      table: 'contact_tags',
+      payload: { contact_id: 'c1', tag_id: 'tag-1' },
     });
-    expect(h.state.rpcCalls.some((call) => call.name === "complete_automation_wait_continuation")).toBe(true);
+    expect(
+      h.state.rpcCalls.some(
+        (call) => call.name === 'complete_automation_wait_continuation'
+      )
+    ).toBe(true);
   });
 
-  it("resumes Wait → WhatsApp using the existing send path", async () => {
+  it('resumes Wait → WhatsApp using the existing send path', async () => {
     configure({
-      id: "send-step", automation_id: "a1", step_type: "send_message",
-      position: 1, parent_step_id: null, step_config: { text: "Hello after wait" },
+      id: 'send-step',
+      automation_id: 'a1',
+      step_type: 'send_message',
+      position: 1,
+      parent_step_id: null,
+      step_config: { text: 'Hello after wait' },
     });
-    h.state.ownedConversation = { id: "conversation-1" };
+    h.state.ownedConversation = { id: 'conversation-1' };
 
-    await resumePendingExecution(pending({
-      context: { conversation_id: "conversation-1" },
-    }));
+    await resumePendingExecution(
+      pending({
+        context: { conversation_id: 'conversation-1' },
+      })
+    );
 
-    expect(h.state.metaSendCalls).toContainEqual(expect.objectContaining({
-      accountId: ACCOUNT,
-      conversationId: "conversation-1",
-      contactId: "c1",
-      text: "Hello after wait",
-    }));
+    expect(h.state.metaSendCalls).toContainEqual(
+      expect.objectContaining({
+        accountId: ACCOUNT,
+        conversationId: 'conversation-1',
+        contactId: 'c1',
+        text: 'Hello after wait',
+      })
+    );
   });
 
-  it("resumes the saved branch and position before recording completion", async () => {
+  it('resumes the saved branch and position before recording completion', async () => {
     configure(updateStep());
 
-    await resumePendingExecution(pending({
-      parent_step_id: "condition-1",
-      branch: "yes",
-      next_step_position: 3,
-    }));
+    await resumePendingExecution(
+      pending({
+        parent_step_id: 'condition-1',
+        branch: 'yes',
+        next_step_position: 3,
+      })
+    );
 
-    expect(h.state.stepQueryFilters).toEqual(expect.arrayContaining([
-      ["eq", "automation_id", "a1"],
-      ["gte", "position", 3],
-      ["eq", "parent_step_id", "condition-1"],
-      ["eq", "branch", "yes"],
-    ]));
+    expect(h.state.stepQueryFilters).toEqual(
+      expect.arrayContaining([
+        ['eq', 'automation_id', 'a1'],
+        ['gte', 'position', 3],
+        ['eq', 'parent_step_id', 'condition-1'],
+        ['eq', 'branch', 'yes'],
+      ])
+    );
   });
 });
 
-describe("update_contact_field — custom fields", () => {
-  it("upserts contact_custom_values when the field is account-owned", async () => {
-    h.state.owned = { id: "c1" };
-    h.state.ownedCustomField = { id: "cf1" };
+describe('update_contact_field — custom fields', () => {
+  it('upserts contact_custom_values when the field is account-owned', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.ownedCustomField = { id: 'cf1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [customStep("custom:cf1", "Premium")];
+    h.state.steps = [customStep('custom:cf1', 'Premium')];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
@@ -490,41 +549,41 @@ describe("update_contact_field — custom fields", () => {
     expect(h.state.updateCalls).toHaveLength(0);
     expect(h.state.upsertCalls).toHaveLength(1);
     expect(h.state.upsertCalls[0].payload).toEqual({
-      contact_id: "c1",
-      custom_field_id: "cf1",
-      value: "Premium",
+      contact_id: 'c1',
+      custom_field_id: 'cf1',
+      value: 'Premium',
     });
   });
 
-  it("interpolates {{ vars.* }} into the custom value", async () => {
-    h.state.owned = { id: "c1" };
-    h.state.ownedCustomField = { id: "cf1" };
+  it('interpolates {{ vars.* }} into the custom value', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.ownedCustomField = { id: 'cf1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [customStep("custom:cf1", "{{ vars.source }}")];
+    h.state.steps = [customStep('custom:cf1', '{{ vars.source }}')];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
-      context: { vars: { source: "WhatsApp Ad" } },
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { vars: { source: 'WhatsApp Ad' } },
     });
 
     expect(h.state.upsertCalls).toHaveLength(1);
-    expect(
-      (h.state.upsertCalls[0].payload as { value: string }).value,
-    ).toBe("WhatsApp Ad");
+    expect((h.state.upsertCalls[0].payload as { value: string }).value).toBe(
+      'WhatsApp Ad'
+    );
   });
 
-  it("refuses to write a custom field from another account", async () => {
-    h.state.owned = { id: "c1" };
+  it('refuses to write a custom field from another account', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.ownedCustomField = null; // account-scoped lookup finds nothing
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [customStep("custom:foreign-cf", "x")];
+    h.state.steps = [customStep('custom:foreign-cf', 'x')];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
@@ -533,127 +592,183 @@ describe("update_contact_field — custom fields", () => {
   });
 });
 
-describe("create_deal — service-role resource validation", () => {
+describe('create_deal — service-role resource validation', () => {
   function configure() {
-    h.state.owned = { id: "c1" };
-    h.state.ownedPipeline = { id: "pipe-1" };
-    h.state.ownedStage = { id: "stage-1" };
+    h.state.owned = { id: 'c1' };
+    h.state.ownedPipeline = { id: 'pipe-1' };
+    h.state.ownedStage = { id: 'stage-1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [{
-      id: "deal-step", automation_id: "a1", step_type: "create_deal",
-      position: 0, parent_step_id: null,
-      step_config: {
-        pipeline_id: "pipe-1", stage_id: "stage-1",
-        title: "{{ vars.title }}", value: 250,
+    h.state.steps = [
+      {
+        id: 'deal-step',
+        automation_id: 'a1',
+        step_type: 'create_deal',
+        position: 0,
+        parent_step_id: null,
+        step_config: {
+          pipeline_id: 'pipe-1',
+          stage_id: 'stage-1',
+          title: '{{ vars.title }}',
+          value: 250,
+        },
       },
-    }];
+    ];
   }
 
   async function run() {
     await runAutomationsForTrigger({
-      accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1",
-      context: { vars: { title: "Reservation RZ-42" } },
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { vars: { title: 'Reservation RZ-42' } },
     });
   }
 
-  it("creates a deal only with a same-workspace contact, pipeline, and child stage", async () => {
+  it('creates a deal only with a same-workspace contact, pipeline, and child stage', async () => {
     configure();
     await run();
     expect(h.state.insertCalls).toContainEqual({
-      table: "deals",
+      table: 'deals',
       payload: expect.objectContaining({
-        account_id: ACCOUNT, contact_id: "c1", pipeline_id: "pipe-1",
-        stage_id: "stage-1", title: "Reservation RZ-42", currency: "INR",
+        account_id: ACCOUNT,
+        contact_id: 'c1',
+        pipeline_id: 'pipe-1',
+        stage_id: 'stage-1',
+        title: 'Reservation RZ-42',
+        currency: 'INR',
       }),
     });
   });
 
   it.each([
-    ["foreign or missing contact", () => { h.state.owned = null; }],
-    ["foreign or missing pipeline", () => { h.state.ownedPipeline = null; }],
-    ["missing stage or stage from another pipeline", () => { h.state.ownedStage = null; }],
-  ])("rejects %s without inserting", async (label, invalidate) => {
+    [
+      'foreign or missing contact',
+      () => {
+        h.state.owned = null;
+      },
+    ],
+    [
+      'foreign or missing pipeline',
+      () => {
+        h.state.ownedPipeline = null;
+      },
+    ],
+    [
+      'missing stage or stage from another pipeline',
+      () => {
+        h.state.ownedStage = null;
+      },
+    ],
+  ])('rejects %s without inserting', async (label, invalidate) => {
     configure();
     invalidate();
     await run();
     expect(h.state.insertCalls).toHaveLength(0);
-    if (label !== "foreign or missing contact") {
-      expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
-        status: "failed",
-        error_message: "create_deal resources are not valid for this workspace",
-      }));
+    if (label !== 'foreign or missing contact') {
+      expect(h.state.logUpdates).toContainEqual(
+        expect.objectContaining({
+          status: 'failed',
+          error_message:
+            'create_deal resources are not valid for this workspace',
+        })
+      );
     }
   });
 
-  it("preserves PMS-triggered Create Deal behavior for valid resources", async () => {
+  it('preserves PMS-triggered Create Deal behavior for valid resources', async () => {
     configure();
-    h.state.automations[0].trigger_type = "reservation_confirmed";
+    h.state.automations[0].trigger_type = 'reservation_confirmed';
     await runAutomationsForTrigger({
-      accountId: ACCOUNT, triggerType: "reservation_confirmed", contactId: "c1",
-      context: { reservation: {
-        property_id: "property-1", reservation_status: "confirmed", channel: "direct",
-      } as never },
+      accountId: ACCOUNT,
+      triggerType: 'reservation_confirmed',
+      contactId: 'c1',
+      context: {
+        reservation: {
+          property_id: 'property-1',
+          reservation_status: 'confirmed',
+          channel: 'direct',
+        } as never,
+      },
     });
-    expect(h.state.insertCalls.filter((call) => call.table === "deals")).toHaveLength(1);
+    expect(
+      h.state.insertCalls.filter((call) => call.table === 'deals')
+    ).toHaveLength(1);
   });
 });
 
-describe("assign_conversation — workspace membership", () => {
+describe('assign_conversation — workspace membership', () => {
   function configure(config: Record<string, unknown>) {
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [{
-      id: "assign-step", automation_id: "a1", step_type: "assign_conversation",
-      position: 0, parent_step_id: null, step_config: config,
-    }];
+    h.state.steps = [
+      {
+        id: 'assign-step',
+        automation_id: 'a1',
+        step_type: 'assign_conversation',
+        position: 0,
+        parent_step_id: null,
+        step_config: config,
+      },
+    ];
   }
 
-  it("rejects an explicit assignee who is not a workspace member", async () => {
-    configure({ mode: "specific", agent_id: "foreign-agent" });
+  it('rejects an explicit assignee who is not a workspace member', async () => {
+    configure({ mode: 'specific', agent_id: 'foreign-agent' });
     await runAutomationsForTrigger({
-      accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1", context: {},
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: {},
     });
     expect(h.state.updateCalls).toHaveLength(0);
-    expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
-      error_message: "conversation assignee is not eligible",
-    }));
+    expect(h.state.logUpdates).toContainEqual(
+      expect.objectContaining({
+        error_message: 'conversation assignee is not eligible',
+      })
+    );
   });
 
-  it("uses the atomic round-robin assignee selected by Postgres", async () => {
-    configure({ mode: "round_robin" });
-    h.state.roundRobinAssignee = "agent-b";
+  it('uses the atomic round-robin assignee selected by Postgres', async () => {
+    configure({ mode: 'round_robin' });
+    h.state.roundRobinAssignee = 'agent-b';
     await runAutomationsForTrigger({
-      accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1", context: {},
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: {},
     });
-    expect(h.state.updateCalls).toContainEqual(expect.objectContaining({
-      table: "conversations",
-      filters: expect.arrayContaining([
-        ["eq", "account_id", ACCOUNT], ["eq", "contact_id", "c1"],
-      ]),
-    }));
+    expect(h.state.updateCalls).toContainEqual(
+      expect.objectContaining({
+        table: 'conversations',
+        filters: expect.arrayContaining([
+          ['eq', 'account_id', ACCOUNT],
+          ['eq', 'contact_id', 'c1'],
+        ]),
+      })
+    );
   });
 });
 
-describe("send_webhook — SSRF guard (GHSA-8jqh-598v-rfxc)", () => {
-  it("refuses a private / link-local destination and never calls fetch", async () => {
+describe('send_webhook — SSRF guard (GHSA-8jqh-598v-rfxc)', () => {
+  it('refuses a private / link-local destination and never calls fetch', async () => {
     const fetchSpy = vi.fn(async () => ({ ok: true, status: 200 }));
-    vi.stubGlobal("fetch", fetchSpy);
+    vi.stubGlobal('fetch', fetchSpy);
 
-    h.state.owned = { id: "c1" };
+    h.state.owned = { id: 'c1' };
     h.state.automations = [automationWithUpdateStep()];
     // Aimed at the cloud metadata endpoint — the classic SSRF target.
-    h.state.steps = [webhookStep("http://169.254.169.254/latest/meta-data/")];
+    h.state.steps = [webhookStep('http://169.254.169.254/latest/meta-data/')];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_message_received",
-      contactId: "c1",
+      triggerType: 'new_message_received',
+      contactId: 'c1',
       context: {},
     });
 
     // The automation matched and its steps were loaded (so we genuinely
     // reached the send_webhook case)...
-    expect(h.state.fromCalls).toContain("automation_steps");
+    expect(h.state.fromCalls).toContain('automation_steps');
     // ...yet the guard blocked it before any outbound request left the box.
     expect(fetchSpy).not.toHaveBeenCalled();
 
@@ -663,21 +778,25 @@ describe("send_webhook — SSRF guard (GHSA-8jqh-598v-rfxc)", () => {
 
 function webhookStep(url: string) {
   return {
-    id: "s1",
-    automation_id: "a1",
-    step_type: "send_webhook",
+    id: 's1',
+    automation_id: 'a1',
+    step_type: 'send_webhook',
     position: 0,
     parent_step_id: null,
-    step_config: { url, headers: { "Metadata-Flavor": "Google" }, body_template: "{}" },
+    step_config: {
+      url,
+      headers: { 'Metadata-Flavor': 'Google' },
+      body_template: '{}',
+    },
   };
 }
 
 function automationWithUpdateStep() {
   return {
-    id: "a1",
+    id: 'a1',
     account_id: ACCOUNT,
-    user_id: "u1",
-    trigger_type: "new_message_received",
+    user_id: 'u1',
+    trigger_type: 'new_message_received',
     trigger_config: {},
     is_active: true,
   };
@@ -685,195 +804,225 @@ function automationWithUpdateStep() {
 
 function updateStep() {
   return {
-    id: "s1",
-    automation_id: "a1",
-    step_type: "update_contact_field",
+    id: 's1',
+    automation_id: 'a1',
+    step_type: 'update_contact_field',
     position: 0,
     parent_step_id: null,
-    step_config: { field: "company", value: "pwned-by-automation" },
+    step_config: { field: 'company', value: 'pwned-by-automation' },
   };
 }
 
 function customStep(field: string, value: string) {
   return {
-    id: "s1",
-    automation_id: "a1",
-    step_type: "update_contact_field",
+    id: 's1',
+    automation_id: 'a1',
+    step_type: 'update_contact_field',
     position: 0,
     parent_step_id: null,
     step_config: { field, value },
   };
 }
 
-describe("triggerMatches — interactive_reply", () => {
+describe('triggerMatches — interactive_reply', () => {
   function automation(reply_ids: string[]): Automation {
     return {
-      id: "a1",
+      id: 'a1',
       account_id: ACCOUNT,
-      user_id: "u1",
-      name: "menu step",
-      trigger_type: "interactive_reply",
+      user_id: 'u1',
+      name: 'menu step',
+      trigger_type: 'interactive_reply',
       trigger_config: { reply_ids },
       is_active: true,
       execution_count: 0,
-      created_at: "",
-      updated_at: "",
+      created_at: '',
+      updated_at: '',
     };
   }
 
-  it("matches when the tapped id is in reply_ids (exact)", () => {
+  it('matches when the tapped id is in reply_ids (exact)', () => {
     expect(
-      triggerMatches(automation(["yes", "no"]), { interactive_reply_id: "yes" }),
+      triggerMatches(automation(['yes', 'no']), { interactive_reply_id: 'yes' })
     ).toBe(true);
   });
 
-  it("does not match a different id", () => {
+  it('does not match a different id', () => {
     expect(
-      triggerMatches(automation(["yes"]), { interactive_reply_id: "maybe" }),
+      triggerMatches(automation(['yes']), { interactive_reply_id: 'maybe' })
     ).toBe(false);
   });
 
-  it("does not match on a substring (exact only)", () => {
+  it('does not match on a substring (exact only)', () => {
     expect(
-      triggerMatches(automation(["yes"]), { interactive_reply_id: "yes_please" }),
+      triggerMatches(automation(['yes']), {
+        interactive_reply_id: 'yes_please',
+      })
     ).toBe(false);
   });
 
-  it("does not match when no reply id is present or config is empty", () => {
-    expect(triggerMatches(automation(["yes"]), {})).toBe(false);
-    expect(triggerMatches(automation([]), { interactive_reply_id: "yes" })).toBe(false);
+  it('does not match when no reply id is present or config is empty', () => {
+    expect(triggerMatches(automation(['yes']), {})).toBe(false);
+    expect(
+      triggerMatches(automation([]), { interactive_reply_id: 'yes' })
+    ).toBe(false);
   });
 });
 
-describe("triggerMatches — tag_added", () => {
+describe('triggerMatches — tag_added', () => {
   function automation(tagId?: string): Automation {
     return {
-      id: "a1",
+      id: 'a1',
       account_id: ACCOUNT,
-      user_id: "u1",
-      name: "tag follow-up",
-      trigger_type: "tag_added",
+      user_id: 'u1',
+      name: 'tag follow-up',
+      trigger_type: 'tag_added',
       trigger_config: tagId ? { tag_id: tagId } : {},
       is_active: true,
       execution_count: 0,
-      created_at: "",
-      updated_at: "",
+      created_at: '',
+      updated_at: '',
     };
   }
 
-  it("matches only the exact tag id", () => {
-    expect(triggerMatches(automation("tag-a"), { tag_id: "tag-a" })).toBe(true);
-    expect(triggerMatches(automation("tag-a"), { tag_id: "tag-ab" })).toBe(false);
+  it('matches only the exact tag id', () => {
+    expect(triggerMatches(automation('tag-a'), { tag_id: 'tag-a' })).toBe(true);
+    expect(triggerMatches(automation('tag-a'), { tag_id: 'tag-ab' })).toBe(
+      false
+    );
   });
 
-  it("fails closed when the config or event tag is missing", () => {
-    expect(triggerMatches(automation(), { tag_id: "tag-a" })).toBe(false);
-    expect(triggerMatches(automation("tag-a"), {})).toBe(false);
-    expect(triggerMatches(automation("tag-a"), undefined)).toBe(false);
+  it('fails closed when the config or event tag is missing', () => {
+    expect(triggerMatches(automation(), { tag_id: 'tag-a' })).toBe(false);
+    expect(triggerMatches(automation('tag-a'), {})).toBe(false);
+    expect(triggerMatches(automation('tag-a'), undefined)).toBe(false);
   });
 });
 
-describe("tag_added — conversation policy", () => {
-  it("records a clear failed step when the contact has no conversation", async () => {
-    h.state.owned = { id: "c1" };
-    h.state.automations = [{
-      id: "a1",
-      account_id: ACCOUNT,
-      user_id: "u1",
-      name: "tag outreach",
-      trigger_type: "tag_added",
-      trigger_config: { tag_id: "tag-a" },
-      is_active: true,
-    }];
-    h.state.steps = [{
-      id: "s1",
-      automation_id: "a1",
-      step_type: "send_message",
-      position: 0,
-      parent_step_id: null,
-      step_config: { text: "Hello" },
-    }];
+describe('tag_added — conversation policy', () => {
+  it('records a clear failed step when the contact has no conversation', async () => {
+    h.state.owned = { id: 'c1' };
+    h.state.automations = [
+      {
+        id: 'a1',
+        account_id: ACCOUNT,
+        user_id: 'u1',
+        name: 'tag outreach',
+        trigger_type: 'tag_added',
+        trigger_config: { tag_id: 'tag-a' },
+        is_active: true,
+      },
+    ];
+    h.state.steps = [
+      {
+        id: 's1',
+        automation_id: 'a1',
+        step_type: 'send_message',
+        position: 0,
+        parent_step_id: null,
+        step_config: { text: 'Hello' },
+      },
+    ];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "tag_added",
-      contactId: "c1",
-      context: { tag_id: "tag-a" },
+      triggerType: 'tag_added',
+      contactId: 'c1',
+      context: { tag_id: 'tag-a' },
     });
 
-    expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
-      status: "failed",
-      error_message: "tag_added automation cannot send: contact has no existing conversation",
-    }));
+    expect(h.state.logUpdates).toContainEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error_message:
+          'tag_added automation cannot send: contact has no existing conversation',
+      })
+    );
   });
 });
 
-describe("WhatsApp send execution dependency", () => {
-  it("rejects a stored conversation id outside the workspace/contact boundary", async () => {
-    h.state.owned = { id: "c1" };
+describe('WhatsApp send execution dependency', () => {
+  it('rejects a stored conversation id outside the workspace/contact boundary', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.ownedConversation = null;
     h.state.automations = [automationWithUpdateStep()];
-    h.state.steps = [{
-      id: "send-step", automation_id: "a1", step_type: "send_message",
-      position: 0, parent_step_id: null, step_config: { text: "Hello" },
-    }];
+    h.state.steps = [
+      {
+        id: 'send-step',
+        automation_id: 'a1',
+        step_type: 'send_message',
+        position: 0,
+        parent_step_id: null,
+        step_config: { text: 'Hello' },
+      },
+    ];
     await runAutomationsForTrigger({
-      accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1",
-      context: { conversation_id: "foreign-conversation" },
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { conversation_id: 'foreign-conversation' },
     });
-    expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
-      status: "failed",
-      error_message: "conversation is not valid for this workspace contact",
-    }));
+    expect(h.state.logUpdates).toContainEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error_message: 'conversation is not valid for this workspace contact',
+      })
+    );
   });
 
-  it("fails defensively before sending when no WhatsApp connection exists", async () => {
-    h.state.owned = { id: "c1" };
+  it('fails defensively before sending when no WhatsApp connection exists', async () => {
+    h.state.owned = { id: 'c1' };
     h.state.whatsappConnection = null;
-    h.state.automations = [{
-      id: "a1",
-      account_id: ACCOUNT,
-      user_id: "u1",
-      name: "send without config",
-      trigger_type: "new_contact_created",
-      trigger_config: {},
-      is_active: true,
-      whatsapp_config_id: null,
-    }];
-    h.state.steps = [{
-      id: "s1",
-      automation_id: "a1",
-      step_type: "send_message",
-      position: 0,
-      parent_step_id: null,
-      step_config: { text: "Hello" },
-    }];
+    h.state.automations = [
+      {
+        id: 'a1',
+        account_id: ACCOUNT,
+        user_id: 'u1',
+        name: 'send without config',
+        trigger_type: 'new_contact_created',
+        trigger_config: {},
+        is_active: true,
+        whatsapp_config_id: null,
+      },
+    ];
+    h.state.steps = [
+      {
+        id: 's1',
+        automation_id: 'a1',
+        step_type: 'send_message',
+        position: 0,
+        parent_step_id: null,
+        step_config: { text: 'Hello' },
+      },
+    ];
 
     await runAutomationsForTrigger({
       accountId: ACCOUNT,
-      triggerType: "new_contact_created",
-      contactId: "c1",
+      triggerType: 'new_contact_created',
+      contactId: 'c1',
       context: {},
     });
 
-    expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
-      status: "failed",
-      error_message: "No primary WhatsApp connection is configured for this workspace",
-    }));
+    expect(h.state.logUpdates).toContainEqual(
+      expect.objectContaining({
+        status: 'failed',
+        error_message:
+          'No primary WhatsApp connection is configured for this workspace',
+      })
+    );
   });
 });
 
-describe("triggerMatches — keyword_match", () => {
+describe('triggerMatches — keyword_match', () => {
   function automation(
-    cfg: Partial<KeywordMatchTriggerConfig> & { keywords: string[] },
+    cfg: Partial<KeywordMatchTriggerConfig> & { keywords: string[] }
   ): Automation {
     return {
-      id: "a1",
+      id: 'a1',
       account_id: ACCOUNT,
-      user_id: "u1",
-      name: "kw",
-      trigger_type: "keyword_match",
-      trigger_config: { match_type: "contains", ...cfg },
+      user_id: 'u1',
+      name: 'kw',
+      trigger_type: 'keyword_match',
+      trigger_config: { match_type: 'contains', ...cfg },
       is_active: true,
     } as unknown as Automation;
   }
@@ -881,84 +1030,100 @@ describe("triggerMatches — keyword_match", () => {
   const on = (a: Automation, text: string) =>
     triggerMatches(a, { message_text: text });
 
-  it("keeps `contains` as a raw substring test", () => {
+  it('keeps `contains` as a raw substring test', () => {
     // Issue #409 asked for this to become word-boundary matching. It
     // deliberately did NOT change: existing automations relying on
     // substring behaviour ("cat" firing on "category") must keep working,
     // and `contains` is the builder's default. `word` is the opt-in fix.
-    expect(on(automation({ keywords: ["k"] }), "thanks")).toBe(true);
-    expect(on(automation({ keywords: ["cat"] }), "category")).toBe(true);
+    expect(on(automation({ keywords: ['k'] }), 'thanks')).toBe(true);
+    expect(on(automation({ keywords: ['cat'] }), 'category')).toBe(true);
   });
 
-  it("`word` matches only standalone words", () => {
-    const a = automation({ keywords: ["k"], match_type: "word" });
-    expect(on(a, "thanks")).toBe(false);
-    expect(on(a, "k")).toBe(true);
-    expect(on(a, "press k to continue")).toBe(true);
-    expect(on(a, "press K!")).toBe(true);
+  it('`word` matches only standalone words', () => {
+    const a = automation({ keywords: ['k'], match_type: 'word' });
+    expect(on(a, 'thanks')).toBe(false);
+    expect(on(a, 'k')).toBe(true);
+    expect(on(a, 'press k to continue')).toBe(true);
+    expect(on(a, 'press K!')).toBe(true);
   });
 
-  it("`word` respects punctuation and line edges around the keyword", () => {
-    const a = automation({ keywords: ["hi"], match_type: "word" });
-    expect(on(a, "hi")).toBe(true);
-    expect(on(a, "hi!")).toBe(true);
-    expect(on(a, "(hi)")).toBe(true);
-    expect(on(a, "say hi.")).toBe(true);
-    expect(on(a, "this")).toBe(false);
-    expect(on(a, "hiya")).toBe(false);
+  it('`word` respects punctuation and line edges around the keyword', () => {
+    const a = automation({ keywords: ['hi'], match_type: 'word' });
+    expect(on(a, 'hi')).toBe(true);
+    expect(on(a, 'hi!')).toBe(true);
+    expect(on(a, '(hi)')).toBe(true);
+    expect(on(a, 'say hi.')).toBe(true);
+    expect(on(a, 'this')).toBe(false);
+    expect(on(a, 'hiya')).toBe(false);
   });
 
-  it("`word` handles a keyword that itself carries punctuation", () => {
+  it('`word` handles a keyword that itself carries punctuation', () => {
     // `\b` can't do this: /\bhi!\b/ demands a word char after the "!",
     // so it never matches. Hence the lookaround implementation.
-    const a = automation({ keywords: ["hi!"], match_type: "word" });
-    expect(on(a, "say hi!")).toBe(true);
-    expect(on(a, "hi! there")).toBe(true);
+    const a = automation({ keywords: ['hi!'], match_type: 'word' });
+    expect(on(a, 'say hi!')).toBe(true);
+    expect(on(a, 'hi! there')).toBe(true);
   });
 
-  it("`word` treats regex metacharacters in a keyword as literal", () => {
+  it('`word` treats regex metacharacters in a keyword as literal', () => {
     // Account-supplied free text — an unescaped "(" would throw.
-    const a = automation({ keywords: ["c++ (beginner)"], match_type: "word" });
-    expect(on(a, "I want the c++ (beginner) course")).toBe(true);
-    expect(on(a, "I want the cxx beginner course")).toBe(false);
-    expect(() => on(automation({ keywords: ["("], match_type: "word" }), "(")).not.toThrow();
+    const a = automation({ keywords: ['c++ (beginner)'], match_type: 'word' });
+    expect(on(a, 'I want the c++ (beginner) course')).toBe(true);
+    expect(on(a, 'I want the cxx beginner course')).toBe(false);
+    expect(() =>
+      on(automation({ keywords: ['('], match_type: 'word' }), '(')
+    ).not.toThrow();
   });
 
-  it("`word` is case-insensitive unless case_sensitive is set", () => {
-    expect(on(automation({ keywords: ["Hi"], match_type: "word" }), "hi")).toBe(true);
+  it('`word` is case-insensitive unless case_sensitive is set', () => {
+    expect(on(automation({ keywords: ['Hi'], match_type: 'word' }), 'hi')).toBe(
+      true
+    );
     expect(
       on(
-        automation({ keywords: ["Hi"], match_type: "word", case_sensitive: true }),
-        "hi",
-      ),
+        automation({
+          keywords: ['Hi'],
+          match_type: 'word',
+          case_sensitive: true,
+        }),
+        'hi'
+      )
     ).toBe(false);
     expect(
       on(
-        automation({ keywords: ["Hi"], match_type: "word", case_sensitive: true }),
-        "Hi",
-      ),
+        automation({
+          keywords: ['Hi'],
+          match_type: 'word',
+          case_sensitive: true,
+        }),
+        'Hi'
+      )
     ).toBe(true);
   });
 
-  it("`word` finds a space-delimited keyword in a non-Latin script", () => {
+  it('`word` finds a space-delimited keyword in a non-Latin script', () => {
     // ASCII `\b` fails outright here — every character of "안녕" is a
     // non-word character to it, so /\b안녕\b/ matches nothing.
-    const a = automation({ keywords: ["안녕"], match_type: "word" });
-    expect(on(a, "안녕")).toBe(true);
-    expect(on(a, "저기 안녕 하세요")).toBe(true);
+    const a = automation({ keywords: ['안녕'], match_type: 'word' });
+    expect(on(a, '안녕')).toBe(true);
+    expect(on(a, '저기 안녕 하세요')).toBe(true);
     // Documented limitation, not an accident: a language written without
     // spaces has no word edge inside a run of characters.
-    expect(on(a, "안녕하세요")).toBe(false);
+    expect(on(a, '안녕하세요')).toBe(false);
   });
 
-  it("`exact` still requires the whole message to be the keyword", () => {
-    const a = automation({ keywords: ["hi"], match_type: "exact" });
-    expect(on(a, "hi")).toBe(true);
-    expect(on(a, "hi there")).toBe(false);
+  it('`exact` still requires the whole message to be the keyword', () => {
+    const a = automation({ keywords: ['hi'], match_type: 'exact' });
+    expect(on(a, 'hi')).toBe(true);
+    expect(on(a, 'hi there')).toBe(false);
   });
 
-  it("ignores empty keywords and empty messages in `word` mode", () => {
-    expect(on(automation({ keywords: [""], match_type: "word" }), "anything")).toBe(false);
-    expect(on(automation({ keywords: ["hi"], match_type: "word" }), "")).toBe(false);
+  it('ignores empty keywords and empty messages in `word` mode', () => {
+    expect(
+      on(automation({ keywords: [''], match_type: 'word' }), 'anything')
+    ).toBe(false);
+    expect(on(automation({ keywords: ['hi'], match_type: 'word' }), '')).toBe(
+      false
+    );
   });
 });

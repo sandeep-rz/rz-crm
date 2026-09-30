@@ -138,9 +138,7 @@ describe('POST /api/webhooks/pms/rukiye-zara', () => {
   it('rejects a non-integer timestamp header', async () => {
     const rawBody = JSON.stringify(BASE_EVENT);
 
-    const response = await POST(
-      request(rawBody, { timestamp: `${NOW}.5` })
-    );
+    const response = await POST(request(rawBody, { timestamp: `${NOW}.5` }));
 
     expect(response.status).toBe(401);
     expect(h.processEvent).not.toHaveBeenCalled();

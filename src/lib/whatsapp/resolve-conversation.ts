@@ -46,7 +46,7 @@ export interface ResolveConversationForContactInput {
  */
 export async function resolveConversationForContact(
   db: SupabaseClient,
-  input: ResolveConversationForContactInput,
+  input: ResolveConversationForContactInput
 ): Promise<ResolvedConversation> {
   const config = await resolveWhatsAppConnection(db, {
     accountId: input.accountId,
@@ -56,7 +56,7 @@ export async function resolveConversationForContact(
     throw new SendMessageError(
       'whatsapp_not_configured',
       'WhatsApp not configured. Please set up your WhatsApp integration first.',
-      400,
+      400
     );
   }
   const { data: contact, error } = await db
@@ -69,13 +69,17 @@ export async function resolveConversationForContact(
     throw new SendMessageError('db_error', 'Failed to resolve contact', 500);
   }
   if (!contact) {
-    throw new SendMessageError('bad_request', 'Contact does not belong to this account.', 400);
+    throw new SendMessageError(
+      'bad_request',
+      'Contact does not belong to this account.',
+      400
+    );
   }
   if (!parseInternationalPhone(contact.phone ?? '')) {
     throw new SendMessageError(
       'bad_request',
       'Contact does not have a deliverable international phone number.',
-      400,
+      400
     );
   }
   let ownerUserId: string;
@@ -92,7 +96,7 @@ export async function resolveConversationForContact(
     input.accountId,
     input.contactId,
     ownerUserId,
-    config.id,
+    config.id
   );
   return { conversationId, contactId: input.contactId, contactCreated: false };
 }
@@ -108,7 +112,7 @@ export async function resolveConversationByPhone(
   accountId: string,
   phone: string,
   name?: string | null,
-  connectionId?: string | null,
+  connectionId?: string | null
 ): Promise<ResolvedConversation> {
   // Raw integrator input: the leading `+` is required so the country
   // code is explicit — "4155551212" would otherwise be delivered to
@@ -216,7 +220,7 @@ export async function resolveConversationByPhone(
     accountId,
     contactId,
     ownerUserId,
-    config.id,
+    config.id
   );
 
   return { conversationId, contactId, contactCreated };
@@ -233,7 +237,7 @@ async function findOrCreateConversationRow(
   accountId: string,
   contactId: string,
   ownerUserId: string,
-  connectionId: string,
+  connectionId: string
 ): Promise<string> {
   const { data: existing, error: findErr } = await db
     .from('conversations')
@@ -246,7 +250,11 @@ async function findOrCreateConversationRow(
 
   if (findErr) {
     console.error('[resolve-conversation] conversation lookup error:', findErr);
-    throw new SendMessageError('db_error', 'Failed to resolve conversation', 500);
+    throw new SendMessageError(
+      'db_error',
+      'Failed to resolve conversation',
+      500
+    );
   }
 
   if (existing && existing.length > 0) {
@@ -279,7 +287,11 @@ async function findOrCreateConversationRow(
       }
     }
     console.error('[resolve-conversation] conversation create error:', convErr);
-    throw new SendMessageError('db_error', 'Failed to create conversation', 500);
+    throw new SendMessageError(
+      'db_error',
+      'Failed to create conversation',
+      500
+    );
   }
 
   return newConv.id;

@@ -1,4 +1,4 @@
-import type { Conversation, Contact, Tag } from "@/types";
+import type { Conversation, Contact, Tag } from '@/types';
 
 /**
  * Conversation select that embeds the contact plus its tags, so the Inbox
@@ -7,11 +7,11 @@ import type { Conversation, Contact, Tag } from "@/types";
  * flattens them onto `contact.tags`.
  */
 export const CONVERSATION_SELECT =
-  "*, contact:contacts(*, contact_tags(tags(*)))";
+  '*, contact:contacts(*, contact_tags(tags(*)))';
 
 /** Raw shape returned by {@link CONVERSATION_SELECT} before flattening. */
 type RawContact = Contact & { contact_tags?: { tags: Tag | null }[] };
-type RawConversation = Omit<Conversation, "contact"> & {
+type RawConversation = Omit<Conversation, 'contact'> & {
   contact?: RawContact | null;
 };
 
@@ -37,16 +37,18 @@ export function normalizeConversation(raw: RawConversation): Conversation {
 }
 
 export function normalizeConversations(
-  rows: RawConversation[],
+  rows: RawConversation[]
 ): Conversation[] {
   return rows.map(normalizeConversation);
 }
 
 export function matchesConnectionFilter(
   conversation: Conversation,
-  connectionId: string | 'all',
+  connectionId: string | 'all'
 ): boolean {
-  return connectionId === 'all' || conversation.whatsapp_config_id === connectionId;
+  return (
+    connectionId === 'all' || conversation.whatsapp_config_id === connectionId
+  );
 }
 
 export interface ContactFilters {
@@ -63,7 +65,7 @@ export interface ContactFilters {
  */
 export function matchesContactFilters(
   conversation: Conversation,
-  { tagIds, company }: ContactFilters,
+  { tagIds, company }: ContactFilters
 ): boolean {
   if (tagIds.length > 0) {
     const contactTagIds = conversation.contact?.tags ?? [];

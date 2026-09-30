@@ -130,7 +130,7 @@ export async function createBroadcast(
     accountId,
     templateName,
     params.templateLanguage,
-    config.id,
+    config.id
   );
   if (resolvedTemplate.malformed) {
     throw new BroadcastError(
@@ -227,9 +227,13 @@ export async function createBroadcast(
     .from('broadcasts')
     .update({ whatsapp_config_id: config.id })
     .eq('id', broadcastId)
-    .eq('account_id', accountId)
+    .eq('account_id', accountId);
   if (connectionPersistError) {
-    throw new BroadcastError('internal', 'Failed to persist broadcast connection', 500)
+    throw new BroadcastError(
+      'internal',
+      'Failed to persist broadcast connection',
+      500
+    );
   }
 
   // Pair each inserted recipient row back to its phone/params by
@@ -238,7 +242,11 @@ export async function createBroadcast(
   const planned: PlannedRecipient[] = createdRows.map(
     (row: { recipient_id: string; contact_id: string }) => {
       const r = byContact.get(row.contact_id)!;
-      return { recipientRowId: row.recipient_id, phone: r.phone, params: r.params };
+      return {
+        recipientRowId: row.recipient_id,
+        phone: r.phone,
+        params: r.params,
+      };
     }
   );
 
@@ -291,7 +299,8 @@ export async function deliverBroadcast(
         lastError = null;
         break;
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
+        const message =
+          error instanceof Error ? error.message : 'Unknown error';
         lastError = message;
         // Only a "recipient not allowed" error is worth another variant.
         if (!isRecipientNotAllowedError(message)) break;

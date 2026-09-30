@@ -1,8 +1,5 @@
 export type ReservationLifecycle =
-  | 'upcoming'
-  | 'staying_now'
-  | 'checked_out'
-  | 'cancelled';
+  'upcoming' | 'staying_now' | 'checked_out' | 'cancelled';
 
 export interface ReservationRecord {
   id: string;
@@ -41,7 +38,9 @@ export function propertyDate(now: Date, timezone: string): string {
       month: '2-digit',
       day: '2-digit',
     }).formatToParts(now);
-    const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const value = Object.fromEntries(
+      parts.map((part) => [part.type, part.value])
+    );
     return `${value.year}-${value.month}-${value.day}`;
   } catch {
     return now.toISOString().slice(0, 10);
@@ -49,20 +48,32 @@ export function propertyDate(now: Date, timezone: string): string {
 }
 
 export function classifyReservation(
-  input: { status: string; checkIn: string | null; checkOut: string | null; propertyTimezone: string },
+  input: {
+    status: string;
+    checkIn: string | null;
+    checkOut: string | null;
+    propertyTimezone: string;
+  },
   now = new Date()
 ): ReservationLifecycle {
   const today = propertyDate(now, input.propertyTimezone);
   if (/cancel/i.test(input.status)) return 'cancelled';
-  if (/^(completed|checked[ _-]?out)$/i.test(input.status)) return 'checked_out';
+  if (/^(completed|checked[ _-]?out)$/i.test(input.status))
+    return 'checked_out';
   if (input.checkOut && input.checkOut <= today) return 'checked_out';
-  if (input.checkIn && input.checkIn <= today && (!input.checkOut || input.checkOut > today)) {
+  if (
+    input.checkIn &&
+    input.checkIn <= today &&
+    (!input.checkOut || input.checkOut > today)
+  ) {
     return 'staying_now';
   }
   return 'upcoming';
 }
 
-export function parseReservation(row: Record<string, unknown>): ReservationRecord | null {
+export function parseReservation(
+  row: Record<string, unknown>
+): ReservationRecord | null {
   const id = text(row.id);
   const propertyId = text(row.property_id);
   const status = text(row.status);
@@ -98,7 +109,9 @@ export function parseReservation(row: Record<string, unknown>): ReservationRecor
   };
 }
 
-export function bookingTotalsByCurrency(rows: Pick<ReservationRecord, 'totalAmount' | 'currency'>[]) {
+export function bookingTotalsByCurrency(
+  rows: Pick<ReservationRecord, 'totalAmount' | 'currency'>[]
+) {
   const totals = new Map<string, number>();
   for (const row of rows) {
     if (row.totalAmount === null || !row.currency) continue;
@@ -109,7 +122,12 @@ export function bookingTotalsByCurrency(rows: Pick<ReservationRecord, 'totalAmou
 }
 
 function isLifecycle(value: string | null): value is ReservationLifecycle {
-  return value === 'upcoming' || value === 'staying_now' || value === 'checked_out' || value === 'cancelled';
+  return (
+    value === 'upcoming' ||
+    value === 'staying_now' ||
+    value === 'checked_out' ||
+    value === 'cancelled'
+  );
 }
 function text(value: unknown): string | null {
   if (typeof value !== 'string') return null;

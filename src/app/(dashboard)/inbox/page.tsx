@@ -1,27 +1,32 @@
-"use client";
+'use client';
 
-import { Suspense, useState, useCallback, useEffect, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useTranslations } from "next-intl";
-import { createClient } from "@/lib/supabase/client";
+import { Suspense, useState, useCallback, useEffect, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
+import { createClient } from '@/lib/supabase/client';
 import {
   CONVERSATION_SELECT,
   normalizeConversation,
-} from "@/lib/inbox/conversations";
-import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
-import type { WhatsAppConfig } from "@/types";
-import { useRealtime } from "@/hooks/use-realtime";
-import { ConversationList } from "@/components/inbox/conversation-list";
-import { MessageThread } from "@/components/inbox/message-thread";
-import { ContactSidebar } from "@/components/inbox/contact-sidebar";
-import { toast } from "sonner";
-import { WifiOff } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useAuth } from "@/hooks/use-auth";
+} from '@/lib/inbox/conversations';
+import type {
+  Conversation,
+  Message,
+  Contact,
+  ConversationStatus,
+} from '@/types';
+import type { WhatsAppConfig } from '@/types';
+import { useRealtime } from '@/hooks/use-realtime';
+import { ConversationList } from '@/components/inbox/conversation-list';
+import { MessageThread } from '@/components/inbox/message-thread';
+import { ContactSidebar } from '@/components/inbox/contact-sidebar';
+import { toast } from 'sonner';
+import { WifiOff } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/use-auth';
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
-const CONTACT_PANEL_STORAGE_KEY = "wacrm:inbox:contact-panel-open";
+const CONTACT_PANEL_STORAGE_KEY = 'wacrm:inbox:contact-panel-open';
 
 // `useSearchParams` (the `?c=<id>` deep link below) requires a Suspense
 // boundary or the production build bails to CSR and errors out. Thin
@@ -35,7 +40,7 @@ export default function InboxPage() {
 }
 
 function InboxPageInner() {
-  const t = useTranslations("Inbox.page");
+  const t = useTranslations('Inbox.page');
   const router = useRouter();
   const searchParams = useSearchParams();
   const { accountId } = useAuth();
@@ -44,7 +49,7 @@ function InboxPageInner() {
    * dashboard's recent-conversations list so the right thread opens
    * automatically instead of showing the empty center panel.
    */
-  const deepLinkConvId = searchParams.get("c");
+  const deepLinkConvId = searchParams.get('c');
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] =
@@ -54,7 +59,9 @@ function InboxPageInner() {
   const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
     null
   );
-  const [whatsappConnections, setWhatsappConnections] = useState<Array<Pick<WhatsAppConfig, "id" | "display_name" | "is_primary" | "status">>>([]);
+  const [whatsappConnections, setWhatsappConnections] = useState<
+    Array<Pick<WhatsAppConfig, 'id' | 'display_name' | 'is_primary' | 'status'>>
+  >([]);
   /**
    * Bumped whenever we want children (ConversationList, MessageThread)
    * to refetch from the DB — used as a safety net against missed
@@ -76,7 +83,7 @@ function InboxPageInner() {
   useEffect(() => {
     try {
       const stored = localStorage.getItem(CONTACT_PANEL_STORAGE_KEY);
-      if (stored !== null) setContactPanelOpen(stored === "true");
+      if (stored !== null) setContactPanelOpen(stored === 'true');
     } catch {
       // localStorage can throw in private-browsing / sandboxed contexts.
     }
@@ -132,51 +139,54 @@ function InboxPageInner() {
   // conversations stuck on "No messages yet" until the user reloaded.
   // Also self-heals if a realtime event was missed: callers can invoke
   // this whenever they reference a conversation id they don't recognise.
-  const hydrateConversation = useCallback(async (convId: string) => {
-    if (!accountId) return;
-    if (hydratingConvIdsRef.current.has(convId)) return;
-    hydratingConvIdsRef.current.add(convId);
-    try {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("conversations")
-        .select(CONVERSATION_SELECT)
-        .eq("id", convId)
-        .eq("account_id", accountId)
-        .maybeSingle();
-      if (error) {
-        // Supabase errors have non-enumerable properties — log fields
-        // explicitly so the console message isn't just `{}`.
-        console.error("Failed to hydrate conversation:", {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        });
-        return;
-      }
-      if (!data) return;
-      const fetched = normalizeConversation(data);
-      setConversations((prev) => {
-        const existing = prev.find((c) => c.id === fetched.id);
-        if (existing) {
-          // Already in state — keep its fields (a realtime UPDATE may
-          // have landed while the fetch was in flight and patched
-          // last_message_text / unread_count to fresher values than
-          // the row we just read). Only backfill `contact`, which the
-          // realtime payloads never carry.
-          return prev.map((c) =>
-            c.id === fetched.id
-              ? { ...c, contact: c.contact ?? fetched.contact }
-              : c,
-          );
+  const hydrateConversation = useCallback(
+    async (convId: string) => {
+      if (!accountId) return;
+      if (hydratingConvIdsRef.current.has(convId)) return;
+      hydratingConvIdsRef.current.add(convId);
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('conversations')
+          .select(CONVERSATION_SELECT)
+          .eq('id', convId)
+          .eq('account_id', accountId)
+          .maybeSingle();
+        if (error) {
+          // Supabase errors have non-enumerable properties — log fields
+          // explicitly so the console message isn't just `{}`.
+          console.error('Failed to hydrate conversation:', {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          });
+          return;
         }
-        return [fetched, ...prev];
-      });
-    } finally {
-      hydratingConvIdsRef.current.delete(convId);
-    }
-  }, [accountId]);
+        if (!data) return;
+        const fetched = normalizeConversation(data);
+        setConversations((prev) => {
+          const existing = prev.find((c) => c.id === fetched.id);
+          if (existing) {
+            // Already in state — keep its fields (a realtime UPDATE may
+            // have landed while the fetch was in flight and patched
+            // last_message_text / unread_count to fresher values than
+            // the row we just read). Only backfill `contact`, which the
+            // realtime payloads never carry.
+            return prev.map((c) =>
+              c.id === fetched.id
+                ? { ...c, contact: c.contact ?? fetched.contact }
+                : c
+            );
+          }
+          return [fetched, ...prev];
+        });
+      } finally {
+        hydratingConvIdsRef.current.delete(convId);
+      }
+    },
+    [accountId]
+  );
 
   // Check WhatsApp connection status on mount
   useEffect(() => {
@@ -193,9 +203,9 @@ function InboxPageInner() {
       // account_id through the profile, then let the config API return the
       // active workspace's connection collection.
       const { data: profile } = await supabase
-        .from("profiles")
-        .select("account_id")
-        .eq("user_id", user.id)
+        .from('profiles')
+        .select('account_id')
+        .eq('user_id', user.id)
         .maybeSingle();
       const accountId = profile?.account_id as string | undefined;
       if (!accountId) {
@@ -207,7 +217,9 @@ function InboxPageInner() {
       const payload = await response.json();
       const rows = payload.connections ?? [];
       setWhatsappConnections(rows);
-      setWhatsappConnected(rows.some((row: { status: string }) => row.status === 'connected'));
+      setWhatsappConnected(
+        rows.some((row: { status: string }) => row.status === 'connected')
+      );
     };
 
     checkConnection();
@@ -218,7 +230,7 @@ function InboxPageInner() {
     (event: { eventType: string; new: Message; old: Partial<Message> }) => {
       const newMsg = event.new;
 
-      if (event.eventType === "INSERT") {
+      if (event.eventType === 'INSERT') {
         // Add to messages if it belongs to active conversation
         if (
           activeConversation &&
@@ -229,7 +241,7 @@ function InboxPageInner() {
             if (prev.some((m) => m.id === newMsg.id)) return prev;
             // Replace optimistic message if it exists
             const withoutOptimistic = prev.filter(
-              (m) => !m.id.startsWith("temp-")
+              (m) => !m.id.startsWith('temp-')
             );
             return [...withoutOptimistic, newMsg];
           });
@@ -246,15 +258,15 @@ function InboxPageInner() {
               c.id === newMsg.conversation_id
                 ? {
                     ...c,
-                    last_message_text: newMsg.content_text ?? "",
+                    last_message_text: newMsg.content_text ?? '',
                     last_message_at: newMsg.created_at,
                     unread_count:
                       activeConversation?.id === newMsg.conversation_id
                         ? 0
                         : c.unread_count + 1,
                   }
-                : c,
-            ),
+                : c
+            )
           );
         } else {
           // First time we're seeing this conv: the conv-INSERT event
@@ -266,7 +278,7 @@ function InboxPageInner() {
         }
       }
 
-      if (event.eventType === "UPDATE") {
+      if (event.eventType === 'UPDATE') {
         // Update message status
         setMessages((prev) =>
           prev.map((m) => (m.id === newMsg.id ? { ...m, ...newMsg } : m))
@@ -285,7 +297,7 @@ function InboxPageInner() {
     }) => {
       const conv = event.new;
 
-      if (event.eventType === "INSERT") {
+      if (event.eventType === 'INSERT') {
         // Prepend immediately for snappy UX so the new conv shows in the
         // list right away, then hydrate to fill in the `contact` join
         // (realtime payloads never include joins). Skip both if we
@@ -300,7 +312,7 @@ function InboxPageInner() {
         }
       }
 
-      if (event.eventType === "UPDATE") {
+      if (event.eventType === 'UPDATE') {
         if (knownConvIdsRef.current.has(conv.id)) {
           // If this UPDATE is for the conv the user is currently viewing,
           // suppress the incoming unread_count — the user is reading it
@@ -316,8 +328,8 @@ function InboxPageInner() {
                     ...conv,
                     unread_count: isActive ? 0 : conv.unread_count,
                   }
-                : c,
-            ),
+                : c
+            )
           );
         } else {
           // UPDATE arrived before the INSERT (or after a missed INSERT)
@@ -329,9 +341,7 @@ function InboxPageInner() {
 
         // Update active conversation if it changed
         if (activeConversation && conv.id === activeConversation.id) {
-          setActiveConversation((prev) =>
-            prev ? { ...prev, ...conv } : prev
-          );
+          setActiveConversation((prev) => (prev ? { ...prev, ...conv } : prev));
         }
       }
     },
@@ -343,7 +353,7 @@ function InboxPageInner() {
   // WS was disconnected (laptop sleep, network blip, background-tab
   // throttle) are simply lost. We need a way to catch up.
   const { isConnected } = useRealtime({
-    channelName: "inbox-realtime",
+    channelName: 'inbox-realtime',
     accountId,
     onMessageEvent: handleMessageEvent,
     onConversationEvent: handleConversationEvent,
@@ -382,13 +392,13 @@ function InboxPageInner() {
    */
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === 'visible') {
         setResyncToken((n) => n + 1);
       }
     };
-    document.addEventListener("visibilitychange", onVisibility);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
 
@@ -438,8 +448,8 @@ function InboxPageInner() {
           if (match.unread_count > 0) {
             setConversations((prev) =>
               prev.map((c) =>
-                c.id === match.id ? { ...c, unread_count: 0 } : c,
-              ),
+                c.id === match.id ? { ...c, unread_count: 0 } : c
+              )
             );
           }
         }
@@ -469,10 +479,8 @@ function InboxPageInner() {
       // even if the realtime UPDATE is dropped.
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === conv.id && c.unread_count > 0
-            ? { ...c, unread_count: 0 }
-            : c,
-        ),
+          c.id === conv.id && c.unread_count > 0 ? { ...c, unread_count: 0 } : c
+        )
       );
       // Record the selection on the deep-link ref BEFORE we change the
       // URL. The router.replace below flips `deepLinkConvId`, which can
@@ -500,9 +508,8 @@ function InboxPageInner() {
     // Clearing the ref lets the deep-link auto-selector fire again if
     // the user later visits /inbox?c=<same-id> — desirable UX.
     autoSelectedForDeepLinkRef.current = null;
-    router.replace("/inbox", { scroll: false });
+    router.replace('/inbox', { scroll: false });
   }, [router]);
-
 
   const handleMessagesLoaded = useCallback((loaded: Message[]) => {
     setMessages(loaded);
@@ -570,9 +577,7 @@ function InboxPageInner() {
       {whatsappConnected === false && (
         <div className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2">
           <WifiOff className="h-4 w-4 text-amber-400" />
-          <p className="text-xs text-amber-400">
-            {t("whatsappNotConnected")}
-          </p>
+          <p className="text-xs text-amber-400">{t('whatsappNotConnected')}</p>
         </div>
       )}
 
@@ -582,8 +587,8 @@ function InboxPageInner() {
             thread can occupy the full width. Always visible on lg+. */}
         <div
           className={cn(
-            "flex h-full flex-1 lg:flex-none",
-            hasActiveConv ? "hidden lg:flex" : "flex",
+            'flex h-full flex-1 lg:flex-none',
+            hasActiveConv ? 'hidden lg:flex' : 'flex'
           )}
         >
           <ConversationList
@@ -608,8 +613,8 @@ function InboxPageInner() {
             on the right. Issue #165. */}
         <div
           className={cn(
-            "flex h-full min-w-0 flex-1 lg:flex",
-            hasActiveConv ? "flex" : "hidden lg:flex",
+            'flex h-full min-w-0 flex-1 lg:flex',
+            hasActiveConv ? 'flex' : 'hidden lg:flex'
           )}
         >
           <MessageThread

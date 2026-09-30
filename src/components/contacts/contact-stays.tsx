@@ -130,10 +130,32 @@ export function ContactStaySummary({
       </div>
 
       <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <SummaryMetric label={t('staysTab.totalStays')} value={String(stays.filter((stay) => stay.timing !== 'cancelled').length)} />
-        <SummaryMetric label={t('staysTab.nextStay')} value={nextStay?.checkIn ? formatStayDateShort(nextStay.checkIn, locale) : '—'} />
-        <SummaryMetric label={t('staysTab.lastStay')} value={lastStay?.checkOut ? formatStayDateShort(lastStay.checkOut, locale) : '—'} />
-        <SummaryMetric label={t('staysTab.bookingValue')} value={totals.length ? totals.join(' · ') : '—'} />
+        <SummaryMetric
+          label={t('staysTab.totalStays')}
+          value={String(
+            stays.filter((stay) => stay.timing !== 'cancelled').length
+          )}
+        />
+        <SummaryMetric
+          label={t('staysTab.nextStay')}
+          value={
+            nextStay?.checkIn
+              ? formatStayDateShort(nextStay.checkIn, locale)
+              : '—'
+          }
+        />
+        <SummaryMetric
+          label={t('staysTab.lastStay')}
+          value={
+            lastStay?.checkOut
+              ? formatStayDateShort(lastStay.checkOut, locale)
+              : '—'
+          }
+        />
+        <SummaryMetric
+          label={t('staysTab.bookingValue')}
+          value={totals.length ? totals.join(' · ') : '—'}
+        />
       </dl>
 
       {relevant && (
@@ -160,7 +182,14 @@ export function ContactStaySummary({
 }
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {
-  return <div className="bg-muted/45 rounded-lg px-3 py-2"><dt className="text-muted-foreground text-[11px]">{label}</dt><dd className="mt-0.5 truncate text-sm font-medium" title={value}>{value}</dd></div>;
+  return (
+    <div className="bg-muted/45 rounded-lg px-3 py-2">
+      <dt className="text-muted-foreground text-[11px]">{label}</dt>
+      <dd className="mt-0.5 truncate text-sm font-medium" title={value}>
+        {value}
+      </dd>
+    </div>
+  );
 }
 
 export function ContactStays({
@@ -257,7 +286,7 @@ function StayRow({
       className={cn(
         'group hover:bg-muted/55 focus-visible:ring-ring flex w-full items-center gap-3 px-3.5 py-3.5 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset sm:px-4',
         emphasized &&
-          'border-primary/15 bg-card rounded-2xl border py-4 shadow-sm ring-1 ring-primary/5 sm:px-5 sm:py-5'
+          'border-primary/15 bg-card ring-primary/5 rounded-2xl border py-4 shadow-sm ring-1 sm:px-5 sm:py-5'
       )}
     >
       <div className="min-w-0 flex-1">

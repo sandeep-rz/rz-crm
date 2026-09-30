@@ -6,7 +6,14 @@ import { addContactTag, deleteContactTag } from '@/lib/contacts/tag-api';
 import { useAuth } from '@/hooks/use-auth';
 import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
-import type { Contact, Tag, ContactNote, CustomField, Deal, MessageTemplate } from '@/types';
+import type {
+  Contact,
+  Tag,
+  ContactNote,
+  CustomField,
+  Deal,
+  MessageTemplate,
+} from '@/types';
 import {
   TemplatePicker,
   type TemplateSendValues,
@@ -150,7 +157,10 @@ export function ContactDetailView({
         .select('*')
         .eq('account_id', accountId)
         .order('name'),
-      supabase.from('contact_tags').select('tag_id').eq('contact_id', contactId),
+      supabase
+        .from('contact_tags')
+        .select('tag_id')
+        .eq('contact_id', contactId),
     ]);
 
     if (tagsRes.data) setAllTags(tagsRes.data);
@@ -218,10 +228,13 @@ export function ContactDetailView({
     setLoadingStays(true);
     setStaysError(false);
     try {
-      const rows = await loadContactStays(supabase as unknown as StayReadClient, {
-        accountId,
-        contactId,
-      });
+      const rows = await loadContactStays(
+        supabase as unknown as StayReadClient,
+        {
+          accountId,
+          contactId,
+        }
+      );
       setStays(rows);
     } catch {
       setStays([]);
@@ -266,7 +279,16 @@ export function ContactDetailView({
       fetchDeals();
       fetchStays();
     }
-  }, [open, contactId, fetchContact, fetchTags, fetchNotes, fetchCustomFields, fetchDeals, fetchStays]);
+  }, [
+    open,
+    contactId,
+    fetchContact,
+    fetchTags,
+    fetchNotes,
+    fetchCustomFields,
+    fetchDeals,
+    fetchStays,
+  ]);
 
   async function copyPhone() {
     if (!contact) return;
@@ -330,7 +352,9 @@ export function ContactDetailView({
       }
       onUpdated();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('toastUpdateFailed'));
+      toast.error(
+        error instanceof Error ? error.message : t('toastUpdateFailed')
+      );
     }
     setSavingTags(false);
   }
@@ -415,7 +439,7 @@ export function ContactDetailView({
 
   async function handleSendTemplate(
     template: MessageTemplate,
-    values: TemplateSendValues,
+    values: TemplateSendValues
   ) {
     if (!contactId) return;
     setSendingTemplate(true);
@@ -481,458 +505,500 @@ export function ContactDetailView({
 
   return (
     <>
-    <Sheet open={open} onOpenChange={handleOpenChange}>
-      <SheetContent
-        side="right"
-        className="bg-popover border-border text-popover-foreground gap-0 p-0 data-[side=right]:w-full data-[side=right]:max-w-none data-[side=right]:sm:w-[min(94vw,56rem)] data-[side=right]:sm:max-w-none data-[side=right]:lg:w-[min(88vw,58rem)]"
-      >
-        {loading || !contact ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="size-6 animate-spin text-primary" />
-          </div>
-        ) : (
-          <div className="flex flex-col h-full">
-            {/* Header */}
-            <SheetHeader className="border-b border-border/60 px-4 py-4 pr-14 sm:px-6 sm:py-5 sm:pr-16">
-              <div className="flex items-start gap-3">
-                <Avatar className="size-10 shrink-0 border border-border bg-muted">
-                  <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
-                    {getInitials(contact.name)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <SheetTitle className="truncate text-base text-popover-foreground">
-                    {contact.name || t('unnamed')}
-                  </SheetTitle>
-                  <SheetDescription className="sr-only">
-                    {t('contactDetailsDesc')}
-                  </SheetDescription>
-                  <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    <button
-                      onClick={copyPhone}
-                      className="flex shrink-0 cursor-pointer items-center gap-1 transition-colors hover:text-primary"
-                    >
-                      <Phone className="size-3 shrink-0" />
-                      {contactHandle(contact)}
-                      {copiedPhone ? (
-                        <Check className="size-3 text-primary" />
-                      ) : (
-                        <Copy className="size-3" />
-                      )}
-                    </button>
-                    {contact.email && (
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <span aria-hidden="true">·</span>
-                        <span className="truncate" title={contact.email}>
-                          {contact.email}
-                        </span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              {stayHighlight && (
-                <button
-                  type="button"
-                  onClick={() => openReservation(stayHighlight.id)}
-                  className="mt-2.5 flex w-full items-center justify-between gap-3 rounded-lg bg-primary-soft/70 px-3 py-2 text-left transition-colors hover:bg-primary-soft"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <StayStatusBadge stay={stayHighlight} />
-                      {stayHighlight.propertyName && (
-                        <span className="truncate text-xs font-semibold text-foreground">
-                          {stayHighlight.propertyName}
-                        </span>
-                      )}
-                    </div>
-                    {(stayWhen || stayHighlight.checkOut || stayHighlight.nights !== null) && (
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
-                        {stayWhen ?? ''}
-                        {stayWhen && stayHighlight.checkOut ? ' → ' : ''}
-                        {stayHighlight.checkOut
-                          ? formatStayDateShort(stayHighlight.checkOut, locale)
-                          : ''}
-                        {stayHighlight.nights !== null
-                          ? ` · ${t('staysTab.nights', { count: stayHighlight.nights })}`
-                          : ''}
-                      </p>
-                    )}
-                  </div>
-                  <span className="text-sm text-muted-foreground" aria-hidden="true">
-                    ›
-                  </span>
-                </button>
-              )}
-              <div className="mt-3 flex">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setTemplatePickerOpen(true)}
-                  disabled={sendingTemplate}
-                  className="h-9 w-full sm:w-auto"
-                >
-                  {sendingTemplate ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <LayoutTemplate className="size-4" />
-                  )}
-                  {t('sendTemplateBtn')}
-                </Button>
-              </div>
-            </SheetHeader>
-
-            {/* Tabs */}
-            <Tabs
-              value={activeTab}
-              onValueChange={setActiveTab}
-              className="flex-1 flex flex-col min-h-0"
-            >
-              <TabsList
-                variant="line"
-                className="border-border h-12 w-full max-w-none justify-start gap-1 overflow-x-auto border-b bg-popover px-4 sm:px-6 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-              >
-                <TabsTrigger value="details" className={tabTriggerClass}>
-                  {t('tabs.details')}
-                </TabsTrigger>
-                <TabsTrigger value="stays" className={tabTriggerClass}>
-                  {stays.length > 0
-                    ? t('tabs.staysCount', { count: stays.length })
-                    : t('tabs.stays')}
-                </TabsTrigger>
-                <TabsTrigger value="tags" className={tabTriggerClass}>
-                  {t('tabs.tags')}
-                </TabsTrigger>
-                <TabsTrigger value="notes" className={tabTriggerClass}>
-                  {t('tabs.notes')}
-                </TabsTrigger>
-                <TabsTrigger value="custom" className={tabTriggerClass}>
-                  {t('tabs.custom')}
-                </TabsTrigger>
-                <TabsTrigger value="deals" className={tabTriggerClass}>
-                  {t('tabs.deals')}
-                </TabsTrigger>
-              </TabsList>
-
-              {/* Details Tab */}
-              <TabsContent value="details" className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
-                <div className="space-y-5">
-                  {(loadingStays || staysError || stays.length > 0) && (
-                    <div className="min-w-0">
-                      <ContactStaySummary
-                        stays={stays}
-                        loading={loadingStays}
-                        error={staysError}
-                        onOpenStay={openReservation}
-                        onViewAll={() => setActiveTab('stays')}
-                      />
-                    </div>
-                  )}
-                  <section className="min-w-0 rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
-                    <div className="mb-4">
-                      <p className="text-sm font-semibold text-foreground">
-                        {t('contactInfo')}
-                      </p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {t('contactDetailsDesc')}
-                      </p>
-                    </div>
-                    <div className="space-y-3.5">
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">{t('name')}</Label>
-                    <Input
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">
-                      {t('phone')} <span className="text-red-400">*</span>
-                    </Label>
-                    <Input
-                      value={editPhone}
-                      onChange={(e) => setEditPhone(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">{t('email')}</Label>
-                    <Input
-                      value={editEmail}
-                      onChange={(e) => setEditEmail(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-muted-foreground text-xs">{t('company')}</Label>
-                    <Input
-                      value={editCompany}
-                      onChange={(e) => setEditCompany(e.target.value)}
-                      className="bg-muted border-border text-foreground h-8 text-sm"
-                    />
-                  </div>
-                  <Button
-                    onClick={saveDetails}
-                    disabled={savingDetails}
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
-                    size="sm"
-                  >
-                    {savingDetails ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Save className="size-3.5" />
-                    )}
-                    {t('saveChangesBtn')}
-                  </Button>
-                    </div>
-                  </section>
-                </div>
-              </TabsContent>
-
-              {/* Tags Tab */}
-              <TabsContent value="tags" className="flex-1 overflow-y-auto px-4 py-3">
-                <div className="space-y-3">
-                  <p className="text-xs text-muted-foreground">
-                    {t('tagsTab.clickTagDesc')}
-                  </p>
-                  {allTags.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      {t('tagsTab.noTagsAvailable')}
-                    </p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {allTags.map((tag) => {
-                        const selected = contactTagIds.includes(tag.id);
-                        return (
-                          <button
-                            key={tag.id}
-                            onClick={() => toggleTag(tag.id)}
-                            disabled={savingTags}
-                            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
-                              selected
-                                ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                                : 'opacity-50 hover:opacity-80'
-                            }`}
-                            style={{
-                              backgroundColor: tag.color + '20',
-                              color: tag.color,
-                            }}
-                          >
-                            {selected && <Check className="size-3 mr-1" />}
-                            {tag.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </TabsContent>
-
-              {/* Notes Tab */}
-              <TabsContent value="notes" className="flex-1 flex flex-col min-h-0 px-4 py-3">
-                <div className="space-y-2 mb-3">
-                  <Textarea
-                    value={newNote}
-                    onChange={(e) => setNewNote(e.target.value)}
-                    placeholder={t('notesTab.placeholder')}
-                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground min-h-[60px] text-sm resize-none"
-                  />
-                  <Button
-                    onClick={addNote}
-                    disabled={!newNote.trim() || savingNote}
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground"
-                    size="sm"
-                  >
-                    {savingNote ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Plus className="size-3.5" />
-                    )}
-                    {t('notesTab.save')}
-                  </Button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto space-y-2">
-                  {loadingNotes ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="size-5 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : notes.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">
-                      {t('notesTab.noNotes')}
-                    </p>
-                  ) : (
-                    notes.map((note) => (
-                      <div
-                        key={note.id}
-                        className="rounded-lg bg-muted/50 border border-border/50 p-3 group"
+      <Sheet open={open} onOpenChange={handleOpenChange}>
+        <SheetContent
+          side="right"
+          className="bg-popover border-border text-popover-foreground gap-0 p-0 data-[side=right]:w-full data-[side=right]:max-w-none data-[side=right]:sm:w-[min(94vw,56rem)] data-[side=right]:sm:max-w-none data-[side=right]:lg:w-[min(88vw,58rem)]"
+        >
+          {loading || !contact ? (
+            <div className="flex h-full items-center justify-center">
+              <Loader2 className="text-primary size-6 animate-spin" />
+            </div>
+          ) : (
+            <div className="flex h-full flex-col">
+              {/* Header */}
+              <SheetHeader className="border-border/60 border-b px-4 py-4 pr-14 sm:px-6 sm:py-5 sm:pr-16">
+                <div className="flex items-start gap-3">
+                  <Avatar className="border-border bg-muted size-10 shrink-0 border">
+                    <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
+                      {getInitials(contact.name)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <SheetTitle className="text-popover-foreground truncate text-base">
+                      {contact.name || t('unnamed')}
+                    </SheetTitle>
+                    <SheetDescription className="sr-only">
+                      {t('contactDetailsDesc')}
+                    </SheetDescription>
+                    <div className="text-muted-foreground mt-1 flex min-w-0 items-center gap-1.5 text-xs">
+                      <button
+                        onClick={copyPhone}
+                        className="hover:text-primary flex shrink-0 cursor-pointer items-center gap-1 transition-colors"
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm text-muted-foreground whitespace-pre-wrap flex-1">
-                            {note.note_text}
-                          </p>
-                          <button
-                            onClick={() => deleteNote(note.id)}
-                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all cursor-pointer shrink-0"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </button>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1.5">
-                          {new Date(note.created_at).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </TabsContent>
-
-              {/* Custom Fields Tab */}
-              <TabsContent value="custom" className="flex-1 overflow-y-auto px-4 py-3">
-                {loadingCustom ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                        <Phone className="size-3 shrink-0" />
+                        {contactHandle(contact)}
+                        {copiedPhone ? (
+                          <Check className="text-primary size-3" />
+                        ) : (
+                          <Copy className="size-3" />
+                        )}
+                      </button>
+                      {contact.email && (
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span aria-hidden="true">·</span>
+                          <span className="truncate" title={contact.email}>
+                            {contact.email}
+                          </span>
+                        </span>
+                      )}
+                    </div>
                   </div>
-                ) : customFields.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    {t('noCustomFields')}
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {customFields.map((field) => (
-                      <div key={field.id} className="space-y-1.5">
-                        <Label className="text-muted-foreground text-xs capitalize">
-                          {field.field_name}
-                        </Label>
-                        <Input
-                          value={customValues[field.id] ?? ''}
-                          onChange={(e) =>
-                            setCustomValues((prev) => ({
-                              ...prev,
-                              [field.id]: e.target.value,
-                            }))
-                          }
-                          placeholder={t('enterCustomField', { name: field.field_name })}
-                          className="bg-muted border-border text-foreground h-8 text-sm placeholder:text-muted-foreground"
+                </div>
+                {stayHighlight && (
+                  <button
+                    type="button"
+                    onClick={() => openReservation(stayHighlight.id)}
+                    className="bg-primary-soft/70 hover:bg-primary-soft mt-2.5 flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <StayStatusBadge stay={stayHighlight} />
+                        {stayHighlight.propertyName && (
+                          <span className="text-foreground truncate text-xs font-semibold">
+                            {stayHighlight.propertyName}
+                          </span>
+                        )}
+                      </div>
+                      {(stayWhen ||
+                        stayHighlight.checkOut ||
+                        stayHighlight.nights !== null) && (
+                        <p className="text-muted-foreground mt-1 truncate text-xs">
+                          {stayWhen ?? ''}
+                          {stayWhen && stayHighlight.checkOut ? ' → ' : ''}
+                          {stayHighlight.checkOut
+                            ? formatStayDateShort(
+                                stayHighlight.checkOut,
+                                locale
+                              )
+                            : ''}
+                          {stayHighlight.nights !== null
+                            ? ` · ${t('staysTab.nights', { count: stayHighlight.nights })}`
+                            : ''}
+                        </p>
+                      )}
+                    </div>
+                    <span
+                      className="text-muted-foreground text-sm"
+                      aria-hidden="true"
+                    >
+                      ›
+                    </span>
+                  </button>
+                )}
+                <div className="mt-3 flex">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setTemplatePickerOpen(true)}
+                    disabled={sendingTemplate}
+                    className="h-9 w-full sm:w-auto"
+                  >
+                    {sendingTemplate ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <LayoutTemplate className="size-4" />
+                    )}
+                    {t('sendTemplateBtn')}
+                  </Button>
+                </div>
+              </SheetHeader>
+
+              {/* Tabs */}
+              <Tabs
+                value={activeTab}
+                onValueChange={setActiveTab}
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                <TabsList
+                  variant="line"
+                  className="border-border bg-popover h-12 w-full max-w-none [scrollbar-width:none] justify-start gap-1 overflow-x-auto border-b px-4 group-data-horizontal/tabs:h-12 sm:px-6 [&::-webkit-scrollbar]:hidden"
+                >
+                  <TabsTrigger value="details" className={tabTriggerClass}>
+                    {t('tabs.details')}
+                  </TabsTrigger>
+                  <TabsTrigger value="stays" className={tabTriggerClass}>
+                    {stays.length > 0
+                      ? t('tabs.staysCount', { count: stays.length })
+                      : t('tabs.stays')}
+                  </TabsTrigger>
+                  <TabsTrigger value="tags" className={tabTriggerClass}>
+                    {t('tabs.tags')}
+                  </TabsTrigger>
+                  <TabsTrigger value="notes" className={tabTriggerClass}>
+                    {t('tabs.notes')}
+                  </TabsTrigger>
+                  <TabsTrigger value="custom" className={tabTriggerClass}>
+                    {t('tabs.custom')}
+                  </TabsTrigger>
+                  <TabsTrigger value="deals" className={tabTriggerClass}>
+                    {t('tabs.deals')}
+                  </TabsTrigger>
+                </TabsList>
+
+                {/* Details Tab */}
+                <TabsContent
+                  value="details"
+                  className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5"
+                >
+                  <div className="space-y-5">
+                    {(loadingStays || staysError || stays.length > 0) && (
+                      <div className="min-w-0">
+                        <ContactStaySummary
+                          stays={stays}
+                          loading={loadingStays}
+                          error={staysError}
+                          onOpenStay={openReservation}
+                          onViewAll={() => setActiveTab('stays')}
                         />
                       </div>
-                    ))}
-                    <Button
-                      onClick={saveCustomFields}
-                      disabled={savingCustom}
-                      className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
-                      size="sm"
-                    >
-                      {savingCustom ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Save className="size-3.5" />
-                      )}
-                      {t('saveCustomFieldsBtn')}
-                    </Button>
+                    )}
+                    <section className="border-border/70 bg-card min-w-0 rounded-2xl border p-4 shadow-sm sm:p-5">
+                      <div className="mb-4">
+                        <p className="text-foreground text-sm font-semibold">
+                          {t('contactInfo')}
+                        </p>
+                        <p className="text-muted-foreground mt-0.5 text-xs">
+                          {t('contactDetailsDesc')}
+                        </p>
+                      </div>
+                      <div className="space-y-3.5">
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">
+                            {t('name')}
+                          </Label>
+                          <Input
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            className="bg-muted border-border text-foreground h-8 text-sm"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">
+                            {t('phone')} <span className="text-red-400">*</span>
+                          </Label>
+                          <Input
+                            value={editPhone}
+                            onChange={(e) => setEditPhone(e.target.value)}
+                            className="bg-muted border-border text-foreground h-8 text-sm"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">
+                            {t('email')}
+                          </Label>
+                          <Input
+                            value={editEmail}
+                            onChange={(e) => setEditEmail(e.target.value)}
+                            className="bg-muted border-border text-foreground h-8 text-sm"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs">
+                            {t('company')}
+                          </Label>
+                          <Input
+                            value={editCompany}
+                            onChange={(e) => setEditCompany(e.target.value)}
+                            className="bg-muted border-border text-foreground h-8 text-sm"
+                          />
+                        </div>
+                        <Button
+                          onClick={saveDetails}
+                          disabled={savingDetails}
+                          className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+                          size="sm"
+                        >
+                          {savingDetails ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <Save className="size-3.5" />
+                          )}
+                          {t('saveChangesBtn')}
+                        </Button>
+                      </div>
+                    </section>
                   </div>
-                )}
-              </TabsContent>
+                </TabsContent>
 
-              {/* Deals Tab */}
-              <TabsContent value="deals" className="flex-1 overflow-y-auto px-4 py-3">
-                {loadingDeals ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="size-5 animate-spin text-primary" />
-                  </div>
-                ) : deals.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t('dealsTab.noDeals')}</p>
-                ) : (
-                  <div className="space-y-2">
-                    {deals.map((deal) => (
-                      <div
-                        key={deal.id}
-                        className="rounded-lg border border-border bg-muted/50 p-3"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm font-medium text-foreground">
-                            {deal.title}
-                          </p>
-                          {deal.stage && (
-                            <span
-                              className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                {/* Tags Tab */}
+                <TabsContent
+                  value="tags"
+                  className="flex-1 overflow-y-auto px-4 py-3"
+                >
+                  <div className="space-y-3">
+                    <p className="text-muted-foreground text-xs">
+                      {t('tagsTab.clickTagDesc')}
+                    </p>
+                    {allTags.length === 0 ? (
+                      <p className="text-muted-foreground text-sm">
+                        {t('tagsTab.noTagsAvailable')}
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {allTags.map((tag) => {
+                          const selected = contactTagIds.includes(tag.id);
+                          return (
+                            <button
+                              key={tag.id}
+                              onClick={() => toggleTag(tag.id)}
+                              disabled={savingTags}
+                              className={`inline-flex cursor-pointer items-center rounded-full px-3 py-1 text-xs font-medium transition-all ${
+                                selected
+                                  ? 'ring-primary ring-offset-border ring-2 ring-offset-1'
+                                  : 'opacity-50 hover:opacity-80'
+                              }`}
                               style={{
-                                backgroundColor: `${deal.stage.color}20`,
-                                color: deal.stage.color,
+                                backgroundColor: tag.color + '20',
+                                color: tag.color,
                               }}
                             >
-                              {deal.stage.name}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <DollarSign className="size-3" />
-                            {formatCurrency(
-                              deal.value ?? 0,
-                              deal.currency || defaultCurrency,
-                            )}
-                          </span>
-                          {deal.status && deal.status !== 'open' && (
-                            <span
-                              className={
-                                deal.status === 'won'
-                                  ? 'text-primary'
-                                  : 'text-red-400'
-                              }
-                            >
-                              {deal.status}
-                            </span>
-                          )}
-                        </div>
+                              {selected && <Check className="mr-1 size-3" />}
+                              {tag.name}
+                            </button>
+                          );
+                        })}
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
-              </TabsContent>
+                </TabsContent>
 
-              <TabsContent value="stays" className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
-                {loadingStays ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="size-5 animate-spin text-primary" aria-label={t('staysTab.loading')} />
+                {/* Notes Tab */}
+                <TabsContent
+                  value="notes"
+                  className="flex min-h-0 flex-1 flex-col px-4 py-3"
+                >
+                  <div className="mb-3 space-y-2">
+                    <Textarea
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      placeholder={t('notesTab.placeholder')}
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground min-h-[60px] resize-none text-sm"
+                    />
+                    <Button
+                      onClick={addNote}
+                      disabled={!newNote.trim() || savingNote}
+                      className="bg-primary hover:bg-primary/90 text-primary-foreground"
+                      size="sm"
+                    >
+                      {savingNote ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="size-3.5" />
+                      )}
+                      {t('notesTab.save')}
+                    </Button>
                   </div>
-                ) : (
-                  <ContactStays
-                    stays={stays}
-                    error={staysError}
-                    onOpenStay={openReservation}
-                  />
-                )}
-              </TabsContent>
-            </Tabs>
-          </div>
-        )}
-      </SheetContent>
-    </Sheet>
-    <ReservationDetailSheet
-      open={reservationOpen}
-      onOpenChange={setReservationOpen}
-      stay={selectedStay}
-      loading={loadingReservation}
-      error={reservationError}
-      guest={{
-        name: contact?.name ?? null,
-        phone: contact?.phone ?? null,
-        email: contact?.email ?? null,
-      }}
-    />
-    <TemplatePicker
-      open={templatePickerOpen}
-      onOpenChange={setTemplatePickerOpen}
-      onSelect={handleSendTemplate}
-    />
+
+                  <div className="flex-1 space-y-2 overflow-y-auto">
+                    {loadingNotes ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="text-muted-foreground size-5 animate-spin" />
+                      </div>
+                    ) : notes.length === 0 ? (
+                      <p className="text-muted-foreground py-8 text-center text-sm">
+                        {t('notesTab.noNotes')}
+                      </p>
+                    ) : (
+                      notes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="bg-muted/50 border-border/50 group rounded-lg border p-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-muted-foreground flex-1 text-sm whitespace-pre-wrap">
+                              {note.note_text}
+                            </p>
+                            <button
+                              onClick={() => deleteNote(note.id)}
+                              className="text-muted-foreground shrink-0 cursor-pointer opacity-0 transition-all group-hover:opacity-100 hover:text-red-400"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                          <p className="text-muted-foreground mt-1.5 text-xs">
+                            {new Date(note.created_at).toLocaleDateString(
+                              'en-US',
+                              {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              }
+                            )}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </TabsContent>
+
+                {/* Custom Fields Tab */}
+                <TabsContent
+                  value="custom"
+                  className="flex-1 overflow-y-auto px-4 py-3"
+                >
+                  {loadingCustom ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="text-muted-foreground size-5 animate-spin" />
+                    </div>
+                  ) : customFields.length === 0 ? (
+                    <p className="text-muted-foreground py-8 text-center text-sm">
+                      {t('noCustomFields')}
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {customFields.map((field) => (
+                        <div key={field.id} className="space-y-1.5">
+                          <Label className="text-muted-foreground text-xs capitalize">
+                            {field.field_name}
+                          </Label>
+                          <Input
+                            value={customValues[field.id] ?? ''}
+                            onChange={(e) =>
+                              setCustomValues((prev) => ({
+                                ...prev,
+                                [field.id]: e.target.value,
+                              }))
+                            }
+                            placeholder={t('enterCustomField', {
+                              name: field.field_name,
+                            })}
+                            className="bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-sm"
+                          />
+                        </div>
+                      ))}
+                      <Button
+                        onClick={saveCustomFields}
+                        disabled={savingCustom}
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+                        size="sm"
+                      >
+                        {savingCustom ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Save className="size-3.5" />
+                        )}
+                        {t('saveCustomFieldsBtn')}
+                      </Button>
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* Deals Tab */}
+                <TabsContent
+                  value="deals"
+                  className="flex-1 overflow-y-auto px-4 py-3"
+                >
+                  {loadingDeals ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="text-primary size-5 animate-spin" />
+                    </div>
+                  ) : deals.length === 0 ? (
+                    <p className="text-muted-foreground text-xs">
+                      {t('dealsTab.noDeals')}
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {deals.map((deal) => (
+                        <div
+                          key={deal.id}
+                          className="border-border bg-muted/50 rounded-lg border p-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-foreground text-sm font-medium">
+                              {deal.title}
+                            </p>
+                            {deal.stage && (
+                              <span
+                                className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                                style={{
+                                  backgroundColor: `${deal.stage.color}20`,
+                                  color: deal.stage.color,
+                                }}
+                              >
+                                {deal.stage.name}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-muted-foreground mt-1.5 flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-1">
+                              <DollarSign className="size-3" />
+                              {formatCurrency(
+                                deal.value ?? 0,
+                                deal.currency || defaultCurrency
+                              )}
+                            </span>
+                            {deal.status && deal.status !== 'open' && (
+                              <span
+                                className={
+                                  deal.status === 'won'
+                                    ? 'text-primary'
+                                    : 'text-red-400'
+                                }
+                              >
+                                {deal.status}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent
+                  value="stays"
+                  className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5"
+                >
+                  {loadingStays ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2
+                        className="text-primary size-5 animate-spin"
+                        aria-label={t('staysTab.loading')}
+                      />
+                    </div>
+                  ) : (
+                    <ContactStays
+                      stays={stays}
+                      error={staysError}
+                      onOpenStay={openReservation}
+                    />
+                  )}
+                </TabsContent>
+              </Tabs>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+      <ReservationDetailSheet
+        open={reservationOpen}
+        onOpenChange={setReservationOpen}
+        stay={selectedStay}
+        loading={loadingReservation}
+        error={reservationError}
+        guest={{
+          name: contact?.name ?? null,
+          phone: contact?.phone ?? null,
+          email: contact?.email ?? null,
+        }}
+      />
+      <TemplatePicker
+        open={templatePickerOpen}
+        onOpenChange={setTemplatePickerOpen}
+        onSelect={handleSendTemplate}
+      />
     </>
   );
 }

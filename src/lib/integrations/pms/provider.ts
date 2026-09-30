@@ -23,7 +23,7 @@ export interface PmsReservation {
   externalListingId: string;
   reservationCode: string;
 
-  status: "pending" | "confirmed" | "cancelled";
+  status: 'pending' | 'confirmed' | 'cancelled';
 
   /**
    * Original reservation status reported by the PMS/provider.

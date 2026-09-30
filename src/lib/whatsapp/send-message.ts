@@ -120,8 +120,13 @@ export function validateSendMessageParams(params: {
   templateName?: string | null;
   interactivePayload?: InteractiveMessagePayload | null;
 }): void {
-  const { messageType, contentText, mediaUrl, templateName, interactivePayload } =
-    params;
+  const {
+    messageType,
+    contentText,
+    mediaUrl,
+    templateName,
+    interactivePayload,
+  } = params;
 
   if (!messageType) {
     throw new SendMessageError('bad_request', 'message_type is required', 400);
@@ -262,8 +267,9 @@ export async function sendMessageToConversation(
     connectionId: whatsappConfigId,
     conversationId,
   }).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : 'WhatsApp not configured'
-    throw new SendMessageError('whatsapp_not_configured', message, 400)
+    const message =
+      error instanceof Error ? error.message : 'WhatsApp not configured';
+    throw new SendMessageError('whatsapp_not_configured', message, 400);
   });
   const accessToken = config.accessToken;
 
@@ -323,7 +329,7 @@ export async function sendMessageToConversation(
       accountId,
       templateName,
       templateLanguage,
-      config.id,
+      config.id
     );
     if (resolved.malformed) {
       throw new SendMessageError(
@@ -410,7 +416,9 @@ export async function sendMessageToConversation(
   try {
     // Variants only make sense for a phone number — a BSUID is opaque
     // and has exactly one correct form, so it gets a single attempt.
-    const variants = hasValidPhone ? phoneVariants(sanitizedPhone) : [sendTarget];
+    const variants = hasValidPhone
+      ? phoneVariants(sanitizedPhone)
+      : [sendTarget];
     let lastError: unknown = null;
 
     for (const variant of variants) {

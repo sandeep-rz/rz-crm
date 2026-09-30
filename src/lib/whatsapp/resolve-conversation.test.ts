@@ -28,7 +28,7 @@ interface Script {
   existingConversation?: { id: string } | null; // conversations select.limit(1)
   /** Per-call conversation lookup results — overrides existingConversation.
    *  Lets a test simulate "miss, then hit" for the unique-race path. */
-  existingConversationByCall?: (({ id: string } | null))[];
+  existingConversationByCall?: ({ id: string } | null)[];
   insertedConversationId?: string; // conversations insert -> single
   insertConversationError?: { code?: string } | null;
   conversationConnectionFilters?: string[];
@@ -67,17 +67,19 @@ function makeDb(script: Script): SupabaseClient {
       if (table === 'whatsapp_config' && mode === 'select') {
         if (!script.config) return Promise.resolve({ data: [], error: null });
         return Promise.resolve({
-          data: [{
-            id: selectedConnectionId,
-            account_id: 'acct',
-            user_id: script.config.user_id,
-            display_name: 'Main',
-            is_primary: selectedConnectionId === 'connection-primary',
-            phone_number_id: '1234567890',
-            waba_id: 'waba-1',
-            access_token: 'encrypted-token',
-            status: 'connected',
-          }],
+          data: [
+            {
+              id: selectedConnectionId,
+              account_id: 'acct',
+              user_id: script.config.user_id,
+              display_name: 'Main',
+              is_primary: selectedConnectionId === 'connection-primary',
+              phone_number_id: '1234567890',
+              waba_id: 'waba-1',
+              access_token: 'encrypted-token',
+              status: 'connected',
+            },
+          ],
           error: null,
         });
       }
@@ -240,7 +242,7 @@ describe('resolveConversationByPhone', () => {
         'acct',
         '+14155550123',
         null,
-        connectionId,
+        connectionId
       );
     }
 

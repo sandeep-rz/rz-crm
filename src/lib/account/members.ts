@@ -19,7 +19,7 @@ export interface AccountMemberProfileRow {
 export function mergeAccountMemberRows(
   memberships: AccountMembershipRow[],
   profiles: AccountMemberProfileRow[],
-  canSeeEmails: boolean,
+  canSeeEmails: boolean
 ): AccountMember[] {
   const profilesByUserId = new Map(profiles.map((row) => [row.user_id, row]));
 
@@ -27,15 +27,17 @@ export function mergeAccountMemberRows(
     if (!isAccountRole(membership.role)) return [];
     const profile = profilesByUserId.get(membership.user_id);
     if (!profile) return [];
-    return [{
-      profile_id: profile.id,
-      user_id: membership.user_id,
-      full_name: profile.full_name ?? '',
-      email: canSeeEmails ? profile.email : null,
-      avatar_url: profile.avatar_url,
-      role: membership.role,
-      joined_at: membership.joined_at,
-    }];
+    return [
+      {
+        profile_id: profile.id,
+        user_id: membership.user_id,
+        full_name: profile.full_name ?? '',
+        email: canSeeEmails ? profile.email : null,
+        avatar_url: profile.avatar_url,
+        role: membership.role,
+        joined_at: membership.joined_at,
+      },
+    ];
   });
 }
 

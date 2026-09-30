@@ -14,6 +14,7 @@ import {
   Crown,
   GitBranch,
   LayoutDashboard,
+  LockKeyhole,
   LogOut,
   MessageSquare,
   Radio,
@@ -29,6 +30,12 @@ import {
   Zap,
 } from 'lucide-react';
 import type { AccountRole } from '@/lib/auth/roles';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 // Per-role chip metadata used in the sidebar's account strip + the
 // Members tab roster. Keeping this near both consumers in a single
@@ -114,6 +121,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const { profile, profileLoading, account, accountRole, signOut } = useAuth();
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
+  const whatsapp = useWhatsAppCapability();
   // Only surface the account-name strip when it actually carries
   // information. A solo user's personal account is named after them
   // (the 017 signup trigger seeds it from `full_name`), so showing it
@@ -223,6 +231,69 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               // viewing this section".
               const showNotificationBadge =
                 item.href === '/notifications' && unreadNotifications > 0;
+
+              const requiresWhatsApp =
+                item.href === '/broadcasts' || item.href === '/flows';
+              const whatsappLocked = requiresWhatsApp && !whatsapp.available;
+
+              if (whatsappLocked) {
+                const checking = whatsapp.status === 'loading';
+                const failed = whatsapp.status === 'error';
+                const row = (
+                  <span
+                    className="text-muted-foreground flex items-center gap-3 rounded-lg border-l-[3px] border-l-transparent px-3 py-2.5 text-sm font-medium opacity-70 lg:py-2"
+                    aria-label={`${t(item.labelKey as string)} — ${
+                      checking
+                        ? 'checking WhatsApp connection'
+                        : failed
+                          ? 'WhatsApp availability could not be verified'
+                          : 'requires a connected WhatsApp account'
+                    }`}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    <span className="flex-1">{t(item.labelKey as string)}</span>
+                    {item.beta && (
+                      <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-700 uppercase">
+                        {t('beta')}
+                      </span>
+                    )}
+                    <LockKeyhole className="h-3.5 w-3.5" aria-hidden />
+                  </span>
+                );
+
+                return (
+                  <li key={item.href}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          whatsapp.status === 'unavailable' ? (
+                            <Link
+                              href="/settings?tab=whatsapp"
+                              onClick={onClose}
+                              className="block rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              className="block w-full text-left"
+                            />
+                          )
+                        }
+                      >
+                        {row}
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        {checking
+                          ? 'Checking WhatsApp connection…'
+                          : failed
+                            ? 'WhatsApp availability could not be verified.'
+                            : 'Connect WhatsApp in Settings to use this feature.'}
+                      </TooltipContent>
+                    </Tooltip>
+                  </li>
+                );
+              }
 
               return (
                 <li key={item.href}>

@@ -24,6 +24,7 @@ import {
   type MediaHeaderKind,
 } from '@/lib/whatsapp/media-header-types';
 import { useAuth } from '@/hooks/use-auth';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -139,6 +140,7 @@ export function TemplateManager() {
   const t = useTranslations('Settings.templates');
   const supabase = createClient();
   const { user, accountId, loading: authLoading } = useAuth();
+  const whatsapp = useWhatsAppCapability();
 
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -269,6 +271,7 @@ export function TemplateManager() {
   }
 
   function openEdit(template: MessageTemplate) {
+    if (!whatsapp.available) return;
     setEditingId(template.id);
     setForm({
       name: template.name,
@@ -287,12 +290,14 @@ export function TemplateManager() {
   }
 
   function openCreate() {
+    if (!whatsapp.available) return;
     setEditingId(null);
     setForm(emptyForm);
     setDialogOpen(true);
   }
 
   async function handleSubmit() {
+    if (!whatsapp.available) return;
     // AUTHENTICATION is blocked by the persistent banner + disabled
     // submit button; this is a defensive second line of defense.
     if (form.category === 'Authentication') return;
@@ -340,7 +345,7 @@ export function TemplateManager() {
   }
 
   async function handleSyncFromMeta() {
-    if (!user) return;
+    if (!user || !whatsapp.available) return;
     setSyncing(true);
     try {
       const res = await fetch('/api/whatsapp/templates/sync', {
@@ -392,6 +397,7 @@ export function TemplateManager() {
   async function confirmDelete() {
     const target = templateToDelete;
     if (!target || deletingId) return;
+    if (target.meta_template_id && !whatsapp.available) return;
     setDeletingId(target.id);
     try {
       // Route handler scopes the Meta delete via hsm_id (so sibling
@@ -567,7 +573,7 @@ export function TemplateManager() {
             <Button
               variant="outline"
               onClick={handleSyncFromMeta}
-              disabled={syncing}
+              disabled={syncing || !whatsapp.available}
               title={t('syncTitle')}
             >
               <RefreshCw
@@ -575,13 +581,40 @@ export function TemplateManager() {
               />
               {syncing ? t('syncing') : t('syncFromMeta')}
             </Button>
-            <Button onClick={openCreate}>
+            <Button onClick={openCreate} disabled={!whatsapp.available}>
               <Plus className="size-4" />
               {t('newTemplate')}
             </Button>
           </div>
         }
       />
+
+      {whatsapp.status === 'unavailable' && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          <span>
+            Connect WhatsApp before creating, syncing, or submitting Meta
+            templates.
+          </span>
+          <a
+            href="/settings?tab=whatsapp"
+            className="shrink-0 font-medium underline underline-offset-2"
+          >
+            Set up WhatsApp
+          </a>
+        </div>
+      )}
+      {whatsapp.status === 'error' && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          <span>WhatsApp availability could not be verified.</span>
+          <button
+            type="button"
+            onClick={whatsapp.refresh}
+            className="shrink-0 font-medium underline underline-offset-2"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {connections.length > 1 && (
         <select
@@ -678,6 +711,7 @@ export function TemplateManager() {
                         variant="ghost"
                         size="sm"
                         onClick={() => openEdit(template)}
+                        disabled={!whatsapp.available}
                         title={t('editTitle')}
                         aria-label={t('editLabel')}
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
@@ -691,6 +725,7 @@ export function TemplateManager() {
                         variant="ghost"
                         size="sm"
                         onClick={() => openEdit(template)}
+                        disabled={!whatsapp.available}
                         title={t('resubmitTitle')}
                         aria-label={t('resubmitLabel')}
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
@@ -703,7 +738,10 @@ export function TemplateManager() {
                       variant="ghost"
                       size="icon"
                       onClick={() => setTemplateToDelete(template)}
-                      disabled={deletingId === template.id}
+                      disabled={
+                        deletingId === template.id ||
+                        (!!template.meta_template_id && !whatsapp.available)
+                      }
                       aria-label={
                         template.meta_template_id
                           ? t('deleteMetaLocallyAria')
@@ -1177,7 +1215,11 @@ export function TemplateManager() {
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={submitting || form.category === 'Authentication'}
+              disabled={
+                submitting ||
+                !whatsapp.available ||
+                form.category === 'Authentication'
+              }
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {submitting ? (
@@ -1226,7 +1268,10 @@ export function TemplateManager() {
             </Button>
             <Button
               onClick={confirmDelete}
-              disabled={deletingId !== null}
+              disabled={
+                deletingId !== null ||
+                (!!templateToDelete?.meta_template_id && !whatsapp.available)
+              }
               className="bg-red-600 text-white hover:bg-red-700"
             >
               {deletingId !== null ? (

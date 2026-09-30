@@ -38,6 +38,8 @@ import {
 import { toast } from 'sonner';
 import { getBroadcastStatus, getRecipientStatus } from '@/lib/broadcast-status';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
+import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
 
 interface StatCardProps {
   label: string;
@@ -150,6 +152,7 @@ export default function BroadcastDetailPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.detail');
   const tStatus = useTranslations('Broadcasts.status');
+  const whatsapp = useWhatsAppCapability();
   const broadcastId = params.id as string;
 
   const [broadcast, setBroadcast] = useState<Broadcast | null>(null);
@@ -194,8 +197,9 @@ export default function BroadcastDetailPage() {
   }, [broadcastId, t]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (!whatsapp.available) return;
+    void fetchData();
+  }, [fetchData, whatsapp.available]);
 
   const filteredRecipients = useMemo(
     () =>
@@ -299,6 +303,14 @@ export default function BroadcastDetailPage() {
     }
     toast.success(t('toastDeleted'));
     router.push('/broadcasts');
+  }
+
+  if (!whatsapp.available) {
+    return (
+      <WhatsAppCapabilityGate feature="Broadcasts">
+        <></>
+      </WhatsAppCapabilityGate>
+    );
   }
 
   if (loading) {

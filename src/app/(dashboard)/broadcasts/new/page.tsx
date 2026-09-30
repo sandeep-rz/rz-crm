@@ -13,6 +13,8 @@ import { Step4ScheduleSend } from '@/components/broadcasts/step4-schedule-send';
 import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
 import { Check } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
+import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
 
 const steps = [
   { label: 'template', key: 'template' },
@@ -25,6 +27,7 @@ export default function NewBroadcastPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.new');
   const { accountId } = useAuth();
+  const whatsapp = useWhatsAppCapability();
   const { createAndSendBroadcast, isProcessing, progress } =
     useBroadcastSending();
 
@@ -52,6 +55,7 @@ export default function NewBroadcastPage() {
   const [whatsappConfigId, setWhatsappConfigId] = useState('');
 
   useEffect(() => {
+    if (!whatsapp.available) return;
     fetch('/api/whatsapp/config')
       .then((response) => response.json())
       .then((payload) => {
@@ -64,10 +68,10 @@ export default function NewBroadcastPage() {
         );
       })
       .catch(() => undefined);
-  }, []);
+  }, [whatsapp.available]);
 
   async function handleSend() {
-    if (!template) return;
+    if (!template || !whatsapp.available) return;
 
     try {
       const broadcastId = await createAndSendBroadcast({
@@ -149,6 +153,14 @@ export default function NewBroadcastPage() {
     }
     toast.success(t('toastDraftSaved'));
     router.push('/broadcasts');
+  }
+
+  if (!whatsapp.available) {
+    return (
+      <WhatsAppCapabilityGate feature="Broadcasts">
+        <></>
+      </WhatsAppCapabilityGate>
+    );
   }
 
   return (

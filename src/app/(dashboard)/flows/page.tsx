@@ -33,6 +33,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
+import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
 
 /**
  * Flows list page.
@@ -88,6 +90,7 @@ export default function FlowsPage() {
   const router = useRouter();
   const canCreate = useCan('send-messages');
   const t = useTranslations('Flows.list');
+  const whatsapp = useWhatsAppCapability();
   const [flows, setFlows] = useState<FlowRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -100,6 +103,7 @@ export default function FlowsPage() {
   const [whatsappConfigId, setWhatsappConfigId] = useState('');
 
   useEffect(() => {
+    if (!whatsapp.available) return;
     let cancelled = false;
     (async () => {
       try {
@@ -145,7 +149,7 @@ export default function FlowsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t, whatsapp.available]);
 
   async function handleCreate() {
     if (!newName.trim()) return;
@@ -212,6 +216,14 @@ export default function FlowsPage() {
       console.error(err);
       toast.error(t('deleteError'));
     }
+  }
+
+  if (!whatsapp.available) {
+    return (
+      <WhatsAppCapabilityGate feature="Flows">
+        <></>
+      </WhatsAppCapabilityGate>
+    );
   }
 
   if (loading) {

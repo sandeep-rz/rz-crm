@@ -49,6 +49,7 @@ import {
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
 import type { InteractiveMessagePayload, QuickReply } from '@/types';
 import { QuickReplyPicker } from './quick-reply-picker';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 
 /** Media content types an agent can send from the composer. */
 export type ComposerMediaKind = 'image' | 'video' | 'document' | 'audio';
@@ -139,6 +140,7 @@ export function MessageComposer({
   onClearReply,
 }: MessageComposerProps) {
   const t = useTranslations('Inbox.composer');
+  const whatsapp = useWhatsAppCapability();
 
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -187,7 +189,9 @@ export function MessageComposer({
   const canSend = useCan('send-messages');
   const readOnly = !canSend;
   // Media (like free-form text) is only allowed inside the 24h window.
-  const inputsDisabled = readOnly || sessionExpired;
+  const whatsappDisabled = !whatsapp.available;
+  const composerReadOnly = readOnly || whatsappDisabled;
+  const inputsDisabled = composerReadOnly || sessionExpired;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -219,7 +223,7 @@ export function MessageComposer({
 
   const handleSend = useCallback(async () => {
     const trimmed = text.trim();
-    if (!trimmed || sending || sessionExpired) return;
+    if (!trimmed || sending || sessionExpired || whatsappDisabled) return;
 
     setSending(true);
     try {
@@ -231,7 +235,7 @@ export function MessageComposer({
     } finally {
       setSending(false);
     }
-  }, [text, sending, sessionExpired, onSend, replyTo?.id]);
+  }, [text, sending, sessionExpired, whatsappDisabled, onSend, replyTo?.id]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -306,6 +310,7 @@ export function MessageComposer({
   );
 
   const sendInteractive = useCallback(() => {
+    if (whatsappDisabled) return;
     const result = validateInteractivePayload(interactivePayload);
     if (!result.ok) {
       toast.error(result.error);
@@ -314,7 +319,13 @@ export function MessageComposer({
     onSendInteractive(interactivePayload, replyTo?.id);
     setInteractiveOpen(false);
     onClearReply?.();
-  }, [interactivePayload, onSendInteractive, replyTo?.id, onClearReply]);
+  }, [
+    interactivePayload,
+    whatsappDisabled,
+    onSendInteractive,
+    replyTo?.id,
+    onClearReply,
+  ]);
 
   // Persist the current builder payload as a reusable interactive snippet.
   const saveAsQuickReply = useCallback(async () => {
@@ -529,7 +540,7 @@ export function MessageComposer({
   // ---- Draft send / discard -----------------------------------------
 
   const sendDraft = useCallback(() => {
-    if (!draft || busy) return;
+    if (!draft || busy || whatsappDisabled) return;
     onSendMedia({
       kind: draft.kind,
       mediaUrl: draft.mediaUrl,
@@ -544,7 +555,7 @@ export function MessageComposer({
     // The object is now owned by the sent message — clear without GC.
     setDraft(null);
     onClearReply?.();
-  }, [draft, busy, onSendMedia, replyTo?.id, onClearReply]);
+  }, [draft, busy, whatsappDisabled, onSendMedia, replyTo?.id, onClearReply]);
 
   // Discard GCs the staged object — it was uploaded but never sent.
   const discardDraft = useCallback(() => {
@@ -560,6 +571,36 @@ export function MessageComposer({
 
   return (
     <div className="border-border bg-card border-t p-3">
+      {whatsapp.status === 'unavailable' && (
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-lg bg-amber-500/10 px-3 py-2">
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Connect WhatsApp to reply from this workspace.
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-amber-700 dark:text-amber-300"
+            render={<a href="/settings?tab=whatsapp" />}
+          >
+            Set up WhatsApp
+          </Button>
+        </div>
+      )}
+      {whatsapp.status === 'error' && (
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-lg bg-amber-500/10 px-3 py-2">
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            WhatsApp availability could not be verified.
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-amber-700 dark:text-amber-300"
+            onClick={whatsapp.refresh}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
       {replyTo && (
         <div className="mb-2">
           <ReplyQuote
@@ -577,6 +618,7 @@ export function MessageComposer({
             size="sm"
             className="h-7 text-xs text-amber-400 hover:text-amber-300"
             onClick={onOpenTemplates}
+            disabled={whatsappDisabled}
           >
             <LayoutTemplate className="mr-1 h-3 w-3" />
             {t('templates')}
@@ -620,7 +662,7 @@ export function MessageComposer({
         <MediaDraftPreview
           draft={draft}
           busy={busy}
-          readOnly={readOnly}
+          readOnly={composerReadOnly}
           onCaptionChange={setCaption}
           onDiscard={discardDraft}
           onSend={sendDraft}
@@ -732,7 +774,7 @@ export function MessageComposer({
           <GatedButton
             variant="ghost"
             size="sm"
-            canAct={!readOnly}
+            canAct={!composerReadOnly}
             gateReason="send messages"
             title={readOnly ? undefined : t('sendTemplate')}
             className="text-muted-foreground hover:text-foreground h-9 w-9 shrink-0 p-0"
@@ -744,7 +786,7 @@ export function MessageComposer({
           <GatedButton
             variant="ghost"
             size="sm"
-            canAct={!readOnly}
+            canAct={!composerReadOnly}
             gateReason="send messages"
             disabled={drafting}
             title={readOnly ? undefined : t('draftWithAI')}
@@ -764,13 +806,17 @@ export function MessageComposer({
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             placeholder={
-              readOnly
-                ? t('readOnlyPlaceholder')
-                : sessionExpired
-                  ? t('sessionExpiredPlaceholder')
-                  : t('typeMessagePlaceholder')
+              whatsappDisabled
+                ? whatsapp.status === 'loading'
+                  ? 'Checking WhatsApp connection…'
+                  : 'Connect WhatsApp to reply'
+                : readOnly
+                  ? t('readOnlyPlaceholder')
+                  : sessionExpired
+                    ? t('sessionExpiredPlaceholder')
+                    : t('typeMessagePlaceholder')
             }
-            disabled={sessionExpired || readOnly}
+            disabled={sessionExpired || composerReadOnly}
             rows={1}
             // Textarea keeps its own inline title — the GatedButton
             // wrapping pattern doesn't apply to non-button inputs.
@@ -778,13 +824,14 @@ export function MessageComposer({
             title={readOnly ? t('readOnlyTitle') : undefined}
             className={cn(
               'border-border bg-muted text-foreground placeholder-muted-foreground focus:border-primary/50 flex-1 resize-none rounded-xl border px-4 py-2.5 text-sm transition-colors outline-none',
-              (sessionExpired || readOnly) && 'cursor-not-allowed opacity-50'
+              (sessionExpired || composerReadOnly) &&
+                'cursor-not-allowed opacity-50'
             )}
           />
 
           <GatedButton
             size="sm"
-            canAct={!readOnly}
+            canAct={!composerReadOnly}
             gateReason="send messages"
             disabled={!text.trim() || sessionExpired || sending}
             onClick={handleSend}
@@ -829,7 +876,7 @@ export function MessageComposer({
               )}
               {t('saveAsQuickReply')}
             </Button>
-            <Button onClick={sendInteractive}>
+            <Button onClick={sendInteractive} disabled={whatsappDisabled}>
               <Send className="mr-1 h-4 w-4" />
               {t('send')}
             </Button>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Broadcast } from '@/types';
@@ -18,6 +18,8 @@ import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
 import { useTranslations } from 'next-intl';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
+import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
 
 /**
  * Poll cadence while any broadcast is sending. Kept modest so we don't
@@ -62,6 +64,7 @@ export default function BroadcastsPage() {
   const t = useTranslations('Broadcasts.page');
   const tStatus = useTranslations('Broadcasts.status');
   const canCreate = useCan('send-messages');
+  const whatsapp = useWhatsAppCapability();
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +72,7 @@ export default function BroadcastsPage() {
   // Used to kick off polling only while something is actively sending.
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  async function fetchBroadcasts() {
+  const fetchBroadcasts = useCallback(async () => {
     try {
       const supabase = createClient();
       const { data, error: fetchError } = await supabase
@@ -84,11 +87,14 @@ export default function BroadcastsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [t]);
 
   useEffect(() => {
-    fetchBroadcasts();
-  }, []);
+    if (!whatsapp.available) return;
+    void Promise.resolve().then(fetchBroadcasts);
+    // The provider refreshes on workspace changes; only begin loading
+    // tenant data after this workspace has a usable connection.
+  }, [fetchBroadcasts, whatsapp.available]);
 
   const anySending = useMemo(
     () => broadcasts.some((b) => b.status === 'sending'),
@@ -129,7 +135,15 @@ export default function BroadcastsPage() {
       stopPolling();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [anySending]);
+  }, [anySending, fetchBroadcasts]);
+
+  if (!whatsapp.available) {
+    return (
+      <WhatsAppCapabilityGate feature="Broadcasts">
+        <></>
+      </WhatsAppCapabilityGate>
+    );
+  }
 
   if (loading) {
     return (

@@ -9,6 +9,8 @@ import { useTranslations } from 'next-intl';
 
 import { FlowEditorShell } from '@/components/flows/flow-editor-shell';
 import type { FlowRow, FlowNodeRow } from '@/lib/flows/types';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
+import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
 
 /**
  * Flow editor shell.
@@ -26,6 +28,7 @@ export default function FlowEditorPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const t = useTranslations('Flows.edit');
+  const whatsapp = useWhatsAppCapability();
 
   const [flow, setFlow] = useState<FlowRow | null>(null);
   const [nodes, setNodes] = useState<FlowNodeRow[]>([]);
@@ -33,7 +36,7 @@ export default function FlowEditorPage() {
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    if (!params.id) return;
+    if (!params.id || !whatsapp.available) return;
     let cancelled = false;
     (async () => {
       try {
@@ -63,7 +66,15 @@ export default function FlowEditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [params.id]);
+  }, [params.id, t, whatsapp.available]);
+
+  if (!whatsapp.available) {
+    return (
+      <WhatsAppCapabilityGate feature="Flows">
+        <></>
+      </WhatsAppCapabilityGate>
+    );
+  }
 
   if (loading) {
     return (

@@ -21,6 +21,8 @@ import { useTranslations } from 'next-intl';
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
+import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
 
 /**
  * Run history viewer.
@@ -90,6 +92,7 @@ const STATUS_META: Record<
 };
 
 export default function FlowRunsPage() {
+  const whatsapp = useWhatsAppCapability();
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const t = useTranslations('Flows.logs');
@@ -103,6 +106,7 @@ export default function FlowRunsPage() {
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
+    if (!whatsapp.available) return;
     if (!params.id) return;
     let cancelled = false;
     (async () => {
@@ -135,7 +139,7 @@ export default function FlowRunsPage() {
     return () => {
       cancelled = true;
     };
-  }, [params.id]);
+  }, [params.id, t, whatsapp.available]);
 
   function toggle(runId: string) {
     setExpanded((prev) => {
@@ -144,6 +148,14 @@ export default function FlowRunsPage() {
       else next.add(runId);
       return next;
     });
+  }
+
+  if (!whatsapp.available) {
+    return (
+      <WhatsAppCapabilityGate feature="Flows">
+        <></>
+      </WhatsAppCapabilityGate>
+    );
   }
 
   if (loading) {

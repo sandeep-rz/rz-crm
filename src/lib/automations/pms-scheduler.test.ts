@@ -4,6 +4,7 @@ import type { Automation } from '@/types';
 import type { ReservationAutomationContext } from './pms-context';
 import {
   computeScheduledRunAt,
+  parsePmsScheduleUpsertResult,
   schedulePmsAutomationsAfterSync,
   type AutomationTriggerJobInsert,
   type PmsAutomationScheduleStore,
@@ -33,6 +34,7 @@ const reservation: ReservationAutomationContext = {
   currency: 'INR',
   pms_integration_id: 'integration-1',
   provider: 'rukiye_zara',
+  reservation_updated_at: '2026-09-28T11:00:00.000Z',
 };
 
 function automation(
@@ -78,6 +80,20 @@ class MemoryStore implements PmsAutomationScheduleStore {
 }
 
 describe('PMS automation scheduling adapter', () => {
+  it('requires every requested batch item to be explicitly accounted for', () => {
+    expect(
+      parsePmsScheduleUpsertResult(
+        { requested: 2, affected: 1, completed: 1, stale: 0 },
+        2
+      )
+    ).toEqual({ requested: 2, affected: 1, completed: 1, stale: 0 });
+    expect(() =>
+      parsePmsScheduleUpsertResult(
+        { requested: 2, affected: 1, completed: 0, stale: 0 },
+        2
+      )
+    ).toThrow('did not converge completely');
+  });
   it('computes explicit property-local dates without server timezone assumptions', () => {
     expect(
       computeScheduledRunAt(

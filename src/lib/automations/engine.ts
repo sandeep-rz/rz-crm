@@ -52,21 +52,29 @@ export interface AutomationContext {
 }
 
 export interface AutomationExecutionResult {
-  logId: string
-  status: 'success' | 'partial' | 'failed' | 'processing'
+  logId: string | null
+  status: 'success' | 'partial' | 'failed' | 'processing' | 'suppressed'
   errorMessage: string | null
-  disposition: 'executed' | 'already_completed' | 'already_running'
+  disposition:
+    | 'executed'
+    | 'already_completed'
+    | 'already_running'
+    | 'ineligible'
+    | 'reservation_changed'
 }
 
 export interface AutomationExecutionIdentity {
   triggerJobId: string
   attemptCount: number
+  expectedReservationUpdatedAt: string
 }
 
 type PmsExecutionGateDisposition =
   | 'started'
   | 'already_completed'
   | 'already_running'
+  | 'ineligible'
+  | 'reservation_changed'
 
 export interface DispatchInput {
   /** Account-level tenancy key. Drives the lookup of which active
@@ -203,11 +211,19 @@ export async function resumePendingExecution(pending: {
     .from('automations')
     .select('*')
     .eq('id', pending.automation_id)
-    .single()
+    .eq('account_id', pending.account_id)
+    .eq('is_active', true)
+    .maybeSingle()
 
-  if (error || !automation) {
-    console.error('[automations] resume: missing automation', pending.automation_id, error)
+  if (error) {
+    console.error('[automations] resume: automation lookup failed', pending.automation_id, error)
     await markPending(pending.id, 'failed')
+    return
+  }
+  if (!automation) {
+    // Deactivation is a hard boundary for delayed continuations too. Treat a
+    // missing/inactive/cross-account definition as terminally suppressed.
+    await markPending(pending.id, 'done')
     return
   }
 
@@ -238,7 +254,7 @@ async function executeAutomation(
   automation: Automation,
   input: DispatchInput,
   executionIdentity?: AutomationExecutionIdentity,
-): Promise<AutomationExecutionResult> {
+): Promise<AutomationExecutionResult | null> {
   const db = supabaseAdmin()
 
   let log: { id: string }
@@ -249,13 +265,26 @@ async function executeAutomation(
         p_job_id: executionIdentity.triggerJobId,
         p_attempt_count: executionIdentity.attemptCount,
         p_contact_id: input.contactId ?? null,
+        p_expected_reservation_updated_at:
+          executionIdentity.expectedReservationUpdatedAt,
       },
     )
     const gate = (Array.isArray(gateData) ? gateData[0] : gateData) as
       | { automation_log_id: string; disposition: PmsExecutionGateDisposition }
       | null
-    if (gateError || !gate?.automation_log_id) {
+    if (gateError || !gate) {
       throw new Error(`cannot acquire PMS automation execution: ${gateError?.message ?? 'unknown error'}`)
+    }
+    if (gate.disposition === 'ineligible' || gate.disposition === 'reservation_changed') {
+      return {
+        logId: null,
+        status: 'suppressed',
+        errorMessage: null,
+        disposition: gate.disposition,
+      }
+    }
+    if (!gate.automation_log_id) {
+      throw new Error('cannot acquire PMS automation execution: missing log identity')
     }
     log = { id: gate.automation_log_id }
     if (gate.disposition === 'already_completed' || gate.disposition === 'already_running') {

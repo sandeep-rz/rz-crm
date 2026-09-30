@@ -140,7 +140,11 @@ export async function processPmsAutomationJob(
           vars: reservationContextVars(reservation),
         },
       },
-      { triggerJobId: job.id, attemptCount: job.attemptCount },
+      {
+        triggerJobId: job.id,
+        attemptCount: job.attemptCount,
+        expectedReservationUpdatedAt: reservation.reservation_updated_at,
+      },
     );
     if (!execution) {
       await store.markSuppressed(job, now().toISOString(), 'Automation is no longer eligible.');
@@ -150,6 +154,18 @@ export async function processPmsAutomationJob(
       // A duplicate invocation of the same current claim does not own the
       // execution and must not mutate the job underneath the first worker.
       return 'inProgress';
+    }
+    if (execution.disposition === 'reservation_changed') {
+      await store.markSuppressed(
+        job,
+        now().toISOString(),
+        'Reservation changed after eligibility validation.',
+      );
+      return 'suppressed';
+    }
+    if (execution.disposition === 'ineligible') {
+      await store.markSuppressed(job, now().toISOString(), 'Automation is no longer eligible.');
+      return 'suppressed';
     }
     if (execution.status === 'failed') {
       throw new PmsAutomationJobError(

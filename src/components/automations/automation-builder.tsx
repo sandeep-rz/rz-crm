@@ -942,6 +942,26 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
 
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (body?.automation_paused) {
+          if (isEditing && initial.id) {
+            try {
+              const refreshed = await fetch(`/api/automations/${initial.id}`, {
+                cache: 'no-store',
+              });
+              if (refreshed.ok) {
+                const latest = await refreshed.json();
+                setState(builderInitialFromApiPayload(latest));
+              }
+            } catch {
+              // router.refresh below still invalidates surrounding server data.
+            }
+          } else if (body?.automation_id) {
+            router.replace(`/automations/${body.automation_id}/edit`);
+          }
+          router.refresh();
+          toast.error(t('toasts.schedulePaused'));
+          return;
+        }
         // If the server blocked activation with validation issues,
         // surface the first concrete problem so the user can fix it
         // without opening DevTools for the full array.
@@ -2403,4 +2423,28 @@ export function fromServerSteps(nodes: ServerStepNode[]): BuilderStep[] {
           }
         : undefined,
   }));
+}
+
+export function builderInitialFromApiPayload(payload: {
+  automation: {
+    id: string;
+    name?: string | null;
+    description?: string | null;
+    trigger_type: AutomationTriggerType;
+    trigger_config?: Record<string, unknown> | null;
+    is_active?: boolean | null;
+    whatsapp_config_id?: string | null;
+  };
+  steps?: ServerStepNode[] | null;
+}): BuilderInitial {
+  return {
+    id: payload.automation.id,
+    name: payload.automation.name ?? '',
+    description: payload.automation.description ?? '',
+    trigger_type: payload.automation.trigger_type,
+    trigger_config: payload.automation.trigger_config ?? {},
+    is_active: !!payload.automation.is_active,
+    whatsapp_config_id: payload.automation.whatsapp_config_id ?? null,
+    steps: fromServerSteps(payload.steps ?? []),
+  };
 }

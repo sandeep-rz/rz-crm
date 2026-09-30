@@ -1,71 +1,115 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   requireRole: vi.fn(),
   resolveConnection: vi.fn(),
   insertSteps: vi.fn(),
+  backfill: vi.fn(),
   insertedAutomation: null as Record<string, unknown> | null,
   insertPayloads: [] as Record<string, unknown>[],
-}))
+  updatePayloads: [] as Record<string, unknown>[],
+  deleteError: null as Error | null,
+  updateError: null as Error | null,
+}));
 
 vi.mock('@/lib/auth/account', () => ({
   requireRole: mocks.requireRole,
   getCurrentAccount: vi.fn(),
-  toErrorResponse: vi.fn(() => Response.json({ error: 'auth failed' }, { status: 403 })),
-}))
+  toErrorResponse: vi.fn(() =>
+    Response.json({ error: 'auth failed' }, { status: 403 })
+  ),
+}));
 
 vi.mock('@/lib/whatsapp/connection-resolver', () => {
   class WhatsAppConnectionError extends Error {
     constructor(
       public readonly code: string,
       message: string,
-      public readonly status: number,
+      public readonly status: number
     ) {
-      super(message)
+      super(message);
     }
   }
   return {
     WhatsAppConnectionError,
     resolveWhatsAppConnection: mocks.resolveConnection,
-  }
-})
+  };
+});
 
 vi.mock('@/lib/automations/steps-tree', () => ({
   insertSteps: mocks.insertSteps,
-}))
+}));
+
+vi.mock('@/lib/automations/pms-schedule-backfill', () => ({
+  backfillPmsAutomationSchedules: mocks.backfill,
+}));
 
 vi.mock('@/lib/automations/admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
-      if (table !== 'automations') throw new Error(`unexpected table: ${table}`)
+      if (table !== 'automations')
+        throw new Error(`unexpected table: ${table}`);
+      let operation: 'insert' | 'update' | 'delete' | null = null;
       const builder = {
         insert: (payload: Record<string, unknown>) => {
-          mocks.insertPayloads.push(payload)
-          return builder
+          operation = 'insert';
+          mocks.insertPayloads.push(payload);
+          mocks.insertedAutomation = {
+            ...(mocks.insertedAutomation ?? {}),
+            ...payload,
+          };
+          return builder;
         },
+        update: (payload: Record<string, unknown>) => {
+          operation = 'update';
+          mocks.updatePayloads.push(payload);
+          if (!mocks.updateError && mocks.insertedAutomation) {
+            Object.assign(mocks.insertedAutomation, payload);
+          }
+          return builder;
+        },
+        delete: () => {
+          operation = 'delete';
+          return builder;
+        },
+        eq: () => builder,
         select: () => builder,
-        single: async () => ({ data: mocks.insertedAutomation, error: null }),
-      }
-      return builder
+        single: async () => ({
+          data: mocks.insertedAutomation,
+          error: operation === 'update' ? mocks.updateError : null,
+        }),
+        maybeSingle: async () => ({
+          data: mocks.insertedAutomation,
+          error: operation === 'update' ? mocks.updateError : null,
+        }),
+        then: (
+          resolve: (value: { data: null; error: Error | null }) => unknown
+        ) =>
+          Promise.resolve({
+            data: null,
+            error: operation === 'delete' ? mocks.deleteError : null,
+          }).then(resolve),
+      };
+      return builder;
     },
   }),
-}))
+}));
 
-import { POST } from './route'
+import { POST } from './route';
 
 const account = {
   accountId: 'account-1',
   userId: 'user-1',
   role: 'agent',
   supabase: {},
-}
+};
 
 function request(body: Record<string, unknown>) {
   return new Request('http://localhost/api/automations', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
-  })
+  });
 }
 
 function addTagBody(triggerType: string) {
@@ -75,89 +119,162 @@ function addTagBody(triggerType: string) {
     trigger_config: {},
     is_active: true,
     steps: [{ step_type: 'add_tag', step_config: { tag_id: 'tag-1' } }],
-  }
+  };
 }
 
 describe('POST /api/automations WhatsApp dependency', () => {
   beforeEach(() => {
-    mocks.requireRole.mockReset().mockResolvedValue(account)
-    mocks.resolveConnection.mockReset().mockResolvedValue({ id: 'connection-1' })
-    mocks.insertSteps.mockReset().mockResolvedValue(null)
-    mocks.insertedAutomation = { id: 'automation-1' }
-    mocks.insertPayloads = []
-  })
+    mocks.requireRole.mockReset().mockResolvedValue(account);
+    mocks.resolveConnection
+      .mockReset()
+      .mockResolvedValue({ id: 'connection-1' });
+    mocks.insertSteps.mockReset().mockResolvedValue(null);
+    mocks.backfill.mockReset().mockResolvedValue({
+      scannedReservations: 0,
+      scheduledJobs: 0,
+    });
+    mocks.insertedAutomation = { id: 'automation-1' };
+    mocks.insertPayloads = [];
+    mocks.updatePayloads = [];
+    mocks.deleteError = null;
+    mocks.updateError = null;
+  });
 
   it.each(['new_contact_created', 'reservation_confirmed'])(
     'creates and activates a %s -> add_tag automation with zero connections',
     async (triggerType) => {
-      const response = await POST(request(addTagBody(triggerType)))
+      const response = await POST(request(addTagBody(triggerType)));
 
-      expect(response.status).toBe(201)
-      expect(mocks.resolveConnection).not.toHaveBeenCalled()
+      expect(response.status).toBe(201);
+      expect(mocks.resolveConnection).not.toHaveBeenCalled();
       expect(mocks.insertPayloads[0]).toMatchObject({
         account_id: 'account-1',
         whatsapp_config_id: null,
         is_active: true,
-      })
-    },
-  )
+      });
+    }
+  );
 
   it('rejects activation of a WhatsApp send automation with no connection', async () => {
-    const response = await POST(request({
-      name: 'Send welcome',
-      trigger_type: 'new_contact_created',
-      trigger_config: {},
-      is_active: true,
-      steps: [{
-        step_type: 'send_template',
-        step_config: { template_name: 'welcome' },
-      }],
-    }))
-    const body = await response.json()
+    const response = await POST(
+      request({
+        name: 'Send welcome',
+        trigger_type: 'new_contact_created',
+        trigger_config: {},
+        is_active: true,
+        steps: [
+          {
+            step_type: 'send_template',
+            step_config: { template_name: 'welcome' },
+          },
+        ],
+      })
+    );
+    const body = await response.json();
 
-    expect(response.status).toBe(400)
-    expect(body.issues).toContainEqual(expect.objectContaining({
-      path: 'whatsapp_config_id',
-    }))
-    expect(mocks.resolveConnection).not.toHaveBeenCalled()
-    expect(mocks.insertPayloads).toHaveLength(0)
-  })
+    expect(response.status).toBe(400);
+    expect(body.issues).toContainEqual(
+      expect.objectContaining({
+        path: 'whatsapp_config_id',
+      })
+    );
+    expect(mocks.resolveConnection).not.toHaveBeenCalled();
+    expect(mocks.insertPayloads).toHaveLength(0);
+  });
 
   it('keeps send-template creation working with an owned connection', async () => {
-    const response = await POST(request({
-      name: 'Send welcome',
-      trigger_type: 'new_contact_created',
-      trigger_config: {},
-      is_active: true,
-      whatsapp_config_id: 'connection-1',
-      steps: [{
-        step_type: 'send_template',
-        step_config: { template_name: 'welcome' },
-      }],
-    }))
+    const response = await POST(
+      request({
+        name: 'Send welcome',
+        trigger_type: 'new_contact_created',
+        trigger_config: {},
+        is_active: true,
+        whatsapp_config_id: 'connection-1',
+        steps: [
+          {
+            step_type: 'send_template',
+            step_config: { template_name: 'welcome' },
+          },
+        ],
+      })
+    );
 
-    expect(response.status).toBe(201)
+    expect(response.status).toBe(201);
     expect(mocks.resolveConnection).toHaveBeenCalledWith(expect.anything(), {
       accountId: 'account-1',
       connectionId: 'connection-1',
-    })
-    expect(mocks.insertPayloads[0].whatsapp_config_id).toBe('connection-1')
-  })
+    });
+    expect(mocks.insertPayloads[0].whatsapp_config_id).toBe('connection-1');
+  });
 
   it('rejects a foreign-workspace connection', async () => {
-    const { WhatsAppConnectionError } = await import('@/lib/whatsapp/connection-resolver')
-    mocks.resolveConnection.mockRejectedValueOnce(new WhatsAppConnectionError(
-      'not_found',
-      'WhatsApp connection not found for this workspace',
-      404,
-    ))
+    const { WhatsAppConnectionError } =
+      await import('@/lib/whatsapp/connection-resolver');
+    mocks.resolveConnection.mockRejectedValueOnce(
+      new WhatsAppConnectionError(
+        'not_found',
+        'WhatsApp connection not found for this workspace',
+        404
+      )
+    );
 
-    const response = await POST(request({
-      ...addTagBody('new_contact_created'),
-      whatsapp_config_id: 'foreign-connection',
-    }))
+    const response = await POST(
+      request({
+        ...addTagBody('new_contact_created'),
+        whatsapp_config_id: 'foreign-connection',
+      })
+    );
 
-    expect(response.status).toBe(404)
-    expect(mocks.insertPayloads).toHaveLength(0)
-  })
-})
+    expect(response.status).toBe(404);
+    expect(mocks.insertPayloads).toHaveLength(0);
+  });
+
+  it('backfills a newly created active stay-timing automation', async () => {
+    mocks.insertedAutomation = {
+      id: 'automation-1',
+      trigger_type: 'checkin_day',
+    };
+    const response = await POST(
+      request({
+        ...addTagBody('checkin_day'),
+        trigger_config: {
+          local_time: '11:00',
+          timezone: 'Asia/Kolkata',
+        },
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.insertPayloads[0].is_active).toBe(false);
+    expect(mocks.backfill).toHaveBeenCalledWith('automation-1', {
+      allowInactiveActivation: true,
+    });
+    expect(mocks.updatePayloads).toContainEqual({ is_active: true });
+    expect(mocks.resolveConnection).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when backfill and cleanup deletion fail', async () => {
+    mocks.insertedAutomation = {
+      id: 'automation-1',
+      trigger_type: 'checkin_day',
+    };
+    mocks.backfill.mockRejectedValueOnce(new Error('batch failed'));
+    mocks.deleteError = new Error('delete failed');
+
+    const response = await POST(
+      request({
+        ...addTagBody('checkin_day'),
+        trigger_config: {
+          local_time: '11:00',
+          timezone: 'Asia/Kolkata',
+        },
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.automation_paused).toBe(true);
+    expect(mocks.insertedAutomation?.is_active).toBe(false);
+    expect(mocks.updatePayloads).toContainEqual({ is_active: false });
+  });
+});

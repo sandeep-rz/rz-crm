@@ -6,10 +6,7 @@ import type {
   PmsTriggerConfig,
 } from '@/types';
 import { supabaseAdmin } from './admin-client';
-import {
-  loadReservationAutomationContext,
-  type ReservationAutomationContext,
-} from './pms-context';
+import { loadReservationAutomationContext } from './pms-context';
 import {
   PMS_EVENT_AUTOMATION_TRIGGERS,
   isValidIanaTimeZone,
@@ -43,6 +40,19 @@ export interface PmsAutomationScheduleResult {
   cancelledJobs: number;
 }
 
+/** The canonical reservation fields shared by webhook scheduling and backfill. */
+export interface ReservationSchedulingContext {
+  reservation_id: string;
+  account_id: string;
+  property_id: string;
+  property_timezone: string | null;
+  reservation_status: string;
+  channel: string | null;
+  check_in: string | null;
+  check_out: string | null;
+  reservation_updated_at?: string | null;
+}
+
 export interface AutomationTriggerJobInsert {
   account_id: string;
   automation_id: string;
@@ -51,6 +61,7 @@ export interface AutomationTriggerJobInsert {
   trigger_type: PmsAutomationTriggerType;
   occurrence_key: string;
   run_at: string;
+  source_updated_at?: string | null;
 }
 
 export interface PmsAutomationScheduleStore {
@@ -60,7 +71,8 @@ export interface PmsAutomationScheduleStore {
   cancelFutureJobs(
     reservationId: string,
     accountId: string,
-    reason: string
+    reason: string,
+    sourceUpdatedAt?: string | null
   ): Promise<number>;
 }
 
@@ -69,6 +81,36 @@ export class PmsAutomationScheduleError extends Error {
     super(message);
     this.name = 'PmsAutomationScheduleError';
   }
+}
+
+export interface PmsScheduleUpsertResult {
+  requested: number;
+  affected: number;
+  completed: number;
+  stale: number;
+}
+
+export function parsePmsScheduleUpsertResult(
+  value: unknown,
+  expectedRequested: number
+): PmsScheduleUpsertResult {
+  const result = value as Partial<PmsScheduleUpsertResult> | null;
+  if (
+    !result ||
+    result.requested !== expectedRequested ||
+    !Number.isInteger(result.affected) ||
+    !Number.isInteger(result.completed) ||
+    !Number.isInteger(result.stale) ||
+    (result.affected ?? -1) < 0 ||
+    (result.completed ?? -1) < 0 ||
+    (result.stale ?? -1) < 0 ||
+    result.affected! + result.completed! + result.stale! !== expectedRequested
+  ) {
+    throw new PmsAutomationScheduleError(
+      'Scheduled occurrence batch did not converge completely.'
+    );
+  }
+  return result as PmsScheduleUpsertResult;
 }
 
 function listIncludes(values: unknown, candidate: string | null): boolean {
@@ -81,7 +123,7 @@ function listIncludes(values: unknown, candidate: string | null): boolean {
 
 export function matchesReservationTriggerConfig(
   config: PmsTriggerConfig,
-  reservation: ReservationAutomationContext
+  reservation: ReservationSchedulingContext
 ): boolean {
   const propertyIds = Array.isArray(config.property_ids)
     ? config.property_ids
@@ -92,6 +134,14 @@ export function matchesReservationTriggerConfig(
     listIncludes(propertyIds, reservation.property_id) &&
     listIncludes(config.channels, reservation.channel) &&
     listIncludes(config.reservation_statuses, reservation.reservation_status)
+  );
+}
+
+export function isReservationEligibleForTiming(
+  reservation: ReservationSchedulingContext
+): boolean {
+  return !['cancelled', 'canceled'].includes(
+    reservation.reservation_status.toLowerCase()
   );
 }
 
@@ -165,7 +215,7 @@ function addDays(date: string, days: number): string | null {
 export function computeScheduledRunAt(
   triggerType: PmsAutomationTriggerType,
   config: PmsTriggerConfig,
-  reservation: ReservationAutomationContext
+  reservation: ReservationSchedulingContext
 ): string | null {
   // Existing saved definitions may carry an explicit timezone. Preserve that
   // behavior, while new definitions resolve the business timezone from the
@@ -265,6 +315,7 @@ export async function schedulePmsAutomationsAfterSync(
         triggerType: eventTrigger,
       }),
       run_at: now().toISOString(),
+      source_updated_at: reservation.reservation_updated_at ?? null,
     });
     if (inserted) result.eventJobs += 1;
   }
@@ -273,7 +324,18 @@ export async function schedulePmsAutomationsAfterSync(
     result.cancelledJobs = await store.cancelFutureJobs(
       reservation.reservation_id,
       input.accountId,
-      'Reservation cancelled.'
+      'Reservation cancelled.',
+      reservation.reservation_updated_at
+    );
+    return result;
+  }
+
+  if (!isReservationEligibleForTiming(reservation)) {
+    result.cancelledJobs = await store.cancelFutureJobs(
+      reservation.reservation_id,
+      input.accountId,
+      'Reservation is not eligible for stay-timing automation.',
+      reservation.reservation_updated_at
     );
     return result;
   }
@@ -312,6 +374,7 @@ export async function schedulePmsAutomationsAfterSync(
         triggerType: scheduledTrigger,
       }),
       run_at: runAt,
+      source_updated_at: reservation.reservation_updated_at ?? null,
     });
     if (inserted) result.scheduledJobs += 1;
   }
@@ -349,48 +412,22 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
   }
 
   async upsertScheduledJob(job: AutomationTriggerJobInsert): Promise<boolean> {
-    const { data: existing, error: findError } = await this.db
-      .from('automation_trigger_jobs')
-      .select('id, status')
-      .eq('occurrence_key', job.occurrence_key)
-      .maybeSingle();
-    if (findError)
-      throw new PmsAutomationScheduleError(
-        'Scheduled occurrence lookup failed.'
-      );
-    if (existing?.status === 'completed') return false;
-    if (existing) {
-      const { error } = await this.db
-        .from('automation_trigger_jobs')
-        .update({
-          run_at: job.run_at,
-          status: 'scheduled',
-          processing_started_at: null,
-          retryable: false,
-          next_attempt_at: null,
-          last_error: null,
-          completed_at: null,
-        })
-        .eq('id', existing.id)
-        .eq('account_id', job.account_id);
-      if (error)
-        throw new PmsAutomationScheduleError(
-          'Scheduled occurrence update failed.'
-        );
-      return true;
-    }
-    const { error } = await this.db.from('automation_trigger_jobs').insert(job);
+    const { data, error } = await this.db.rpc(
+      'upsert_pms_automation_schedule_jobs',
+      { p_jobs: [job] }
+    );
     if (error)
       throw new PmsAutomationScheduleError(
         'Scheduled occurrence insert failed.'
       );
-    return true;
+    return parsePmsScheduleUpsertResult(data, 1).affected === 1;
   }
 
   async cancelFutureJobs(
     reservationId: string,
     accountId: string,
-    reason: string
+    reason: string,
+    sourceUpdatedAt?: string | null
   ): Promise<number> {
     const { data, error } = await this.db
       .from('automation_trigger_jobs')
@@ -401,6 +438,7 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
         next_attempt_at: null,
         last_error: reason,
         completed_at: new Date().toISOString(),
+        ...(sourceUpdatedAt ? { source_updated_at: sourceUpdatedAt } : {}),
       })
       .eq('account_id', accountId)
       .eq('pms_reservation_id', reservationId)

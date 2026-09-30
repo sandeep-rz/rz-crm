@@ -261,12 +261,18 @@ function providerFor(value: PmsReservation | Error) {
 function dependencies(
   store: MemoryEventStore,
   reservations: MemoryReservationStore,
-  provider: PmsProvider
+  provider: PmsProvider,
+  scheduleAutomations = vi.fn(async () => ({
+    eventJobs: 0,
+    scheduledJobs: 0,
+    cancelledJobs: 0,
+  }))
 ) {
   return {
     store,
     reservationStore: reservations,
     createProvider: () => provider,
+    scheduleAutomations,
     now: () => new Date(NOW),
   };
 }
@@ -276,10 +282,15 @@ describe('PMS webhook event processor', () => {
     const events = new MemoryEventStore();
     const projections = new MemoryReservationStore();
     const canonical = providerFor(reservation);
+    const scheduleAutomations = vi.fn(async () => ({
+      eventJobs: 1,
+      scheduledJobs: 1,
+      cancelledJobs: 0,
+    }));
 
     const result = await processPmsWebhookEvent(
       claim,
-      dependencies(events, projections, canonical.provider)
+      dependencies(events, projections, canonical.provider, scheduleAutomations)
     );
 
     expect(result.status).toBe('processed');
@@ -289,6 +300,12 @@ describe('PMS webhook event processor', () => {
       externalReservationId: 'reservation-1',
     });
     expect(events.processed).toEqual([claim.id]);
+    expect(scheduleAutomations).toHaveBeenCalledWith({
+      accountId: claim.accountId,
+      reservationId: 'projection-1',
+      webhookEventId: claim.id,
+      eventType: claim.eventType,
+    });
     expect(
       projections.reservations.get('integration-1:reservation-1')
     ).toMatchObject({ reservation: { status: 'confirmed' } });

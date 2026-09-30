@@ -1122,7 +1122,8 @@
       "toasts": {
         "saved": "Automatización guardada",
         "created": "Automatización creada",
-        "saveFailed": "Error al guardar"
+        "saveFailed": "Error al guardar",
+        "schedulePaused": "No pudimos actualizar la programación de futuras reservas. La automatización se pausó para evitar acciones incorrectas. Revísala y actívala de nuevo."
       },
       "tags": {
         "select": "Selecciona una etiqueta…",

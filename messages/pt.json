@@ -1122,7 +1122,8 @@
       "toasts": {
         "saved": "Automação salva",
         "created": "Automação criada",
-        "saveFailed": "Falha ao salvar"
+        "saveFailed": "Falha ao salvar",
+        "schedulePaused": "Não foi possível atualizar a programação de reservas futuras. A automação foi pausada para evitar ações incorretas. Revise-a e ative-a novamente."
       },
       "tags": {
         "select": "Selecione uma tag…",

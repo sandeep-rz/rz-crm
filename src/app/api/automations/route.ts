@@ -20,6 +20,35 @@ import {
   validatePmsPropertyTimezonesForActivation,
   validateWhatsAppConnectionForActivation,
 } from '@/lib/automations/validate';
+import { backfillPmsAutomationSchedules } from '@/lib/automations/pms-schedule-backfill';
+import { isPmsScheduledAutomationTrigger } from '@/lib/automations/pms-trigger-schema';
+
+async function rollbackCreatedAutomation(
+  admin: ReturnType<typeof supabaseAdmin>,
+  automationId: string,
+  accountId: string
+): Promise<'deleted' | 'paused'> {
+  const { error: deleteError } = await admin
+    .from('automations')
+    .delete()
+    .eq('id', automationId)
+    .eq('account_id', accountId);
+  if (!deleteError) return 'deleted';
+
+  const { data: paused, error: pauseError } = await admin
+    .from('automations')
+    .update({ is_active: false })
+    .eq('id', automationId)
+    .eq('account_id', accountId)
+    .select('id, is_active')
+    .maybeSingle();
+  if (pauseError || !paused || paused.is_active !== false) {
+    throw new Error(
+      'Automation creation cleanup failed and its inactive state could not be verified.'
+    );
+  }
+  return 'paused';
+}
 
 export async function GET() {
   let account;
@@ -90,6 +119,8 @@ export async function POST(request: Request) {
   }
 
   const admin = supabaseAdmin();
+  const stageTimingActivation =
+    !!is_active && isPmsScheduledAutomationTrigger(effectiveTriggerType);
   let whatsappConfigId: string | null = null;
   if (
     body.whatsapp_config_id !== undefined &&
@@ -173,7 +204,9 @@ export async function POST(request: Request) {
       description: effectiveDescription ?? null,
       trigger_type: effectiveTriggerType,
       trigger_config: effectiveTriggerConfig ?? {},
-      is_active: !!is_active,
+      // Timing activations remain inert until every existing reservation batch
+      // has been reconciled. A partial backfill can therefore never execute.
+      is_active: stageTimingActivation ? false : !!is_active,
     })
     .select()
     .single();
@@ -187,8 +220,89 @@ export async function POST(request: Request) {
 
   if (effectiveSteps && effectiveSteps.length > 0) {
     const err = await insertSteps(automation.id, effectiveSteps);
-    if (err) return NextResponse.json({ error: err }, { status: 500 });
+    if (err) {
+      try {
+        const cleanup = await rollbackCreatedAutomation(
+          admin,
+          automation.id,
+          accountId
+        );
+        return NextResponse.json(
+          {
+            error: 'Automation steps could not be saved.',
+            code: 'automation_creation_failed',
+            automation_id: cleanup === 'paused' ? automation.id : undefined,
+            automation_paused: cleanup === 'paused',
+          },
+          { status: 500 }
+        );
+      } catch (cleanupError) {
+        return NextResponse.json(
+          {
+            error:
+              cleanupError instanceof Error
+                ? cleanupError.message
+                : 'Automation creation cleanup failed.',
+            code: 'automation_cleanup_failed',
+          },
+          { status: 500 }
+        );
+      }
+    }
   }
 
-  return NextResponse.json({ automation }, { status: 201 });
+  let responseAutomation = automation;
+  if (stageTimingActivation) {
+    try {
+      await backfillPmsAutomationSchedules(automation.id, {
+        allowInactiveActivation: true,
+      });
+      const { data: activated, error: activationError } = await admin
+        .from('automations')
+        .update({ is_active: true })
+        .eq('id', automation.id)
+        .eq('account_id', accountId)
+        .eq('is_active', false)
+        .select()
+        .single();
+      if (activationError || !activated) {
+        throw new Error(
+          'The completed reservation schedule could not be activated.'
+        );
+      }
+      responseAutomation = activated;
+    } catch (error) {
+      try {
+        const cleanup = await rollbackCreatedAutomation(
+          admin,
+          automation.id,
+          accountId
+        );
+        return NextResponse.json(
+          {
+            error:
+              "We couldn't create the future reservation schedule. No automation was activated.",
+            detail: error instanceof Error ? error.message : undefined,
+            code: 'pms_schedule_creation_failed',
+            automation_id: cleanup === 'paused' ? automation.id : undefined,
+            automation_paused: cleanup === 'paused',
+          },
+          { status: 500 }
+        );
+      } catch (cleanupError) {
+        return NextResponse.json(
+          {
+            error:
+              cleanupError instanceof Error
+                ? cleanupError.message
+                : 'Automation creation cleanup failed.',
+            code: 'automation_cleanup_failed',
+          },
+          { status: 500 }
+        );
+      }
+    }
+  }
+
+  return NextResponse.json({ automation: responseAutomation }, { status: 201 });
 }

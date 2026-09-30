@@ -1122,7 +1122,8 @@
       "toasts": {
         "saved": "Automation saved",
         "created": "Automation created",
-        "saveFailed": "Save failed"
+        "saveFailed": "Save failed",
+        "schedulePaused": "We couldn't update the future reservation schedule. The automation has been paused to prevent incorrect actions. Review it and activate it again."
       },
       "tags": {
         "select": "Select a tag…",

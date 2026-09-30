@@ -26,6 +26,7 @@ export interface ReservationAutomationContext {
   currency: string | null;
   pms_integration_id: string;
   provider: string;
+  reservation_updated_at: string;
 }
 
 export class ReservationAutomationContextError extends Error {
@@ -55,7 +56,7 @@ export async function loadReservationAutomationContext(
   const { data: reservation, error: reservationError } = await db
     .from('pms_reservations')
     .select(
-      'id, account_id, pms_integration_id, pms_property_id, contact_id, external_reservation_id, reservation_code, status, provider_status, check_in, check_out, adults, children, occupancy_total, channel_code, channel_name, total_amount, currency'
+      'id, account_id, pms_integration_id, pms_property_id, contact_id, external_reservation_id, reservation_code, status, provider_status, check_in, check_out, adults, children, occupancy_total, channel_code, channel_name, total_amount, currency, updated_at'
     )
     .eq('id', reservationId)
     .eq('account_id', accountId)
@@ -137,6 +138,7 @@ export async function loadReservationAutomationContext(
     currency: reservation.currency as string | null,
     pms_integration_id: integration.id as string,
     provider: integration.provider as string,
+    reservation_updated_at: reservation.updated_at as string,
   };
 }
 

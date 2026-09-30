@@ -20,6 +20,41 @@ import {
   validatePmsPropertyTimezonesForActivation,
   validateWhatsAppConnectionForActivation,
 } from '@/lib/automations/validate';
+import {
+  backfillPmsAutomationSchedules,
+  cancelFuturePmsAutomationSchedules,
+} from '@/lib/automations/pms-schedule-backfill';
+import { isPmsScheduledAutomationTrigger } from '@/lib/automations/pms-trigger-schema';
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function ensureAutomationPaused(
+  admin: ReturnType<typeof supabaseAdmin>,
+  automationId: string,
+  accountId: string
+): Promise<void> {
+  const { data, error } = await admin
+    .from('automations')
+    .update({ is_active: false })
+    .eq('id', automationId)
+    .eq('account_id', accountId)
+    .select('id, is_active')
+    .maybeSingle();
+  if (error || !data || data.is_active !== false) {
+    throw new Error(
+      'The automation schedule update failed and its paused state could not be verified.'
+    );
+  }
+}
 
 export async function GET(
   _request: Request,
@@ -174,6 +209,26 @@ export async function PATCH(
     }
   }
 
+  const nextTriggerType = (update.trigger_type ??
+    existing.trigger_type) as string;
+  const nextTriggerConfig = update.trigger_config ?? existing.trigger_config;
+  const wasActiveTiming =
+    existing.is_active &&
+    isPmsScheduledAutomationTrigger(existing.trigger_type as string);
+  const isActiveTiming =
+    willBeActive && isPmsScheduledAutomationTrigger(nextTriggerType);
+  const timingDefinitionChanged =
+    existing.trigger_type !== nextTriggerType ||
+    stableJson(existing.trigger_config) !== stableJson(nextTriggerConfig);
+  const stageTimingRebuild =
+    isActiveTiming && (!wasActiveTiming || timingDefinitionChanged);
+
+  if (stageTimingRebuild) {
+    // Keep workers and concurrent webhook scheduling behind a hard inactive
+    // boundary until cancellation and every backfill batch have succeeded.
+    update.is_active = false;
+  }
+
   if (Object.keys(update).length > 0) {
     const { error: updErr } = await admin
       .from('automations')
@@ -186,7 +241,102 @@ export async function PATCH(
 
   if (Array.isArray(body.steps)) {
     const err = await replaceSteps(id, body.steps as BuilderStepInput[]);
-    if (err) return NextResponse.json({ error: err }, { status: 500 });
+    if (err) {
+      if (stageTimingRebuild) {
+        try {
+          await ensureAutomationPaused(admin, id, existing.account_id);
+        } catch (pauseError) {
+          return NextResponse.json(
+            {
+              error:
+                pauseError instanceof Error
+                  ? pauseError.message
+                  : 'The automation could not be safely paused.',
+              code: 'pms_schedule_pause_unverified',
+              automation_paused: false,
+            },
+            { status: 500 }
+          );
+        }
+        return NextResponse.json(
+          {
+            error:
+              "We couldn't update the future reservation schedule. The automation has been paused to prevent incorrect actions. Review it and activate it again.",
+            detail: err,
+            code: 'pms_schedule_update_failed',
+            automation_paused: true,
+          },
+          { status: 500 }
+        );
+      }
+      return NextResponse.json({ error: err }, { status: 500 });
+    }
+  }
+
+  try {
+    if (wasActiveTiming && (!isActiveTiming || timingDefinitionChanged)) {
+      await cancelFuturePmsAutomationSchedules({
+        automationId: id,
+        accountId: existing.account_id,
+        reason: isActiveTiming
+          ? 'Automation timing configuration changed.'
+          : 'Automation was deactivated or changed trigger type.',
+      });
+    }
+    if (stageTimingRebuild) {
+      await backfillPmsAutomationSchedules(id, {
+        allowInactiveActivation: true,
+      });
+      const { data: activated, error: activationError } = await admin
+        .from('automations')
+        .update({ is_active: true })
+        .eq('id', id)
+        .eq('account_id', existing.account_id)
+        .eq('is_active', false)
+        .select('id, is_active')
+        .maybeSingle();
+      if (activationError || !activated || activated.is_active !== true) {
+        throw new Error(
+          'The completed reservation schedule could not be activated.'
+        );
+      }
+    }
+  } catch (error) {
+    // A multi-batch backfill can fail after writing an earlier batch. Keep
+    // execution safe and make the next explicit activation retry the full
+    // idempotent backfill instead of leaving a partially scheduled active
+    // automation.
+    const mustPause = stageTimingRebuild || !willBeActive;
+    if (mustPause) {
+      try {
+        await ensureAutomationPaused(admin, id, existing.account_id);
+      } catch (pauseError) {
+        return NextResponse.json(
+          {
+            error:
+              pauseError instanceof Error
+                ? pauseError.message
+                : 'The automation could not be safely paused.',
+            code: 'pms_schedule_pause_unverified',
+            automation_paused: false,
+          },
+          { status: 500 }
+        );
+      }
+    }
+    return NextResponse.json(
+      {
+        error: mustPause
+          ? "We couldn't update the future reservation schedule. The automation has been paused to prevent incorrect actions. Review it and activate it again."
+          : error instanceof Error
+            ? error.message
+            : 'PMS schedule lifecycle update failed.',
+        detail: error instanceof Error ? error.message : undefined,
+        code: 'pms_schedule_update_failed',
+        automation_paused: mustPause,
+      },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ ok: true });

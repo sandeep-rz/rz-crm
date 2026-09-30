@@ -32,6 +32,7 @@ const reservation: ReservationAutomationContext = {
   currency: 'INR',
   pms_integration_id: 'i1',
   provider: 'pms',
+  reservation_updated_at: '2026-09-28T11:00:00.000Z',
 };
 const job: AutomationTriggerJobClaim = {
   id: 'j1',
@@ -115,10 +116,47 @@ describe('PMS automation job worker', () => {
     expect(dispatch).toHaveBeenCalledWith(
       'auto1',
       expect.objectContaining({ contactId: 'c1' }),
-      { triggerJobId: 'j1', attemptCount: 1 }
+      {
+        triggerJobId: 'j1',
+        attemptCount: 1,
+        expectedReservationUpdatedAt: '2026-09-28T11:00:00.000Z',
+      }
     );
     expect(store.result).toBe('completed');
   });
+
+  it.each([
+    'cancellation',
+    'check-in date update',
+    'other canonical metadata update',
+  ])(
+    'suppresses without retry when the final gate detects a %s race',
+    async () => {
+      const store = new MemoryStore();
+      const dispatch = vi.fn().mockResolvedValue({
+        logId: null,
+        status: 'suppressed',
+        errorMessage: null,
+        disposition: 'reservation_changed',
+      });
+
+      expect(
+        await processPmsAutomationJob(job, {
+          store,
+          // This is the version/context the worker validated. The mocked gate
+          // represents the canonical row changing immediately afterwards.
+          loadContext: async () => reservation,
+          dispatch,
+        })
+      ).toBe('suppressed');
+
+      expect(store.result).toBe(
+        'suppressed:Reservation changed after eligibility validation.'
+      );
+      expect(store.failures).toHaveLength(0);
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('suppresses inactive automations and cancelled non-cancellation jobs', async () => {
     const inactive = new MemoryStore();
@@ -141,6 +179,25 @@ describe('PMS automation job worker', () => {
         }),
       })
     ).toBe('suppressed');
+  });
+
+  it('suppresses a claimed job when the engine re-read observes deactivation', async () => {
+    const store = new MemoryStore();
+    const dispatch = vi.fn().mockResolvedValue({
+      logId: null,
+      status: 'suppressed',
+      errorMessage: null,
+      disposition: 'ineligible',
+    });
+    expect(
+      await processPmsAutomationJob(job, {
+        store,
+        loadContext: async () => reservation,
+        dispatch,
+      })
+    ).toBe('suppressed');
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(store.result).toContain('suppressed:');
   });
 
   it('records retryable execution failures and terminal relationship failures', async () => {

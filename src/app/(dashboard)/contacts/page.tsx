@@ -58,6 +58,7 @@ import { useCan } from '@/hooks/use-can';
 import { useAuth } from '@/hooks/use-auth';
 import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
+import { useSearchParams } from 'next/navigation';
 
 const PAGE_SIZE = 25;
 
@@ -71,6 +72,8 @@ export default function ContactsPage() {
   const canEdit = useCan('send-messages');
   const canEditSettings = useCan('edit-settings');
   const { accountId } = useAuth();
+  const searchParams = useSearchParams();
+  const linkedContactHandled = useRef<string | null>(null);
 
   const [contacts, setContacts] = useState<ContactWithTags[]>([]);
   const [loading, setLoading] = useState(true);
@@ -251,6 +254,14 @@ export default function ContactsPage() {
     setDetailContactId(contactId);
     setDetailOpen(true);
   }
+
+  useEffect(() => {
+    const linkedContactId = searchParams.get('contact');
+    if (!linkedContactId || linkedContactHandled.current === linkedContactId) return;
+    linkedContactHandled.current = linkedContactId;
+    // URL state is an external navigation source; mirror it into the existing sheet.
+    openDetail(linkedContactId);
+  }, [searchParams]);
 
   function confirmDelete(contact: Contact) {
     setDeleteTarget(contact);

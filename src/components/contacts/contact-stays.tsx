@@ -28,6 +28,7 @@ import {
   type StayPresentationStatus,
 } from '@/lib/contacts/pms-stays';
 import { cn } from '@/lib/utils';
+import { bookingTotalsByCurrency } from '@/lib/reservations';
 
 export interface StayGuest {
   name: string | null;
@@ -90,6 +91,15 @@ export function ContactStaySummary({
     .filter((stay) => stay.timing !== 'cancelled' && stay.checkIn)
     .map((stay) => stay.checkIn as string)
     .sort()[0];
+  const lastStay = stays
+    .filter((stay) => stay.timing === 'past' && stay.checkOut)
+    .sort((a, b) => (b.checkOut ?? '').localeCompare(a.checkOut ?? ''))[0];
+  const nextStay = stays
+    .filter((stay) => stay.timing === 'upcoming' && stay.checkIn)
+    .sort((a, b) => (a.checkIn ?? '').localeCompare(b.checkIn ?? ''))[0];
+  const totals = [...bookingTotalsByCurrency(stays)].map(([currency, amount]) =>
+    formatStayTotal(amount, currency, locale)
+  );
 
   return (
     <section aria-labelledby="stay-summary-title" className="space-y-3.5">
@@ -119,6 +129,13 @@ export function ContactStaySummary({
         </div>
       </div>
 
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <SummaryMetric label={t('staysTab.totalStays')} value={String(stays.filter((stay) => stay.timing !== 'cancelled').length)} />
+        <SummaryMetric label={t('staysTab.nextStay')} value={nextStay?.checkIn ? formatStayDateShort(nextStay.checkIn, locale) : '—'} />
+        <SummaryMetric label={t('staysTab.lastStay')} value={lastStay?.checkOut ? formatStayDateShort(lastStay.checkOut, locale) : '—'} />
+        <SummaryMetric label={t('staysTab.bookingValue')} value={totals.length ? totals.join(' · ') : '—'} />
+      </dl>
+
       {relevant && (
         <StayRow
           stay={relevant}
@@ -140,6 +157,10 @@ export function ContactStaySummary({
       </Button>
     </section>
   );
+}
+
+function SummaryMetric({ label, value }: { label: string; value: string }) {
+  return <div className="bg-muted/45 rounded-lg px-3 py-2"><dt className="text-muted-foreground text-[11px]">{label}</dt><dd className="mt-0.5 truncate text-sm font-medium" title={value}>{value}</dd></div>;
 }
 
 export function ContactStays({

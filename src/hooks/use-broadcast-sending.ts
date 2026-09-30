@@ -6,6 +6,11 @@ import { useAuth } from '@/hooks/use-auth';
 import { BATCH_SEND_ATTEMPTS, batchRetryDelayMs } from '@/lib/broadcast-retry';
 import { normalizeKey } from '@/lib/contacts/dedupe';
 import { Contact, MessageTemplate } from '@/types';
+import {
+  frozenTemplateParams,
+  type BroadcastVariableMappings,
+  type LegacyBroadcastVariableMapping,
+} from '@/lib/broadcast-message-variables';
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
@@ -31,16 +36,13 @@ export interface AudienceConfig {
  * contact_custom_values.value row keyed by the custom_fields.id stored
  * in `value`.
  */
-export type VariableMapping =
-  | { type: 'static'; value: string }
-  | { type: 'field'; value: string }
-  | { type: 'custom_field'; value: string };
+export type VariableMapping = LegacyBroadcastVariableMapping;
 
 interface BroadcastPayload {
   name: string;
   template: MessageTemplate;
   audience: AudienceConfig;
-  variables: Record<string, VariableMapping>;
+  variables: BroadcastVariableMappings;
   /**
    * Media URL for an IMAGE/VIDEO/DOCUMENT header. Required at send
    * time for media-header templates — Meta rejects the send without
@@ -82,6 +84,21 @@ interface BroadcastApiResult {
   status: 'sent' | 'failed';
   whatsapp_message_id?: string;
   error?: string;
+}
+
+interface SemanticResolutionResult {
+  contact_id: string;
+  success: boolean;
+  message_params?: Record<string, unknown> | null;
+  error?: string;
+}
+
+interface RecipientInsertRow extends Record<string, unknown> {
+  broadcast_id: string;
+  contact_id: string;
+  status: 'pending' | 'failed';
+  template_params: unknown;
+  error_message: string | null;
 }
 
 /** contactId → (customFieldId → value). */
@@ -161,12 +178,18 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   const [progress, setProgress] = useState(0);
 
   async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
+    if (!accountId) {
+      throw new Error('Your profile is not linked to an account.');
+    }
     const supabase = createClient();
 
     let contacts: Contact[] = [];
 
     if (audience.type === 'all') {
-      const { data, error } = await supabase.from('contacts').select('*');
+      const { data, error } = await supabase
+        .from('contacts')
+        .select('*')
+        .eq('account_id', accountId);
       if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
       contacts = data ?? [];
     } else if (
@@ -174,10 +197,20 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       audience.tagIds &&
       audience.tagIds.length > 0
     ) {
+      const { data: ownedTags, error: ownedTagError } = await supabase
+        .from('tags')
+        .select('id')
+        .eq('account_id', accountId)
+        .in('id', audience.tagIds);
+      if (ownedTagError) {
+        throw new Error(`Failed to validate tags: ${ownedTagError.message}`);
+      }
+      const ownedTagIds = (ownedTags ?? []).map((tag) => tag.id);
+      if (ownedTagIds.length === 0) return [];
       const { data: contactTags, error: tagError } = await supabase
         .from('contact_tags')
         .select('contact_id')
-        .in('tag_id', audience.tagIds);
+        .in('tag_id', ownedTagIds);
 
       if (tagError)
         throw new Error(`Failed to fetch contact tags: ${tagError.message}`);
@@ -189,6 +222,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         const { data, error } = await supabase
           .from('contacts')
           .select('*')
+          .eq('account_id', accountId)
           .in('id', uniqueContactIds);
         if (error)
           throw new Error(`Failed to fetch contacts: ${error.message}`);
@@ -206,10 +240,17 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     // Apply exclude tags (works across all contact-derived audience
     // types). CSV contacts are synthetic so exclusion doesn't apply.
     if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
+      const { data: ownedExcludeTags } = await supabase
+        .from('tags')
+        .select('id')
+        .eq('account_id', accountId)
+        .in('id', audience.excludeTagIds);
+      const ownedExcludeTagIds = (ownedExcludeTags ?? []).map((tag) => tag.id);
+      if (ownedExcludeTagIds.length === 0) return contacts;
       const { data: excludeRows } = await supabase
         .from('contact_tags')
         .select('contact_id')
-        .in('tag_id', audience.excludeTagIds);
+        .in('tag_id', ownedExcludeTagIds);
       const excludedIds = new Set((excludeRows ?? []).map((r) => r.contact_id));
       contacts = contacts.filter((c) => !excludedIds.has(c.id));
     }
@@ -319,6 +360,17 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
   ): Promise<Contact[]> {
     const { fieldId, operator, value } = filter;
 
+    const { data: ownedField, error: fieldError } = await supabase
+      .from('custom_fields')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('id', fieldId)
+      .maybeSingle();
+    if (fieldError) {
+      throw new Error(`Custom-field validation failed: ${fieldError.message}`);
+    }
+    if (!ownedField) return [];
+
     // Build the WHERE clause for the operator. PostgREST supports
     // eq/neq/ilike via the query builder — use ilike with wildcards
     // for "contains" so the match is case-insensitive.
@@ -342,6 +394,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     const { data, error } = await supabase
       .from('contacts')
       .select('*')
+      .eq('account_id', accountId)
       .in('id', contactIds);
     if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
     return data ?? [];
@@ -378,6 +431,37 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       if (contacts.length === 0) {
         throw new Error('No contacts found for this audience.');
+      }
+
+      // New broadcasts resolve through the shared semantic resolver on the
+      // server. The route derives account_id from the authenticated session
+      // and builds context from each exact persisted contact id.
+      const semanticByContact = new Map<string, SemanticResolutionResult>();
+      if (Array.isArray(payload.variables)) {
+        const response = await fetch(
+          '/api/whatsapp/broadcast/resolve-variables',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              template_name: payload.template.name,
+              template_language: payload.template.language ?? 'en_US',
+              whatsapp_config_id: payload.whatsappConfigId,
+              contact_ids: contacts.map((contact) => contact.id),
+              mappings: payload.variables,
+            }),
+          }
+        );
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(
+            result.error ?? 'Template variable resolution failed.'
+          );
+        }
+        for (const item of (result.results ??
+          []) as SemanticResolutionResult[]) {
+          semanticByContact.set(item.contact_id, item);
+        }
       }
 
       // ── Step 2: Create broadcast row ──────────────────────────────
@@ -424,26 +508,61 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       // column. Resolving once here also means the resume sends exactly
       // what this pass would have.
       setProgress(20);
-      const customValueIndex = await fetchCustomValueIndex(
-        supabase,
-        contacts.map((c) => c.id)
-      );
-      const paramsByContact = new Map(
-        contacts.map((contact) => [
-          contact.id,
-          resolveVariables(
-            payload.variables,
-            contact,
-            customValueIndex.get(contact.id)
-          ),
-        ])
-      );
-      const recipientRows = contacts.map((contact) => ({
-        broadcast_id: broadcast.id,
-        contact_id: contact.id,
-        status: 'pending' as const,
-        template_params: paramsByContact.get(contact.id) ?? [],
-      }));
+      const headerType = payload.template.header_type;
+      const isMediaHeader =
+        headerType === 'image' ||
+        headerType === 'video' ||
+        headerType === 'document';
+      const headerMediaUrl = payload.headerMediaUrl?.trim();
+      let recipientRows: RecipientInsertRow[];
+      if (Array.isArray(payload.variables)) {
+        recipientRows = contacts.map((contact) => {
+          const resolved = semanticByContact.get(contact.id);
+          const messageParams = {
+            ...(resolved?.message_params ?? { body: [] }),
+            ...(isMediaHeader && headerMediaUrl ? { headerMediaUrl } : {}),
+          };
+          return {
+            broadcast_id: broadcast.id,
+            contact_id: contact.id,
+            status: resolved?.success
+              ? ('pending' as const)
+              : ('failed' as const),
+            template_params: messageParams,
+            error_message: resolved?.success
+              ? null
+              : (resolved?.error ?? 'Template variable resolution failed'),
+          };
+        });
+      } else {
+        // Compatibility boundary for historical positional mappings. Their
+        // resolved body arrays retain the exact pre-Phase-7 representation.
+        const legacyVariables = payload.variables as Record<
+          string,
+          LegacyBroadcastVariableMapping
+        >;
+        const customValueIndex = await fetchCustomValueIndex(
+          supabase,
+          contacts.map((contact) => contact.id)
+        );
+        const paramsByContact = new Map(
+          contacts.map((contact) => [
+            contact.id,
+            resolveVariables(
+              legacyVariables,
+              contact,
+              customValueIndex.get(contact.id)
+            ),
+          ])
+        );
+        recipientRows = contacts.map((contact) => ({
+          broadcast_id: broadcast.id,
+          contact_id: contact.id,
+          status: 'pending' as const,
+          template_params: paramsByContact.get(contact.id) ?? [],
+          error_message: null,
+        }));
+      }
 
       for (let i = 0; i < recipientRows.length; i += INSERT_BATCH_SIZE) {
         const batch = recipientRows.slice(i, i + INSERT_BATCH_SIZE);
@@ -480,34 +599,29 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         throw new Error('Failed to fetch broadcast recipients');
       }
 
-      let failedCount = 0;
+      const pendingRecipients = recipients.filter(
+        (recipient) => recipient.status === 'pending'
+      );
+      let failedCount = recipients.length - pendingRecipients.length;
       const totalRecipients = recipients.length;
 
-      // Media-header templates (image/video/document) require a media
-      // URL on every send. Collected in the personalize step and applied
-      // to all recipients; falls back to the template's stored URL on the
-      // server when omitted.
-      const headerType = payload.template.header_type;
-      const isMediaHeader =
-        headerType === 'image' ||
-        headerType === 'video' ||
-        headerType === 'document';
-      const headerMediaUrl = payload.headerMediaUrl?.trim();
-      const messageParams =
-        isMediaHeader && headerMediaUrl ? { headerMediaUrl } : undefined;
-
-      for (let i = 0; i < recipients.length; i += SEND_BATCH_SIZE) {
-        const batch = recipients.slice(i, i + SEND_BATCH_SIZE);
+      for (let i = 0; i < pendingRecipients.length; i += SEND_BATCH_SIZE) {
+        const batch = pendingRecipients.slice(i, i + SEND_BATCH_SIZE);
 
         const apiRecipients = batch
           .filter((r) => r.contact?.phone)
-          .map((r) => ({
-            phone: r.contact!.phone as string,
-            // Read back off the row rather than re-resolved, so this
-            // pass and any later resume send identical params.
-            params: Array.isArray(r.template_params) ? r.template_params : [],
-            ...(messageParams ? { messageParams } : {}),
-          }));
+          .map((r) => {
+            const frozen = frozenTemplateParams(r.template_params);
+            return {
+              phone: r.contact!.phone as string,
+              // Read back off the row rather than re-resolved, so this
+              // pass and any later resume send identical params.
+              ...frozen,
+              ...(!frozen.messageParams && isMediaHeader && headerMediaUrl
+                ? { messageParams: { headerMediaUrl } }
+                : {}),
+            };
+          });
 
         if (apiRecipients.length === 0) continue;
 
@@ -601,7 +715,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           30 + Math.round(((i + batch.length) / totalRecipients) * 60);
         setProgress(progressPct);
 
-        if (i + SEND_BATCH_SIZE < recipients.length) {
+        if (i + SEND_BATCH_SIZE < pendingRecipients.length) {
           await sleep(SEND_BATCH_DELAY_MS);
         }
       }

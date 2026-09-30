@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useAuth } from '@/hooks/use-auth';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
 type CustomFieldOperator = 'is' | 'is_not' | 'contains';
@@ -50,6 +51,7 @@ export function Step2SelectAudience({
   onBack,
 }: Step2Props) {
   const t = useTranslations('Broadcasts.wizard');
+  const { accountId } = useAuth();
 
   const OPERATOR_OPTIONS = useMemo<
     { value: CustomFieldOperator; label: string }[]
@@ -114,26 +116,42 @@ export function Step2SelectAudience({
   // Only meaningful while the rows it produced are still in play —
   // picking another audience type wipes `csvContacts`.
   const csvFileName = csvCount > 0 ? pickedCsvName : null;
+  const activeTagIds = useMemo(
+    () => new Set(tags.map((tag) => tag.id)),
+    [tags]
+  );
+  const activeCustomFieldIds = useMemo(
+    () => new Set(customFields.map((field) => field.id)),
+    [customFields]
+  );
 
   // Tags are used both by the primary "Filter by Tags" audience type
   // AND by the exclude-list below — so always load once on mount.
   useEffect(() => {
     async function fetchTags() {
+      if (!accountId) {
+        setTags([]);
+        return;
+      }
       setLoadingTags(true);
       try {
         const supabase = createClient();
-        const { data } = await supabase.from('tags').select('*').order('name');
+        const { data } = await supabase
+          .from('tags')
+          .select('*')
+          .eq('account_id', accountId)
+          .order('name');
         setTags(data ?? []);
       } finally {
         setLoadingTags(false);
       }
     }
     fetchTags();
-  }, []);
+  }, [accountId]);
 
   // Lazy-load custom fields only when that audience type is active.
   useEffect(() => {
-    if (audience.type !== 'custom_field') return;
+    if (audience.type !== 'custom_field' || !accountId) return;
     async function fetchFields() {
       setLoadingFields(true);
       try {
@@ -141,6 +159,7 @@ export function Step2SelectAudience({
         const { data } = await supabase
           .from('custom_fields')
           .select('*')
+          .eq('account_id', accountId)
           .order('field_name');
         setCustomFields(data ?? []);
       } finally {
@@ -148,12 +167,27 @@ export function Step2SelectAudience({
       }
     }
     fetchFields();
-  }, [audience.type]);
+  }, [accountId, audience.type]);
 
   const fetchEstimatedCount = useCallback(async () => {
     setLoadingCount(true);
     try {
+      if (!accountId) {
+        setEstimatedCount(null);
+        return;
+      }
       const supabase = createClient();
+
+      const scopeContactIds = async (ids: Iterable<string>) => {
+        const unique = [...new Set(ids)];
+        if (unique.length === 0) return new Set<string>();
+        const { data } = await supabase
+          .from('contacts')
+          .select('id')
+          .eq('account_id', accountId)
+          .in('id', unique);
+        return new Set((data ?? []).map((row) => row.id));
+      };
 
       // Base query — produces the superset before exclude is applied.
       let baseIds: Set<string> | null = null; // null means "all contacts"
@@ -165,17 +199,28 @@ export function Step2SelectAudience({
         audience.tagIds &&
         audience.tagIds.length > 0
       ) {
+        const tagIds = audience.tagIds.filter((id) => activeTagIds.has(id));
+        if (tagIds.length === 0) {
+          setEstimatedCount(0);
+          return;
+        }
         const { data } = await supabase
           .from('contact_tags')
           .select('contact_id')
-          .in('tag_id', audience.tagIds);
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
+          .in('tag_id', tagIds);
+        baseIds = await scopeContactIds(
+          (data ?? []).map((row) => row.contact_id)
+        );
       } else if (
         audience.type === 'custom_field' &&
         audience.customField?.fieldId &&
         audience.customField.value
       ) {
         const { fieldId, operator, value } = audience.customField;
+        if (!activeCustomFieldIds.has(fieldId)) {
+          setEstimatedCount(0);
+          return;
+        }
         let q = supabase
           .from('contact_custom_values')
           .select('contact_id')
@@ -184,7 +229,9 @@ export function Step2SelectAudience({
         else if (operator === 'is_not') q = q.neq('value', value);
         else q = q.ilike('value', `%${value}%`);
         const { data } = await q;
-        baseIds = new Set((data ?? []).map((r) => r.contact_id));
+        baseIds = await scopeContactIds(
+          (data ?? []).map((row) => row.contact_id)
+        );
       } else if (
         audience.type === 'csv' &&
         audience.csvContacts &&
@@ -201,11 +248,20 @@ export function Step2SelectAudience({
       // Apply exclude tags
       let excludeSet: Set<string> | null = null;
       if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-        const { data: excludeRows } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', audience.excludeTagIds);
-        excludeSet = new Set((excludeRows ?? []).map((r) => r.contact_id));
+        const tagIds = audience.excludeTagIds.filter((id) =>
+          activeTagIds.has(id)
+        );
+        if (tagIds.length === 0) {
+          excludeSet = new Set();
+        } else {
+          const { data: excludeRows } = await supabase
+            .from('contact_tags')
+            .select('contact_id')
+            .in('tag_id', tagIds);
+          excludeSet = await scopeContactIds(
+            (excludeRows ?? []).map((row) => row.contact_id)
+          );
+        }
       }
 
       if (baseIds) {
@@ -215,7 +271,8 @@ export function Step2SelectAudience({
         // "All" — fetch the total, then subtract exclude set if any.
         const { count } = await supabase
           .from('contacts')
-          .select('*', { count: 'exact', head: true });
+          .select('*', { count: 'exact', head: true })
+          .eq('account_id', accountId);
         const total = count ?? 0;
         setEstimatedCount(
           excludeSet ? Math.max(0, total - excludeSet.size) : total
@@ -230,6 +287,9 @@ export function Step2SelectAudience({
     audience.customField,
     audience.csvContacts,
     audience.excludeTagIds,
+    accountId,
+    activeTagIds,
+    activeCustomFieldIds,
   ]);
 
   useEffect(() => {

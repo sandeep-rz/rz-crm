@@ -238,6 +238,29 @@ describe('planBroadcastResume', () => {
     expect(unsendable).toBe(0);
   });
 
+  it('preserves structured semantic params for text-header resume sends', async () => {
+    const { plan } = await planBroadcastResume(
+      planDb({
+        broadcast: BROADCAST,
+        config: CONFIG,
+        recipients: [
+          recipient('r1', '+15551234567', {
+            body: ['Ada'],
+            headerText: 'Welcome',
+          }),
+        ],
+      }),
+      'acct-1',
+      'bc-1',
+      'pending'
+    );
+
+    expect(plan.planned[0]).toMatchObject({
+      params: ['Ada'],
+      messageParams: { body: ['Ada'], headerText: 'Welcome' },
+    });
+  });
+
   it('scopes to failed rows when retrying, and to both for "all"', async () => {
     const failedWrites: PlanWrites = {};
     await planBroadcastResume(

@@ -15,6 +15,7 @@ import { Check } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
+import type { MessageVariableMapping } from '@/lib/message-variables';
 
 const steps = [
   { label: 'template', key: 'template' },
@@ -44,9 +45,7 @@ export default function NewBroadcastPage() {
     csvContacts?: { phone: string; name?: string }[];
     excludeTagIds?: string[];
   }>({ type: 'all' });
-  const [variables, setVariables] = useState<
-    Record<string, { type: 'static' | 'field' | 'custom_field'; value: string }>
-  >({});
+  const [variables, setVariables] = useState<MessageVariableMapping[]>([]);
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
   const [connections, setConnections] = useState<
@@ -123,6 +122,26 @@ export default function NewBroadcastPage() {
     }
     if (!accountId) {
       toast.error(t('toastNotLinked'));
+      return;
+    }
+
+    const validationResponse = await fetch(
+      '/api/whatsapp/broadcast/resolve-variables',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          template_name: template.name,
+          template_language: template.language ?? 'en_US',
+          whatsapp_config_id: whatsappConfigId,
+          mappings: variables,
+          validate_only: true,
+        }),
+      }
+    );
+    if (!validationResponse.ok) {
+      const result = await validationResponse.json().catch(() => ({}));
+      toast.error(result.error ?? 'Template variable mappings are invalid.');
       return;
     }
 
@@ -253,7 +272,11 @@ export default function NewBroadcastPage() {
           {currentStep === 0 && (
             <Step1ChooseTemplate
               selectedTemplate={template}
-              onSelect={setTemplate}
+              onSelect={(selected) => {
+                setTemplate(selected);
+                setVariables([]);
+                setHeaderMediaUrl('');
+              }}
               onNext={() => setCurrentStep(1)}
               onBack={() => router.push('/broadcasts')}
               whatsappConfigId={whatsappConfigId}

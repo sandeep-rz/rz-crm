@@ -25,6 +25,7 @@ import {
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
+import { frozenTemplateParams } from '@/lib/broadcast-message-variables';
 
 /** Which recipients a resume pass picks up. */
 export type ResumeScope = 'pending' | 'failed' | 'all';
@@ -246,13 +247,17 @@ export async function planBroadcastResume(
     phoneNumberId: config.phoneNumberId,
     accessToken: config.accessToken,
     templateRow: resolvedTemplate.row,
-    planned: slice.map((row) => ({
-      recipientRowId: row.id,
-      phone: sanitizePhoneForMeta(contactPhone(row) ?? ''),
-      params: Array.isArray(row.template_params)
-        ? row.template_params.filter((p): p is string => typeof p === 'string')
-        : [],
-    })),
+    planned: slice.map((row) => {
+      const frozen = frozenTemplateParams(row.template_params);
+      return {
+        recipientRowId: row.id,
+        phone: sanitizePhoneForMeta(contactPhone(row) ?? ''),
+        params: frozen.params ?? frozen.messageParams?.body ?? [],
+        ...(frozen.messageParams
+          ? { messageParams: frozen.messageParams }
+          : {}),
+      };
+    }),
     rejected: 0,
   };
 

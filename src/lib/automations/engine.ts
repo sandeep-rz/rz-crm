@@ -20,7 +20,7 @@ import type {
   AssignConversationStepConfig,
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
-import { addContactTagIfAbsent } from '@/lib/contacts/tag-write'
+import { addContactTagIfAbsent, removeContactTag } from '@/lib/contacts/tag-write'
 import { MAX_TAG_CHAIN_DEPTH, getTagChainDepth } from '@/lib/contacts/tag-chain'
 import { engineSendText, engineSendTemplate, engineSendInteractive } from './meta-send'
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive'
@@ -217,8 +217,7 @@ export async function resumePendingExecution(pending: {
 
   if (error) {
     console.error('[automations] resume: automation lookup failed', pending.automation_id, error)
-    await markPending(pending.id, 'failed')
-    return
+    throw new Error('automation lookup failed while resuming continuation')
   }
   if (!automation) {
     // Deactivation is a hard boundary for delayed continuations too. Treat a
@@ -227,23 +226,37 @@ export async function resumePendingExecution(pending: {
     return
   }
 
-  try {
-    await executeStepsFrom({
-      automation: automation as Automation,
-      contactId: pending.contact_id,
-      context: pending.context ?? {},
-      parentStepId: pending.parent_step_id,
-      branch: pending.branch,
-      startPosition: pending.next_step_position,
-      logId: pending.log_id,
-      triggerEvent: 'resumed_wait',
-      triggerJobExecution: false,
-    })
-    await markPending(pending.id, 'done')
-  } catch (err) {
-    console.error('[automations] resume failed:', err)
-    await markPending(pending.id, 'failed')
+  if (!pending.log_id) {
+    throw new Error('wait continuation is missing its automation log identity')
   }
+  const { data: log, error: logError } = await db
+    .from('automation_logs')
+    .select('completed_wait_continuation_ids')
+    .eq('id', pending.log_id)
+    .eq('account_id', pending.account_id)
+    .eq('automation_id', pending.automation_id)
+    .maybeSingle()
+  if (logError) throw new Error('wait continuation completion lookup failed')
+  if (!log) throw new Error('wait continuation automation log is invalid')
+  const completedIds = (log.completed_wait_continuation_ids as string[] | null) ?? []
+  if (completedIds.includes(pending.id)) {
+    await markPending(pending.id, 'done')
+    return
+  }
+
+  await executeStepsFrom({
+    automation: automation as Automation,
+    contactId: pending.contact_id,
+    context: pending.context ?? {},
+    parentStepId: pending.parent_step_id,
+    branch: pending.branch,
+    startPosition: pending.next_step_position,
+    logId: pending.log_id,
+    triggerEvent: 'resumed_wait',
+    triggerJobExecution: false,
+    continuationId: pending.id,
+  })
+  await markPending(pending.id, 'done')
 }
 
 // ------------------------------------------------------------
@@ -382,6 +395,8 @@ interface ExecuteArgs {
   logId: string | null
   triggerEvent: string
   triggerJobExecution: boolean
+  /** Stable automation_pending_executions.id for a resumed Wait segment. */
+  continuationId?: string | null
 }
 
 async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
@@ -403,12 +418,13 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
 
   if (stepsErr) {
     await finalizeLog(args.logId, 'failed', stepsErr.message, args.triggerJobExecution)
-    return
+    throw new Error('wait continuation step lookup failed')
   }
   if (!steps || steps.length === 0) {
     if (args.parentStepId === null && args.logId) {
       await finalizeLog(args.logId, 'success', null, args.triggerJobExecution)
     }
+    await recordWaitContinuationCompleted(args)
     return
   }
 
@@ -444,6 +460,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
       })
       status = 'partial'
       await appendResults(args.logId, results, status, errorMessage, args.triggerJobExecution)
+      await recordWaitContinuationCompleted(args)
       return
     }
 
@@ -465,6 +482,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
           branch: taken ? 'yes' : 'no',
           startPosition: 0,
           logId: args.logId,
+          continuationId: null,
         })
         continue
       }
@@ -496,6 +514,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
     // Nested branch — just append results; parent scope decides final status.
     await appendResults(args.logId, results, null, errorMessage, args.triggerJobExecution)
   }
+  await recordWaitContinuationCompleted(args)
 }
 
 async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string> {
@@ -611,15 +630,13 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     }
 
     case 'remove_tag': {
-      // See add_tag: tenant scoping relies on the runAutomationsForTrigger
-      // ownership guard, since contact_tags carries no account_id.
       const cfg = step.step_config as TagStepConfig
       if (!args.contactId || !cfg.tag_id) throw new Error('remove_tag needs contact + tag_id')
-      await db
-        .from('contact_tags')
-        .delete()
-        .eq('contact_id', args.contactId)
-        .eq('tag_id', cfg.tag_id)
+      await removeContactTag(db, {
+        accountId: args.automation.account_id,
+        contactId: args.contactId,
+        tagId: cfg.tag_id,
+      })
       return `tag ${cfg.tag_id} removed`
     }
 
@@ -628,14 +645,20 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('assign_conversation needs a contact')
       let agentId = cfg.agent_id
       if (cfg.mode === 'round_robin') {
-        // profiles.account_id is only an active-workspace pointer;
-        // account_members is the membership source of truth.
-        const { data: memberships } = await db
+        const { data, error } = await db.rpc('claim_automation_round_robin_assignee', {
+          p_account_id: args.automation.account_id,
+        })
+        if (error) throw new Error('round-robin assignment failed')
+        agentId = data as string | undefined
+      } else if (agentId) {
+        const { data: membership, error } = await db
           .from('account_members')
           .select('user_id')
           .eq('account_id', args.automation.account_id)
-          .limit(1)
-        agentId = memberships?.[0]?.user_id
+          .eq('user_id', agentId)
+          .maybeSingle()
+        if (error) throw new Error('conversation assignee validation failed')
+        if (!membership) throw new Error('conversation assignee is not eligible')
       }
       if (!agentId) return 'no agent resolved'
       await db
@@ -701,6 +724,27 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'create_deal': {
       const cfg = step.step_config as CreateDealStepConfig
       if (!cfg.pipeline_id || !cfg.stage_id) throw new Error('create_deal needs pipeline + stage')
+      if (!args.contactId) throw new Error('create_deal needs a contact')
+      const [contactResult, pipelineResult, stageResult] = await Promise.all([
+        db.from('contacts').select('id')
+          .eq('id', args.contactId)
+          .eq('account_id', args.automation.account_id)
+          .maybeSingle(),
+        db.from('pipelines').select('id')
+          .eq('id', cfg.pipeline_id)
+          .eq('account_id', args.automation.account_id)
+          .maybeSingle(),
+        db.from('pipeline_stages').select('id')
+          .eq('id', cfg.stage_id)
+          .eq('pipeline_id', cfg.pipeline_id)
+          .maybeSingle(),
+      ])
+      if (contactResult.error || pipelineResult.error || stageResult.error) {
+        throw new Error('create_deal resource validation failed')
+      }
+      if (!contactResult.data || !pipelineResult.data || !stageResult.data) {
+        throw new Error('create_deal resources are not valid for this workspace')
+      }
       // Match the account's configured default currency rather than
       // the static `deals.currency` DB default — keeps automation-
       // created deals consistent with the one-currency-per-account
@@ -711,7 +755,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         .select('default_currency')
         .eq('id', args.automation.account_id)
         .maybeSingle()
-      await db.from('deals').insert({
+      const { error: insertError } = await db.from('deals').insert({
         // Tenancy + audit, same split as automation_logs above.
         account_id: args.automation.account_id,
         user_id: args.automation.user_id,
@@ -723,6 +767,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         currency: acct?.default_currency ?? 'USD',
         status: 'open',
       })
+      if (insertError) throw new Error('create_deal insert failed')
       return 'deal created'
     }
 
@@ -779,7 +824,19 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
  */
 async function resolveConversationId(args: ExecuteArgs): Promise<string> {
   const fromCtx = args.context.conversation_id
-  if (fromCtx) return fromCtx
+  if (fromCtx) {
+    if (!args.contactId) throw new Error('cannot validate conversation: no contact')
+    const { data, error } = await supabaseAdmin()
+      .from('conversations')
+      .select('id')
+      .eq('id', fromCtx)
+      .eq('account_id', args.automation.account_id)
+      .eq('contact_id', args.contactId)
+      .maybeSingle()
+    if (error) throw new Error('conversation ownership check failed')
+    if (!data) throw new Error('conversation is not valid for this workspace contact')
+    return data.id as string
+  }
   if (!args.contactId) throw new Error('cannot resolve conversation: no contact')
   const connection = await resolveWhatsAppConnection(supabaseAdmin(), {
     accountId: args.automation.account_id,
@@ -1038,9 +1095,32 @@ async function finalizeLog(
     .eq('id', logId)
 }
 
-async function markPending(id: string, status: 'done' | 'failed') {
-  await supabaseAdmin()
+async function recordWaitContinuationCompleted(args: ExecuteArgs): Promise<void> {
+  if (!args.continuationId) return
+  if (!args.logId) throw new Error('wait continuation is missing its automation log identity')
+  const { data, error } = await supabaseAdmin().rpc(
+    'complete_automation_wait_continuation',
+    {
+      p_log_id: args.logId,
+      p_pending_execution_id: args.continuationId,
+      p_account_id: args.automation.account_id,
+      p_automation_id: args.automation.id,
+    },
+  )
+  if (error || data !== true) {
+    throw new Error('wait continuation completion could not be recorded')
+  }
+}
+
+async function markPending(id: string, status: 'done') {
+  const { error } = await supabaseAdmin()
     .from('automation_pending_executions')
-    .update({ status })
+    .update({
+      status,
+      processing_started_at: null,
+      next_attempt_at: null,
+      last_error: null,
+    })
     .eq('id', id)
+  if (error) throw new Error(`cannot mark pending execution ${status}`)
 }

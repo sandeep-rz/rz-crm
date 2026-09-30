@@ -6,11 +6,23 @@ const h = vi.hoisted(() => ({
   state: {
     owned: null as { id: string } | null,
     ownedCustomField: null as { id: string } | null,
+    ownedPipeline: null as { id: string } | null,
+    ownedStage: null as { id: string } | null,
+    membership: null as { user_id: string } | null,
+    roundRobinAssignee: null as string | null,
+    ownedConversation: null as { id: string } | null,
+    ownedTag: null as { id: string } | null,
+    completedWaitIds: [] as string[],
+    completionRpcError: null as { message: string } | null,
+    rpcCalls: [] as { name: string; args: unknown }[],
+    metaSendCalls: [] as Record<string, unknown>[],
+    stepQueryFilters: [] as [string, string, unknown][],
     automations: [] as Record<string, unknown>[],
     steps: [] as Record<string, unknown>[],
     fromCalls: [] as string[],
     updateCalls: [] as { table: string; filters: [string, string, unknown][] }[],
     upsertCalls: [] as { table: string; payload: unknown }[],
+    insertCalls: [] as { table: string; payload: unknown }[],
     logInserts: [] as Record<string, unknown>[],
     logUpdates: [] as Record<string, unknown>[],
     whatsappConnection: {
@@ -45,6 +57,24 @@ vi.mock("./admin-client", () => {
       // ownership guard / condition read
       return { data: state.owned, error: null };
     }
+    if (table === "conversations" && type === "update") {
+      state.updateCalls.push({ table, filters: ops.filters });
+      return { data: null, error: null };
+    }
+    if (table === "conversations") return { data: state.ownedConversation, error: null };
+    if (table === "pipelines") return { data: state.ownedPipeline, error: null };
+    if (table === "pipeline_stages") return { data: state.ownedStage, error: null };
+    if (table === "account_members") return { data: state.membership, error: null };
+    if (table === "accounts") return { data: { default_currency: "INR" }, error: null };
+    if (table === "deals" && type === "insert") {
+      state.insertCalls.push({ table, payload: ops.payload });
+      return { data: null, error: null };
+    }
+    if (table === "tags") return { data: state.ownedTag, error: null };
+    if (table === "contact_tags" && type === "insert") {
+      state.insertCalls.push({ table, payload: ops.payload });
+      return { data: { id: "contact-tag-1" }, error: null };
+    }
     if (table === "custom_fields") {
       // account-scoped ownership lookup for a custom field definition
       return { data: state.ownedCustomField, error: null };
@@ -56,7 +86,10 @@ vi.mock("./admin-client", () => {
       }
       return { data: null, error: null };
     }
-    if (table === "automations") return { data: state.automations, error: null };
+    if (table === "automations") {
+      const byId = ops.filters.some(([kind, key]) => kind === "eq" && key === "id");
+      return { data: byId ? (state.automations[0] ?? null) : state.automations, error: null };
+    }
     if (table === "whatsapp_config") {
       return {
         data: state.whatsappConnection,
@@ -72,9 +105,23 @@ vi.mock("./admin-client", () => {
         state.logUpdates.push(ops.payload as Record<string, unknown>);
         return { data: null, error: null };
       }
-      return { data: { steps_executed: [], status: "success" }, error: null };
+      return {
+        data: {
+          steps_executed: [],
+          status: "success",
+          completed_wait_continuation_ids: state.completedWaitIds,
+        },
+        error: null,
+      };
     }
-    if (table === "automation_steps") return { data: state.steps, error: null };
+    if (table === "automation_steps") {
+      state.stepQueryFilters = [...ops.filters];
+      return { data: state.steps, error: null };
+    }
+    if (table === "automation_pending_executions" && type === "update") {
+      state.updateCalls.push({ table, filters: ops.filters });
+      return { data: null, error: null };
+    }
     return { data: null, error: null };
   }
 
@@ -92,8 +139,8 @@ vi.mock("./admin-client", () => {
       delete: () => ((ops.type = "delete"), b),
       upsert: (p: unknown) => ((ops.type = "upsert"), (ops.payload = p), b),
       eq: (k: string, v: unknown) => (ops.filters.push(["eq", k, v]), b),
-      gte: () => b,
-      is: () => b,
+      gte: (k: string, v: unknown) => (ops.filters.push(["gte", k, v]), b),
+      is: (k: string, v: unknown) => (ops.filters.push(["is", k, v]), b),
       order: () => b,
       limit: () => {
         if (table === "whatsapp_config") {
@@ -116,13 +163,30 @@ vi.mock("./admin-client", () => {
         state.fromCalls.push(t);
         return builder(t);
       },
-      rpc: () => Promise.resolve({ error: null }),
+      rpc: (name: string, args: unknown) => {
+        state.rpcCalls.push({ name, args });
+        if (name === "complete_automation_wait_continuation") {
+          return Promise.resolve({
+            data: state.completionRpcError ? null : true,
+            error: state.completionRpcError,
+          });
+        }
+        return Promise.resolve({
+          data: name === "claim_automation_round_robin_assignee"
+            ? state.roundRobinAssignee
+            : null,
+          error: null,
+        });
+      },
     }),
   };
 });
 
 vi.mock("./meta-send", () => ({
-  engineSendText: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
+  engineSendText: vi.fn(async (args: Record<string, unknown>) => {
+    h.state.metaSendCalls.push(args);
+    return { whatsapp_message_id: "m1" };
+  }),
   engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
   engineSendInteractive: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
 }));
@@ -131,7 +195,7 @@ vi.mock("@/lib/whatsapp/encryption", () => ({
   decrypt: (value: string) => value,
 }));
 
-import { runAutomationsForTrigger, triggerMatches } from "./engine";
+import { resumePendingExecution, runAutomationsForTrigger, triggerMatches } from "./engine";
 import type { Automation, KeywordMatchTriggerConfig } from "@/types";
 
 const ACCOUNT = "acct-1";
@@ -139,11 +203,23 @@ const ACCOUNT = "acct-1";
 beforeEach(() => {
   h.state.owned = null;
   h.state.ownedCustomField = null;
+  h.state.ownedPipeline = null;
+  h.state.ownedStage = null;
+  h.state.membership = null;
+  h.state.roundRobinAssignee = null;
+  h.state.ownedConversation = null;
+  h.state.ownedTag = null;
+  h.state.completedWaitIds = [];
+  h.state.completionRpcError = null;
+  h.state.rpcCalls = [];
+  h.state.metaSendCalls = [];
+  h.state.stepQueryFilters = [];
   h.state.automations = [];
   h.state.steps = [];
   h.state.fromCalls = [];
   h.state.updateCalls = [];
   h.state.upsertCalls = [];
+  h.state.insertCalls = [];
   h.state.logInserts = [];
   h.state.logUpdates = [];
   h.state.whatsappConnection = {
@@ -270,6 +346,132 @@ describe("automation_logs — status is seeded pessimistically (issue #409)", ()
   });
 });
 
+describe("Wait continuation replay safety", () => {
+  const pending = (overrides: Record<string, unknown> = {}) => ({
+    id: "pending-1",
+    automation_id: "a1",
+    account_id: ACCOUNT,
+    user_id: "u1",
+    contact_id: "c1",
+    log_id: "log1",
+    parent_step_id: null,
+    branch: null,
+    next_step_position: 1,
+    context: { vars: { source: "wait-context" } },
+    ...overrides,
+  });
+
+  function configure(step: Record<string, unknown>) {
+    h.state.owned = { id: "c1" };
+    h.state.automations = [{
+      id: "a1",
+      account_id: ACCOUNT,
+      user_id: "u1",
+      trigger_type: "tag_added",
+      trigger_config: { tag_id: "different-tag" },
+      is_active: true,
+      whatsapp_config_id: null,
+    }];
+    h.state.steps = [step];
+  }
+
+  it("executes a normal continuation once, records its stable identity, then marks it done", async () => {
+    configure(updateStep());
+
+    await resumePendingExecution(pending());
+
+    expect(h.state.updateCalls).toContainEqual(expect.objectContaining({ table: "contacts" }));
+    expect(h.state.rpcCalls).toContainEqual({
+      name: "complete_automation_wait_continuation",
+      args: {
+        p_log_id: "log1",
+        p_pending_execution_id: "pending-1",
+        p_account_id: ACCOUNT,
+        p_automation_id: "a1",
+      },
+    });
+    expect(h.state.updateCalls).toContainEqual(expect.objectContaining({
+      table: "automation_pending_executions",
+      filters: [["eq", "id", "pending-1"]],
+    }));
+  });
+
+  it("does not replay actions when a stale reclaim finds the completion marker", async () => {
+    configure(updateStep());
+    h.state.completedWaitIds = ["pending-1"];
+
+    await resumePendingExecution(pending());
+
+    expect(h.state.updateCalls.filter((call) => call.table === "contacts")).toHaveLength(0);
+    expect(h.state.rpcCalls.some((call) => call.name === "complete_automation_wait_continuation")).toBe(false);
+    expect(h.state.updateCalls).toContainEqual(expect.objectContaining({
+      table: "automation_pending_executions",
+    }));
+  });
+
+  it("throws when durable completion cannot be recorded so the worker can retry", async () => {
+    configure(updateStep());
+    h.state.completionRpcError = { message: "database unavailable" };
+
+    await expect(resumePendingExecution(pending())).rejects.toThrow(
+      "wait continuation completion could not be recorded",
+    );
+    expect(h.state.updateCalls.filter((call) => call.table === "automation_pending_executions")).toHaveLength(0);
+  });
+
+  it("resumes Wait → Add Tag and records completion", async () => {
+    configure({
+      id: "tag-step", automation_id: "a1", step_type: "add_tag",
+      position: 1, parent_step_id: null, step_config: { tag_id: "tag-1" },
+    });
+    h.state.ownedTag = { id: "tag-1" };
+
+    await resumePendingExecution(pending());
+
+    expect(h.state.insertCalls).toContainEqual({
+      table: "contact_tags",
+      payload: { contact_id: "c1", tag_id: "tag-1" },
+    });
+    expect(h.state.rpcCalls.some((call) => call.name === "complete_automation_wait_continuation")).toBe(true);
+  });
+
+  it("resumes Wait → WhatsApp using the existing send path", async () => {
+    configure({
+      id: "send-step", automation_id: "a1", step_type: "send_message",
+      position: 1, parent_step_id: null, step_config: { text: "Hello after wait" },
+    });
+    h.state.ownedConversation = { id: "conversation-1" };
+
+    await resumePendingExecution(pending({
+      context: { conversation_id: "conversation-1" },
+    }));
+
+    expect(h.state.metaSendCalls).toContainEqual(expect.objectContaining({
+      accountId: ACCOUNT,
+      conversationId: "conversation-1",
+      contactId: "c1",
+      text: "Hello after wait",
+    }));
+  });
+
+  it("resumes the saved branch and position before recording completion", async () => {
+    configure(updateStep());
+
+    await resumePendingExecution(pending({
+      parent_step_id: "condition-1",
+      branch: "yes",
+      next_step_position: 3,
+    }));
+
+    expect(h.state.stepQueryFilters).toEqual(expect.arrayContaining([
+      ["eq", "automation_id", "a1"],
+      ["gte", "position", 3],
+      ["eq", "parent_step_id", "condition-1"],
+      ["eq", "branch", "yes"],
+    ]));
+  });
+});
+
 describe("update_contact_field — custom fields", () => {
   it("upserts contact_custom_values when the field is account-owned", async () => {
     h.state.owned = { id: "c1" };
@@ -328,6 +530,107 @@ describe("update_contact_field — custom fields", () => {
 
     expect(h.state.upsertCalls).toHaveLength(0);
     expect(h.state.updateCalls).toHaveLength(0);
+  });
+});
+
+describe("create_deal — service-role resource validation", () => {
+  function configure() {
+    h.state.owned = { id: "c1" };
+    h.state.ownedPipeline = { id: "pipe-1" };
+    h.state.ownedStage = { id: "stage-1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [{
+      id: "deal-step", automation_id: "a1", step_type: "create_deal",
+      position: 0, parent_step_id: null,
+      step_config: {
+        pipeline_id: "pipe-1", stage_id: "stage-1",
+        title: "{{ vars.title }}", value: 250,
+      },
+    }];
+  }
+
+  async function run() {
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1",
+      context: { vars: { title: "Reservation RZ-42" } },
+    });
+  }
+
+  it("creates a deal only with a same-workspace contact, pipeline, and child stage", async () => {
+    configure();
+    await run();
+    expect(h.state.insertCalls).toContainEqual({
+      table: "deals",
+      payload: expect.objectContaining({
+        account_id: ACCOUNT, contact_id: "c1", pipeline_id: "pipe-1",
+        stage_id: "stage-1", title: "Reservation RZ-42", currency: "INR",
+      }),
+    });
+  });
+
+  it.each([
+    ["foreign or missing contact", () => { h.state.owned = null; }],
+    ["foreign or missing pipeline", () => { h.state.ownedPipeline = null; }],
+    ["missing stage or stage from another pipeline", () => { h.state.ownedStage = null; }],
+  ])("rejects %s without inserting", async (label, invalidate) => {
+    configure();
+    invalidate();
+    await run();
+    expect(h.state.insertCalls).toHaveLength(0);
+    if (label !== "foreign or missing contact") {
+      expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
+        status: "failed",
+        error_message: "create_deal resources are not valid for this workspace",
+      }));
+    }
+  });
+
+  it("preserves PMS-triggered Create Deal behavior for valid resources", async () => {
+    configure();
+    h.state.automations[0].trigger_type = "reservation_confirmed";
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT, triggerType: "reservation_confirmed", contactId: "c1",
+      context: { reservation: {
+        property_id: "property-1", reservation_status: "confirmed", channel: "direct",
+      } as never },
+    });
+    expect(h.state.insertCalls.filter((call) => call.table === "deals")).toHaveLength(1);
+  });
+});
+
+describe("assign_conversation — workspace membership", () => {
+  function configure(config: Record<string, unknown>) {
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [{
+      id: "assign-step", automation_id: "a1", step_type: "assign_conversation",
+      position: 0, parent_step_id: null, step_config: config,
+    }];
+  }
+
+  it("rejects an explicit assignee who is not a workspace member", async () => {
+    configure({ mode: "specific", agent_id: "foreign-agent" });
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1", context: {},
+    });
+    expect(h.state.updateCalls).toHaveLength(0);
+    expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
+      error_message: "conversation assignee is not eligible",
+    }));
+  });
+
+  it("uses the atomic round-robin assignee selected by Postgres", async () => {
+    configure({ mode: "round_robin" });
+    h.state.roundRobinAssignee = "agent-b";
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1", context: {},
+    });
+    expect(h.state.updateCalls).toContainEqual(expect.objectContaining({
+      table: "conversations",
+      filters: expect.arrayContaining([
+        ["eq", "account_id", ACCOUNT], ["eq", "contact_id", "c1"],
+      ]),
+    }));
   });
 });
 
@@ -506,6 +809,24 @@ describe("tag_added — conversation policy", () => {
 });
 
 describe("WhatsApp send execution dependency", () => {
+  it("rejects a stored conversation id outside the workspace/contact boundary", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.ownedConversation = null;
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [{
+      id: "send-step", automation_id: "a1", step_type: "send_message",
+      position: 0, parent_step_id: null, step_config: { text: "Hello" },
+    }];
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT, triggerType: "new_message_received", contactId: "c1",
+      context: { conversation_id: "foreign-conversation" },
+    });
+    expect(h.state.logUpdates).toContainEqual(expect.objectContaining({
+      status: "failed",
+      error_message: "conversation is not valid for this workspace contact",
+    }));
+  });
+
   it("fails defensively before sending when no WhatsApp connection exists", async () => {
     h.state.owned = { id: "c1" };
     h.state.whatsappConnection = null;

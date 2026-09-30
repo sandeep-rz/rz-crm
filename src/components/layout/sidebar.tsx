@@ -34,6 +34,7 @@ import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 
@@ -215,159 +216,168 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         </div>
 
         {/* Main navigation */}
-        <nav className="flex-1 overflow-y-auto px-3 py-4">
-          <ul className="flex flex-col gap-1">
-            {navItems.map((item) => {
-              const isActive =
-                pathname === item.href ||
-                (item.href !== '/dashboard' && pathname.startsWith(item.href));
+        <TooltipProvider delay={150}>
+          <nav className="flex-1 overflow-y-auto px-3 py-4">
+            <ul className="flex flex-col gap-1">
+              {navItems.map((item) => {
+                const isActive =
+                  pathname === item.href ||
+                  (item.href !== '/dashboard' &&
+                    pathname.startsWith(item.href));
 
-              const showUnreadDot =
-                item.href === '/inbox' && totalUnread > 0 && !isActive;
+                const showUnreadDot =
+                  item.href === '/inbox' && totalUnread > 0 && !isActive;
 
-              // Unlike the inbox dot, the notifications count stays visible
-              // even while the page is active — it reflects unread state
-              // (cleared by marking notifications read), not "currently
-              // viewing this section".
-              const showNotificationBadge =
-                item.href === '/notifications' && unreadNotifications > 0;
+                // Unlike the inbox dot, the notifications count stays visible
+                // even while the page is active — it reflects unread state
+                // (cleared by marking notifications read), not "currently
+                // viewing this section".
+                const showNotificationBadge =
+                  item.href === '/notifications' && unreadNotifications > 0;
 
-              const requiresWhatsApp =
-                item.href === '/broadcasts' || item.href === '/flows';
-              const whatsappLocked = requiresWhatsApp && !whatsapp.available;
+                const requiresWhatsApp =
+                  item.href === '/broadcasts' || item.href === '/flows';
+                const whatsappLocked = requiresWhatsApp && !whatsapp.available;
 
-              if (whatsappLocked) {
-                const checking = whatsapp.status === 'loading';
-                const failed = whatsapp.status === 'error';
-                const row = (
-                  <span
-                    className="text-muted-foreground flex items-center gap-3 rounded-lg border-l-[3px] border-l-transparent px-3 py-2.5 text-sm font-medium opacity-70 lg:py-2"
-                    aria-label={`${t(item.labelKey as string)} — ${
-                      checking
-                        ? 'checking WhatsApp connection'
-                        : failed
-                          ? 'WhatsApp availability could not be verified'
-                          : 'requires a connected WhatsApp account'
-                    }`}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    <span className="flex-1">{t(item.labelKey as string)}</span>
-                    {item.beta && (
-                      <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-700 uppercase">
-                        {t('beta')}
+                if (whatsappLocked) {
+                  const checking = whatsapp.status === 'loading';
+                  const failed = whatsapp.status === 'error';
+                  const row = (
+                    <span
+                      className="text-muted-foreground flex items-center gap-3 rounded-lg border-l-[3px] border-l-transparent px-3 py-2.5 text-sm font-medium opacity-70 lg:py-2"
+                      aria-label={`${t(item.labelKey as string)} — ${
+                        checking
+                          ? 'checking WhatsApp connection'
+                          : failed
+                            ? 'WhatsApp availability could not be verified'
+                            : 'requires a connected WhatsApp account'
+                      }`}
+                    >
+                      <item.icon className="h-4 w-4" />
+                      <span className="flex-1">
+                        {t(item.labelKey as string)}
                       </span>
-                    )}
-                    <LockKeyhole className="h-3.5 w-3.5" aria-hidden />
-                  </span>
-                );
+                      {item.beta && (
+                        <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-700 uppercase">
+                          {t('beta')}
+                        </span>
+                      )}
+                      <LockKeyhole className="h-3.5 w-3.5" aria-hidden />
+                    </span>
+                  );
+
+                  return (
+                    <li key={item.href}>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            whatsapp.status === 'unavailable' ? (
+                              <Link
+                                href="/settings?tab=whatsapp"
+                                onClick={onClose}
+                                className="block rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2"
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                disabled
+                                className="block w-full text-left"
+                              />
+                            )
+                          }
+                        >
+                          {row}
+                        </TooltipTrigger>
+                        <TooltipContent side="right" sideOffset={8}>
+                          {checking
+                            ? 'Checking WhatsApp connection…'
+                            : failed
+                              ? 'WhatsApp availability could not be verified.'
+                              : `WhatsApp is not configured. Connect WhatsApp to use ${t(
+                                  item.labelKey as string
+                                )}.`}
+                        </TooltipContent>
+                      </Tooltip>
+                    </li>
+                  );
+                }
 
                 return (
                   <li key={item.href}>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          whatsapp.status === 'unavailable' ? (
-                            <Link
-                              href="/settings?tab=whatsapp"
-                              onClick={onClose}
-                              className="block rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2"
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              disabled
-                              className="block w-full text-left"
-                            />
-                          )
-                        }
-                      >
-                        {row}
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        {checking
-                          ? 'Checking WhatsApp connection…'
-                          : failed
-                            ? 'WhatsApp availability could not be verified.'
-                            : 'Connect WhatsApp in Settings to use this feature.'}
-                      </TooltipContent>
-                    </Tooltip>
+                    <Link
+                      href={item.href}
+                      className={cn(
+                        // Taller on mobile so fingers can hit the row reliably (≥44px).
+                        'flex items-center gap-3 rounded-lg border-l-[3px] px-3 py-2.5 text-sm font-medium transition-colors lg:py-2',
+                        isActive
+                          ? 'border-l-primary bg-primary/10 text-primary'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground border-l-transparent'
+                      )}
+                    >
+                      <item.icon className="h-4 w-4" />
+                      <span className="flex-1">
+                        {t(item.labelKey as string)}
+                      </span>
+                      {item.beta && (
+                        <span
+                          aria-label={t('beta')}
+                          className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-700 uppercase"
+                        >
+                          {t('beta')}
+                        </span>
+                      )}
+                      {showUnreadDot && (
+                        <span
+                          aria-label={t('unreadConversations', {
+                            count: totalUnread,
+                          })}
+                          className="relative flex h-2 w-2"
+                        >
+                          <span className="bg-primary absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" />
+                          <span className="bg-primary relative inline-flex h-2 w-2 rounded-full" />
+                        </span>
+                      )}
+                      {showNotificationBadge && (
+                        <span
+                          aria-label={t('unreadNotifications', {
+                            count: unreadNotifications,
+                          })}
+                          className="bg-primary text-primary-foreground flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-semibold"
+                        >
+                          {unreadNotifications > 9 ? '9+' : unreadNotifications}
+                        </span>
+                      )}
+                    </Link>
                   </li>
                 );
-              }
+              })}
+            </ul>
 
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      // Taller on mobile so fingers can hit the row reliably (≥44px).
-                      'flex items-center gap-3 rounded-lg border-l-[3px] px-3 py-2.5 text-sm font-medium transition-colors lg:py-2',
-                      isActive
-                        ? 'border-l-primary bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground border-l-transparent'
-                    )}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    <span className="flex-1">{t(item.labelKey as string)}</span>
-                    {item.beta && (
-                      <span
-                        aria-label={t('beta')}
-                        className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-amber-700 uppercase"
-                      >
-                        {t('beta')}
-                      </span>
-                    )}
-                    {showUnreadDot && (
-                      <span
-                        aria-label={t('unreadConversations', {
-                          count: totalUnread,
-                        })}
-                        className="relative flex h-2 w-2"
-                      >
-                        <span className="bg-primary absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" />
-                        <span className="bg-primary relative inline-flex h-2 w-2 rounded-full" />
-                      </span>
-                    )}
-                    {showNotificationBadge && (
-                      <span
-                        aria-label={t('unreadNotifications', {
-                          count: unreadNotifications,
-                        })}
-                        className="bg-primary text-primary-foreground flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-semibold"
-                      >
-                        {unreadNotifications > 9 ? '9+' : unreadNotifications}
-                      </span>
-                    )}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+            <div className="border-border my-4 border-t" />
 
-          <div className="border-border my-4 border-t" />
-
-          <ul className="flex flex-col gap-1">
-            {bottomNavItems.map((item) => {
-              const isActive = pathname.startsWith(item.href);
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      'flex items-center gap-3 rounded-lg border-l-[3px] px-3 py-2.5 text-sm font-medium transition-colors lg:py-2',
-                      isActive
-                        ? 'border-l-primary bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground border-l-transparent'
-                    )}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    {t(item.labelKey as string)}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+            <ul className="flex flex-col gap-1">
+              {bottomNavItems.map((item) => {
+                const isActive = pathname.startsWith(item.href);
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={cn(
+                        'flex items-center gap-3 rounded-lg border-l-[3px] px-3 py-2.5 text-sm font-medium transition-colors lg:py-2',
+                        isActive
+                          ? 'border-l-primary bg-primary/10 text-primary'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground border-l-transparent'
+                      )}
+                    >
+                      <item.icon className="h-4 w-4" />
+                      {t(item.labelKey as string)}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+        </TooltipProvider>
 
         {/* User section */}
         <div className="border-border shrink-0 border-t p-3">

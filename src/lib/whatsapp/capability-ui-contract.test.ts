@@ -31,8 +31,10 @@ describe('WhatsApp capability UI contract', () => {
   });
 
   it('provides a keyboard-capable tooltip trigger for locked navigation', () => {
+    expect(sidebar).toContain('<TooltipProvider delay={150}>');
     expect(sidebar).toContain('<TooltipTrigger');
     expect(sidebar).toContain('focus-visible:outline-2');
+    expect(sidebar).toContain('WhatsApp is not configured.');
   });
 
   it('protects the direct Broadcasts page and skips its data load while locked', () => {

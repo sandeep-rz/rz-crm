@@ -1,5 +1,6 @@
 import type { AccountRole } from '@/lib/auth/roles';
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive';
+import type { MessageVariableMapping } from '@/lib/message-variables/mapping';
 
 export type {
   InteractiveMessagePayload,
@@ -606,6 +607,8 @@ export type SendListStepConfig = InteractiveMessagePayload;
 export interface SendTemplateStepConfig {
   template_name: string;
   language?: string;
+  /** New semantic mapping model. Legacy `variables` remains supported. */
+  variable_mappings?: MessageVariableMapping[];
   variables?: Record<string, string>;
 }
 

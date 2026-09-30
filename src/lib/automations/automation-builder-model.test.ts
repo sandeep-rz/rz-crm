@@ -6,6 +6,7 @@ import {
   automaticallySelectedWhatsAppConnection,
   buildPmsFilterOptions,
   defaultTriggerConfig,
+  getAutomationTriggerContextCapabilities,
   selectedPmsPropertyIds,
   updatePmsTriggerConfig,
 } from './automation-builder-model';
@@ -132,5 +133,41 @@ describe('automation builder hospitality model', () => {
     expect(
       automaticallySelectedWhatsAppConnection('disconnected', ['one'])
     ).toBe('one');
+  });
+
+  it.each(['reservation_confirmed', 'before_checkin'] as const)(
+    '%s guarantees contact, reservation, and property context',
+    (trigger) => {
+      expect(getAutomationTriggerContextCapabilities(trigger)).toEqual({
+        contact: true,
+        reservation: true,
+        property: true,
+        workspace: true,
+      });
+    }
+  );
+
+  it('does not claim reservation/property context for contact-created', () => {
+    expect(
+      getAutomationTriggerContextCapabilities('new_contact_created')
+    ).toEqual({
+      contact: true,
+      reservation: false,
+      property: false,
+      workspace: true,
+    });
+  });
+
+  it('does not accidentally expose PMS-only context for generic triggers', () => {
+    for (const trigger of [
+      'new_message_received',
+      'keyword_match',
+      'tag_added',
+      'time_based',
+    ] as const) {
+      const capabilities = getAutomationTriggerContextCapabilities(trigger);
+      expect(capabilities.reservation).toBe(false);
+      expect(capabilities.property).toBe(false);
+    }
   });
 });

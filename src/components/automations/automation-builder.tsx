@@ -64,6 +64,7 @@ import type {
   PmsTriggerConfig,
   Tag as TagRecord,
 } from '@/types';
+import type { MessageVariableMapping } from '@/lib/message-variables';
 import {
   InteractiveBuilder,
   blankButtonsPayload,
@@ -96,11 +97,17 @@ import {
   automaticallySelectedWhatsAppConnection,
   buildPmsFilterOptions,
   defaultTriggerConfig,
+  getAutomationTriggerContextCapabilities,
   selectedPmsPropertyIds,
   updatePmsTriggerConfig,
   type FriendlyFilterOption,
   type PmsReservationFilterRow,
 } from '@/lib/automations/automation-builder-model';
+import {
+  inspectTemplateVariableSlots,
+  reconcileTemplateVariableMappings,
+  validateTemplateVariableMappings,
+} from '@/lib/automations/template-variable-mapping';
 
 // ------------------------------------------------------------
 // Types (builder-local — mirror the flattened rows we POST)
@@ -285,10 +292,12 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
 // ------------------------------------------------------------
 
 interface AutomationResources {
+  triggerType: AutomationTriggerType;
   tags: TagRecord[];
   members: AccountMember[];
   templates: MessageTemplate[];
   customFields: CustomField[];
+  messageVariables: CatalogVariableOption[];
   pipelines: PipelineOption[];
   stages: PipelineStageOption[];
   pmsProperties: PmsPropertyOption[];
@@ -296,6 +305,16 @@ interface AutomationResources {
   pmsReservationStatuses: FriendlyFilterOption[];
   whatsappConnections: WhatsAppConnectionOption[];
   whatsappConnectionsLoading: boolean;
+}
+
+interface CatalogVariableOption {
+  variable_key: string;
+  label: string;
+  description: string | null;
+  category: 'contact' | 'reservation' | 'property' | 'workspace';
+  source_scope: 'contact' | 'reservation' | 'property' | 'workspace';
+  preview_value: string | null;
+  is_sensitive: boolean;
 }
 
 interface PipelineOption {
@@ -325,10 +344,12 @@ interface WhatsAppConnectionOption {
 }
 
 const ResourcesContext = createContext<AutomationResources>({
+  triggerType: 'new_contact_created',
   tags: [],
   members: [],
   templates: [],
   customFields: [],
+  messageVariables: [],
   pipelines: [],
   stages: [],
   pmsProperties: [],
@@ -348,17 +369,24 @@ function ResourcesProvider({
   loadPmsProperties,
   whatsappConnections,
   whatsappConnectionsLoading,
+  triggerType,
+  onTemplatesLoaded,
 }: {
   children: ReactNode;
   whatsappConfigId?: string | null;
   loadPmsProperties: boolean;
   whatsappConnections: WhatsAppConnectionOption[];
   whatsappConnectionsLoading: boolean;
+  triggerType: AutomationTriggerType;
+  onTemplatesLoaded?: (templates: MessageTemplate[]) => void;
 }) {
   const [tags, setTags] = useState<TagRecord[]>([]);
   const [members, setMembers] = useState<AccountMember[]>([]);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [messageVariables, setMessageVariables] = useState<
+    CatalogVariableOption[]
+  >([]);
   const [pipelines, setPipelines] = useState<PipelineOption[]>([]);
   const [stages, setStages] = useState<PipelineStageOption[]>([]);
   const [pmsProperties, setPmsProperties] = useState<PmsPropertyOption[]>([]);
@@ -401,6 +429,7 @@ function ResourcesProvider({
         tagsRes,
         templatesRes,
         customFieldsRes,
+        messageVariablesRes,
         pipelinesRes,
         stagesRes,
         pmsPropertiesRes,
@@ -409,6 +438,13 @@ function ResourcesProvider({
         supabase.from('tags').select('*').order('name'),
         templateQuery.order('name'),
         supabase.from('custom_fields').select('*').order('field_name'),
+        supabase
+          .from('message_variable_catalog')
+          .select(
+            'variable_key, label, description, category, source_scope, preview_value, is_sensitive'
+          )
+          .eq('is_active', true)
+          .order('sort_order'),
         supabase.from('pipelines').select('id, name').order('name'),
         supabase
           .from('pipeline_stages')
@@ -419,8 +455,14 @@ function ResourcesProvider({
       ]);
       if (cancelled) return;
       setTags((tagsRes.data as TagRecord[] | null) ?? []);
-      setTemplates((templatesRes.data as MessageTemplate[] | null) ?? []);
+      const loadedTemplates =
+        (templatesRes.data as MessageTemplate[] | null) ?? [];
+      setTemplates(loadedTemplates);
+      onTemplatesLoaded?.(loadedTemplates);
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? []);
+      setMessageVariables(
+        (messageVariablesRes.data as CatalogVariableOption[] | null) ?? []
+      );
       setPipelines((pipelinesRes.data as PipelineOption[] | null) ?? []);
       setStages((stagesRes.data as PipelineStageOption[] | null) ?? []);
       setPmsProperties(
@@ -450,15 +492,17 @@ function ResourcesProvider({
     return () => {
       cancelled = true;
     };
-  }, [loadPmsProperties, whatsappConfigId]);
+  }, [loadPmsProperties, onTemplatesLoaded, whatsappConfigId]);
 
   return (
     <ResourcesContext.Provider
       value={{
+        triggerType,
         tags,
         members,
         templates,
         customFields,
+        messageVariables,
         pipelines,
         stages,
         pmsProperties,
@@ -723,15 +767,90 @@ function DealPipelineFields({
 function SendTemplateFields({
   templateName,
   language,
+  variableMappings,
+  legacyVariables,
   onChange,
   t,
 }: {
   templateName: string;
   language: string;
-  onChange: (patch: { template_name: string; language: string }) => void;
+  variableMappings: unknown;
+  legacyVariables: unknown;
+  onChange: (patch: Record<string, unknown>) => void;
   t: ReturnType<typeof useTranslations>;
 }) {
-  const { templates } = useResources();
+  const { templates, customFields, messageVariables, triggerType } =
+    useResources();
+  const capabilities = getAutomationTriggerContextCapabilities(triggerType);
+  const selectedTemplate = templates.find(
+    (template) =>
+      template.name === templateName &&
+      (template.language ?? 'en_US') === language
+  );
+  const inspection = selectedTemplate
+    ? inspectTemplateVariableSlots(selectedTemplate)
+    : { slots: [], unsupported: [] };
+  const mappings = Array.isArray(variableMappings)
+    ? reconcileTemplateVariableMappings(variableMappings, inspection.slots)
+    : [];
+  const mappingIssues = selectedTemplate
+    ? validateTemplateVariableMappings(selectedTemplate, variableMappings ?? [])
+    : [];
+
+  const removeMapping = (
+    component: MessageVariableMapping['component'],
+    position: number
+  ) => {
+    onChange({
+      variable_mappings: mappings.filter(
+        (current) =>
+          current.component !== component || current.position !== position
+      ),
+    });
+  };
+
+  const replaceMapping = (mapping: MessageVariableMapping) => {
+    const next = mappings
+      .filter(
+        (current) =>
+          current.component !== mapping.component ||
+          current.position !== mapping.position
+      )
+      .concat(mapping)
+      .sort((a, b) =>
+        a.component === b.component
+          ? a.position - b.position
+          : a.component === 'header'
+            ? -1
+            : 1
+      );
+    onChange({ variable_mappings: next });
+  };
+
+  const mappingValue = (mapping: MessageVariableMapping | undefined) => {
+    if (!mapping) return '';
+    if (mapping.source_type === 'catalog_variable')
+      return `catalog:${mapping.variable_key}`;
+    if (mapping.source_type === 'custom_field')
+      return `custom:${mapping.custom_field_id}`;
+    return 'static';
+  };
+
+  const mappingLabel = (mapping: MessageVariableMapping | undefined) => {
+    if (!mapping) return 'Not mapped';
+    if (mapping.source_type === 'static')
+      return `Static: ${mapping.static_value || 'empty'}`;
+    if (mapping.source_type === 'custom_field')
+      return (
+        customFields.find((field) => field.id === mapping.custom_field_id)
+          ?.field_name ?? `Custom field ${mapping.custom_field_id}`
+      );
+    return (
+      messageVariables.find(
+        (variable) => variable.variable_key === mapping.variable_key
+      )?.label ?? mapping.variable_key
+    );
+  };
 
   if (templates.length === 0) {
     return (
@@ -775,7 +894,24 @@ function SendTemplateFields({
         value={current}
         onChange={(e) => {
           const [name, lang] = e.target.value.split('::');
-          onChange({ template_name: name ?? '', language: lang ?? '' });
+          const nextTemplate = templates.find(
+            (template) =>
+              template.name === name && (template.language ?? 'en_US') === lang
+          );
+          onChange({
+            template_name: name ?? '',
+            language: lang ?? '',
+            ...(Array.isArray(variableMappings)
+              ? {
+                  variable_mappings: nextTemplate
+                    ? reconcileTemplateVariableMappings(
+                        variableMappings,
+                        inspectTemplateVariableSlots(nextTemplate).slots
+                      )
+                    : [],
+                }
+              : {}),
+          });
         }}
         className={SELECT_CLASS}
       >
@@ -797,6 +933,157 @@ function SendTemplateFields({
           </option>
         )}
       </select>
+      {selectedTemplate && (
+        <div className="border-border mt-3 space-y-3 border-t pt-3">
+          <div>
+            <p className="text-muted-foreground text-[11px] font-medium uppercase">
+              Template preview
+            </p>
+            {selectedTemplate.header_type === 'text' &&
+              selectedTemplate.header_content && (
+                <p className="text-foreground mt-1 text-xs font-medium">
+                  {selectedTemplate.header_content}
+                </p>
+              )}
+            <p className="text-foreground mt-1 text-xs whitespace-pre-wrap">
+              {selectedTemplate.body_text}
+            </p>
+          </div>
+
+          {Boolean(legacyVariables) && !Array.isArray(variableMappings) && (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
+              This automation uses legacy template variables. They remain
+              unchanged until semantic mappings are configured below.
+            </p>
+          )}
+
+          {inspection.unsupported.map((issue) => (
+            <p
+              key={issue}
+              className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border p-2 text-[11px]"
+            >
+              {issue}
+            </p>
+          ))}
+
+          {inspection.slots.map((slot) => {
+            const mapping = mappings.find(
+              (candidate) =>
+                candidate.component === slot.component &&
+                candidate.position === slot.position
+            );
+            return (
+              <div
+                key={`${slot.component}:${slot.position}`}
+                className="space-y-1"
+              >
+                <label className="text-muted-foreground block text-[11px] font-medium">
+                  {slot.component.toUpperCase()} {'{{'}
+                  {slot.position}
+                  {'}}'}
+                </label>
+                <select
+                  value={mappingValue(mapping)}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (value === '') {
+                      removeMapping(slot.component, slot.position);
+                    } else if (value === 'static') {
+                      replaceMapping({
+                        component: slot.component,
+                        position: slot.position,
+                        source_type: 'static',
+                        static_value: '',
+                      });
+                    } else if (value.startsWith('custom:')) {
+                      replaceMapping({
+                        component: slot.component,
+                        position: slot.position,
+                        source_type: 'custom_field',
+                        custom_field_id: value.slice('custom:'.length),
+                      });
+                    } else if (value.startsWith('catalog:')) {
+                      replaceMapping({
+                        component: slot.component,
+                        position: slot.position,
+                        source_type: 'catalog_variable',
+                        variable_key: value.slice('catalog:'.length),
+                      });
+                    }
+                  }}
+                  className={SELECT_CLASS}
+                >
+                  <option value="">Select a variable…</option>
+                  {(
+                    ['contact', 'reservation', 'property', 'workspace'] as const
+                  ).map((category) => {
+                    const options = messageVariables.filter(
+                      (variable) => variable.category === category
+                    );
+                    return options.length > 0 ? (
+                      <optgroup key={category} label={category.toUpperCase()}>
+                        {options.map((variable) => (
+                          <option
+                            key={variable.variable_key}
+                            value={`catalog:${variable.variable_key}`}
+                            disabled={!capabilities[variable.source_scope]}
+                          >
+                            {variable.label}
+                            {!capabilities[variable.source_scope]
+                              ? ' — unavailable for this trigger'
+                              : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null;
+                  })}
+                  {customFields.length > 0 && (
+                    <optgroup label="CUSTOM FIELDS">
+                      {customFields.map((field) => (
+                        <option
+                          key={field.id}
+                          value={`custom:${field.id}`}
+                          disabled={!capabilities.contact}
+                        >
+                          {field.field_name}
+                          {!capabilities.contact
+                            ? ' — unavailable for this trigger'
+                            : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="OTHER">
+                    <option value="static">Static value</option>
+                  </optgroup>
+                </select>
+                {mapping?.source_type === 'static' && (
+                  <Input
+                    value={mapping.static_value}
+                    placeholder="Enter static value"
+                    onChange={(event) =>
+                      replaceMapping({
+                        ...mapping,
+                        static_value: event.target.value,
+                      })
+                    }
+                    className="bg-muted text-foreground"
+                  />
+                )}
+                <p className="text-muted-foreground text-[10px]">
+                  {'{{'}
+                  {slot.position}
+                  {'}}'} → {mappingLabel(mapping)}
+                </p>
+              </div>
+            );
+          })}
+
+          {mappingIssues.length > 0 && Array.isArray(variableMappings) && (
+            <p className="text-destructive text-[11px]">{mappingIssues[0]}</p>
+          )}
+        </div>
+      )}
     </FieldBlock>
   );
 }
@@ -816,6 +1103,9 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
     []
   );
   const [connectionsLoading, setConnectionsLoading] = useState(true);
+  const [availableTemplates, setAvailableTemplates] = useState<
+    MessageTemplate[]
+  >([]);
   const requiresWhatsApp = builderStepsRequireWhatsApp(state.steps);
   const usesPmsTrigger = isPmsAutomationTrigger(state.trigger_type);
   const usableConnections = useMemo(
@@ -916,6 +1206,14 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
   }
 
   async function save() {
+    const mappingIssue = findTemplateMappingIssue(
+      state.steps,
+      availableTemplates
+    );
+    if (mappingIssue) {
+      toast.error(mappingIssue);
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -1095,6 +1393,8 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:20px_20px]" />
         <div className="relative mx-auto flex max-w-2xl flex-col items-center gap-0 px-4 py-10">
           <ResourcesProvider
+            triggerType={state.trigger_type}
+            onTemplatesLoaded={setAvailableTemplates}
             whatsappConfigId={state.whatsapp_config_id}
             loadPmsProperties={usesPmsTrigger}
             whatsappConnections={usableConnections}
@@ -2141,6 +2441,8 @@ function StepEditor({
         <SendTemplateFields
           templateName={(cfg.template_name as string) ?? ''}
           language={(cfg.language as string) ?? ''}
+          variableMappings={cfg.variable_mappings}
+          legacyVariables={cfg.variables}
           onChange={(patch) => set(patch)}
           t={t}
         />
@@ -2397,6 +2699,39 @@ export function toApiSteps(steps: BuilderStep[]): ApiStep[] {
       ? { yes: toApiSteps(s.branches.yes), no: toApiSteps(s.branches.no) }
       : undefined,
   }));
+}
+
+export function findTemplateMappingIssue(
+  steps: BuilderStep[],
+  templates: MessageTemplate[]
+): string | null {
+  for (const step of steps) {
+    if (
+      step.step_type === 'send_template' &&
+      Array.isArray(step.step_config.variable_mappings)
+    ) {
+      const name = String(step.step_config.template_name ?? '');
+      const language = String(step.step_config.language ?? 'en_US');
+      const template = templates.find(
+        (candidate) =>
+          candidate.name === name &&
+          (candidate.language ?? 'en_US') === language
+      );
+      if (!template) return 'The selected approved template is unavailable.';
+      const issue = validateTemplateVariableMappings(
+        template,
+        step.step_config.variable_mappings
+      )[0];
+      if (issue) return issue;
+    }
+    if (step.branches) {
+      const branchIssue =
+        findTemplateMappingIssue(step.branches.yes, templates) ??
+        findTemplateMappingIssue(step.branches.no, templates);
+      if (branchIssue) return branchIssue;
+    }
+  }
+  return null;
 }
 
 /**

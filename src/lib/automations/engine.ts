@@ -39,6 +39,8 @@ import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { resolveConversationForContact } from '@/lib/whatsapp/resolve-conversation';
 import type { ReservationAutomationContext } from './pms-context';
 import { matchesReservationTriggerConfig } from './pms-scheduler';
+import { buildAndResolveMessageVariables } from '@/lib/message-variables';
+import { groupResolvedTemplateParameters } from './template-variable-mapping';
 
 // ------------------------------------------------------------
 // Public API
@@ -628,6 +630,57 @@ async function runStep(
       if (!args.contactId) throw new Error('send_template needs a contact');
       if (!cfg.template_name)
         throw new Error('send_template needs template_name');
+      if (Array.isArray(cfg.variable_mappings)) {
+        const resolved = await buildAndResolveMessageVariables({
+          accountId: args.automation.account_id,
+          contactId: args.contactId,
+          reservationId: args.context.reservation?.reservation_id,
+          propertyId: args.context.reservation?.property_id,
+          mappings: cfg.variable_mappings,
+          db,
+        });
+        if (!resolved.success) {
+          const diagnostics = [
+            ...resolved.missing.map((item) =>
+              [
+                `${item.component}/${item.position}`,
+                item.variable_key ?? item.custom_field_id,
+                item.label,
+                item.reason,
+              ]
+                .filter(Boolean)
+                .join(' ')
+            ),
+            ...resolved.errors.map((item) =>
+              [
+                item.component && item.position
+                  ? `${item.component}/${item.position}`
+                  : null,
+                item.variable_key ?? item.custom_field_id,
+                item.code,
+              ]
+                .filter(Boolean)
+                .join(' ')
+            ),
+          ];
+          throw new Error(
+            `template variable resolution failed: ${diagnostics.join('; ')}`
+          );
+        }
+        const messageParams = groupResolvedTemplateParameters(resolved.values);
+        const conversationId = await resolveConversationId(args);
+        const { whatsapp_message_id } = await engineSendTemplate({
+          accountId: args.automation.account_id,
+          userId: args.automation.user_id,
+          conversationId,
+          contactId: args.contactId,
+          templateName: cfg.template_name,
+          language: cfg.language,
+          messageParams,
+        });
+        return `template sent via Meta (${whatsapp_message_id})`;
+      }
+
       const conversationId = await resolveConversationId(args);
       // Meta templates use positional {{1}}, {{2}}, … placeholders, so
       // we MUST emit params in strict numeric order. Lexicographic sort

@@ -222,6 +222,48 @@ describe('validateStepsForActivation', () => {
   });
 });
 
+describe('send_template semantic mapping validation', () => {
+  it('rejects malformed semantic variable mappings at the server boundary', () => {
+    const issues = validateStepsForActivation([
+      {
+        step_type: 'send_template',
+        step_config: {
+          template_name: 'welcome',
+          variable_mappings: [
+            {
+              component: 'body',
+              position: 0,
+              source_type: 'catalog_variable',
+              variable_key: 'contact.first_name',
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(issues).toEqual([
+      {
+        path: 'steps[0].variable_mappings[0]',
+        message: 'invalid template variable mapping: INVALID_POSITION',
+      },
+    ]);
+  });
+
+  it('keeps legacy template variables valid', () => {
+    expect(
+      validateStepsForActivation([
+        {
+          step_type: 'send_template',
+          step_config: {
+            template_name: 'welcome',
+            variables: { '1': '{{contact.name}}' },
+          },
+        },
+      ])
+    ).toEqual([]);
+  });
+});
+
 describe('WhatsApp connection activation dependency', () => {
   const addTag = [{ step_type: 'add_tag', step_config: { tag_id: 'tag-1' } }];
   const sendTemplate = [

@@ -15,6 +15,7 @@ import {
   templateContentText,
 } from '@/lib/whatsapp/template-body';
 import { supabaseAdmin } from './admin-client';
+import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -49,6 +50,7 @@ interface SendTemplateArgs {
   templateName: string;
   language?: string;
   params?: string[];
+  messageParams?: SendTimeParams;
 }
 
 export async function engineSendText(
@@ -174,6 +176,9 @@ async function sendViaMeta(
         templateName: input.templateName,
         language: input.language,
         params: input.params,
+        ...(input.messageParams && templateRow
+          ? { template: templateRow, messageParams: input.messageParams }
+          : {}),
       });
       return r.messageId;
     }
@@ -224,7 +229,10 @@ async function sendViaMeta(
   const content_text =
     input.kind === 'text'
       ? input.text
-      : templateContentText(templateRow, input.params ?? []);
+      : templateContentText(
+          templateRow,
+          input.messageParams?.body ?? input.params ?? []
+        );
   const template_name = input.kind === 'template' ? input.templateName : null;
 
   const { error: msgErr } = await db.from('messages').insert({

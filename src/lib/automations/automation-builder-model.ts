@@ -4,6 +4,7 @@ import type {
   PmsTriggerConfig,
 } from '@/types';
 import {
+  isPmsAutomationTrigger,
   PMS_EVENT_AUTOMATION_TRIGGERS,
   PMS_SCHEDULED_AUTOMATION_TRIGGERS,
 } from './pms-trigger-schema';
@@ -38,6 +39,26 @@ export const AUTOMATION_TRIGGER_GROUPS: Array<{
 export const ALL_AUTOMATION_TRIGGER_OPTIONS = AUTOMATION_TRIGGER_GROUPS.flatMap(
   (group) => [...group.options]
 );
+
+export interface AutomationTriggerContextCapabilities {
+  contact: boolean;
+  reservation: boolean;
+  property: boolean;
+  workspace: true;
+}
+
+/** One provider-neutral source of truth for builder variable availability. */
+export function getAutomationTriggerContextCapabilities(
+  trigger: AutomationTriggerType
+): AutomationTriggerContextCapabilities {
+  const reservation = isPmsAutomationTrigger(trigger);
+  return {
+    contact: trigger !== 'time_based',
+    reservation,
+    property: reservation,
+    workspace: true,
+  };
+}
 
 export function defaultTriggerConfig(
   triggerType: AutomationTriggerType

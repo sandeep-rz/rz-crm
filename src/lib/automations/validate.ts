@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import type { AutomationTriggerType, PmsTriggerConfig } from '@/types';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
+import { validateMessageVariableMappingShape } from '@/lib/message-variables';
 import { isWhatsAppSendStep } from './action-schema';
 import {
   isPmsAutomationTrigger,
@@ -132,6 +133,25 @@ function validateOne(
           path: `${path}.template_name`,
           message: 'template name is required',
         });
+      }
+      // Legacy Send Template steps use `variables` and must remain valid.
+      // New semantic mappings are structurally validated at the server
+      // boundary; catalog/custom-field existence remains account-aware
+      // runtime validation in the shared resolver.
+      if (c.variable_mappings !== undefined) {
+        const mappingResult = validateMessageVariableMappingShape(
+          c.variable_mappings
+        );
+        for (const error of mappingResult.errors) {
+          const suffix =
+            error.mapping_index >= 0
+              ? `[${error.mapping_index}]`
+              : '';
+          issues.push({
+            path: `${path}.variable_mappings${suffix}`,
+            message: `invalid template variable mapping: ${error.code}`,
+          });
+        }
       }
       break;
     case 'add_tag':

@@ -136,7 +136,10 @@ describe('Broadcast semantic resolver route', () => {
             mapping.source_type === 'custom_field' &&
             mapping.custom_field_id === 'field-from-workspace-a'
         );
-        if (crossAccountField) {
+        if (
+          crossAccountField &&
+          crossAccountField.source_type === 'custom_field'
+        ) {
           return {
             success: false,
             values: [],
@@ -160,7 +163,7 @@ describe('Broadcast semantic resolver route', () => {
             mapping.source_type === 'catalog_variable' &&
             mapping.variable_key === 'contact.email'
         );
-        if (missing) {
+        if (missing && missing.source_type === 'catalog_variable') {
           return {
             success: false,
             values: [],

@@ -71,6 +71,31 @@ describe('Rukiye Zara PMS provider adapter', () => {
     expect(property.externalId).toBe('22008');
     expect(property.address.city).toBe('Goa');
     expect(property.timezone).toBe('Asia/Kolkata');
+    expect(property.communication).toBeUndefined();
+  });
+
+  it('accepts an optional provider-neutral communication block', async () => {
+    const property = await providerFor({
+      data: {
+        id: 22008,
+        name: 'Villa',
+        status: 'active',
+        active: true,
+        timezone: null,
+        address: {},
+        currency: 'INR',
+        created_at: null,
+        communication: {
+          map_url: ' https://maps.example/villa ',
+          caretaker_phone: null,
+        },
+      },
+    }).getProperty({ integration: {} as never, externalPropertyId: '22008' });
+
+    expect(property.communication).toEqual({
+      map_url: 'https://maps.example/villa',
+      caretaker_phone: null,
+    });
   });
 
   it('normalizes numeric property ids and reservation fields', async () => {

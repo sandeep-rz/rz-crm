@@ -7,6 +7,7 @@ import {
   type IntegrationRecord,
   type IntegrationWriteInput,
   type PmsProvisioningStore,
+  type PropertyCommunicationInitializationInput,
   type PropertyRecord,
   type PropertyWriteInput,
   IdentityClaimRequiredError,
@@ -36,6 +37,7 @@ interface StoredIntegration extends IntegrationRecord {
 interface StoredProperty extends PropertyRecord {
   integrationId: string;
   externalPropertyId: string;
+  accountId: string;
   name: string;
 }
 
@@ -46,6 +48,9 @@ class MemoryProvisioningStore implements PmsProvisioningStore {
   memberships = new Map<string, Set<string>>();
   integrations = new Map<string, StoredIntegration>();
   properties = new Map<string, StoredProperty>();
+  communication = new Map<string, Record<string, string | null>>();
+  communicationInitializations: PropertyCommunicationInitializationInput[] = [];
+  failCommunicationInitialization = false;
   createAuthCalls = 0;
   deletedUsers: string[] = [];
 
@@ -92,6 +97,7 @@ class MemoryProvisioningStore implements PmsProvisioningStore {
       id: `property-${++this.propertySequence}`,
       integrationId,
       externalPropertyId,
+      accountId,
       name: 'Already synced',
       initial_sync_status: 'completed',
       timezone: null,
@@ -197,6 +203,7 @@ class MemoryProvisioningStore implements PmsProvisioningStore {
       id: `property-${++this.propertySequence}`,
       integrationId: input.integrationId,
       externalPropertyId: input.externalPropertyId,
+      accountId: input.accountId,
       name: input.name,
       initial_sync_status: 'pending',
       timezone: input.timezone,
@@ -204,6 +211,43 @@ class MemoryProvisioningStore implements PmsProvisioningStore {
     };
     this.properties.set(key, record);
     return record;
+  }
+
+  async createPropertyCommunicationIfAbsent(
+    input: PropertyCommunicationInitializationInput
+  ) {
+    if (this.failCommunicationInitialization) {
+      this.failCommunicationInitialization = false;
+      throw new Error('communication initialization failed');
+    }
+    const property = [...this.properties.values()].find(
+      (candidate) => candidate.id === input.propertyId
+    );
+    if (!property || property.accountId !== input.accountId) {
+      throw new Error('cross-account property communication write');
+    }
+    this.communicationInitializations.push(input);
+    if (!this.communication.has(input.propertyId)) {
+      this.communication.set(
+        input.propertyId,
+        input.values as Record<string, string | null>
+      );
+    }
+  }
+
+  async deleteProperty(input: {
+    id: string;
+    accountId: string;
+    integrationId: string;
+  }) {
+    const entry = [...this.properties.entries()].find(
+      ([, property]) =>
+        property.id === input.id &&
+        property.integrationId === input.integrationId &&
+        property.accountId === input.accountId
+    );
+    if (entry) this.properties.delete(entry[0]);
+    this.communication.delete(input.id);
   }
 
   async updateProperty(input: PropertyWriteInput & { id: string }) {
@@ -258,6 +302,111 @@ describe('Rukiye Zara PMS provisioning', () => {
       external_property_id: REQUEST.property.external_property_id,
       initial_sync_status: 'pending',
     });
+  });
+
+  it('initializes partial communication only when creating a new property', async () => {
+    const result = await provisionRukiyeZara(
+      {
+        ...REQUEST,
+        property: {
+          ...REQUEST.property,
+          communication: {
+            map_url: ' https://maps.example/lakeside ',
+            caretaker_phone: null,
+          },
+        },
+      },
+      store
+    );
+
+    expect(store.communication.get(result.crm_property_id)).toEqual({
+      map_url: 'https://maps.example/lakeside',
+    });
+    expect(store.communicationInitializations[0]).toMatchObject({
+      accountId: result.workspace_id,
+      propertyId: result.crm_property_id,
+    });
+  });
+
+  it('does not create settings for omitted or all-blank communication', async () => {
+    await provisionRukiyeZara(REQUEST, store);
+    await provisionRukiyeZara(
+      {
+        ...REQUEST,
+        installation_id: '66666666-6666-4666-8666-666666666666',
+        property: {
+          external_property_id: '22009',
+          name: 'Hill View',
+          communication: {
+            map_url: null,
+            caretaker_phone: '',
+            directions: '   ',
+          },
+        },
+      },
+      store
+    );
+    expect(store.communication).toHaveLength(0);
+    expect(store.communicationInitializations).toHaveLength(0);
+  });
+
+  it('never overwrites host-edited or host-cleared settings on provisioning retry', async () => {
+    const request = {
+      ...REQUEST,
+      property: {
+        ...REQUEST.property,
+        communication: { map_url: 'https://maps.example/pms' },
+      },
+    };
+    const first = await provisionRukiyeZara(request, store);
+    store.communication.set(first.crm_property_id, {
+      map_url: 'https://maps.example/host',
+    });
+    await provisionRukiyeZara(request, store);
+    expect(store.communication.get(first.crm_property_id)?.map_url).toBe(
+      'https://maps.example/host'
+    );
+
+    store.communication.set(first.crm_property_id, { map_url: null });
+    await provisionRukiyeZara(request, store);
+    expect(store.communication.get(first.crm_property_id)?.map_url).toBeNull();
+    expect(store.communicationInitializations).toHaveLength(1);
+  });
+
+  it('does not initialize communication later for an already-provisioned property', async () => {
+    const first = await provisionRukiyeZara(REQUEST, store);
+    await provisionRukiyeZara(
+      {
+        ...REQUEST,
+        property: {
+          ...REQUEST.property,
+          communication: { map_url: 'https://maps.example/later' },
+        },
+      },
+      store
+    );
+    expect(store.communication.has(first.crm_property_id)).toBe(false);
+    expect(store.communicationInitializations).toHaveLength(0);
+  });
+
+  it('removes a newly created property when initialization fails so retry can succeed', async () => {
+    const request = {
+      ...REQUEST,
+      property: {
+        ...REQUEST.property,
+        communication: { map_url: 'https://maps.example/lakeside' },
+      },
+    };
+    store.failCommunicationInitialization = true;
+    await expect(provisionRukiyeZara(request, store)).rejects.toMatchObject({
+      code: 'provisioning_failed',
+    });
+    expect(store.properties).toHaveLength(0);
+
+    const retry = await provisionRukiyeZara(request, store);
+    expect(store.communication.get(retry.crm_property_id)?.map_url).toBe(
+      'https://maps.example/lakeside'
+    );
   });
 
   it('reuses an existing external identity and its owned workspace', async () => {

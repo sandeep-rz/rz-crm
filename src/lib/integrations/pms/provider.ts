@@ -5,6 +5,21 @@ export interface PmsIntegrationContext {
   externalAccountId: string;
 }
 
+export interface PmsPropertyCommunication {
+  map_url?: string | null;
+  checkin_method?: string | null;
+  directions?: string | null;
+  parking_instructions?: string | null;
+  nearby_landmark?: string | null;
+  caretaker_name?: string | null;
+  caretaker_phone?: string | null;
+  emergency_phone?: string | null;
+  wifi_name?: string | null;
+  wifi_password?: string | null;
+  house_manual?: string | null;
+  checkout_instructions?: string | null;
+}
+
 export interface PmsProperty {
   externalId: string;
   name: string;
@@ -14,6 +29,7 @@ export interface PmsProperty {
   address: Record<string, string | null>;
   currency: string | null;
   createdAt: string | null;
+  communication?: PmsPropertyCommunication | null;
 }
 
 export interface PmsReservation {

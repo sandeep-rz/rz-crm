@@ -38,7 +38,8 @@ vi.mock('@/lib/whatsapp/template-body', () => ({
 }));
 
 vi.mock('@/lib/message-variables', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@/lib/message-variables')>();
+  const original =
+    await importOriginal<typeof import('@/lib/message-variables')>();
   return {
     ...original,
     listMessageVariableDefinitions: vi.fn(async () => state.definitions),

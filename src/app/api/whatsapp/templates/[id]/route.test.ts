@@ -129,7 +129,7 @@ function patchTemplate() {
         name: 'order_update',
         category: 'Marketing',
         language: 'en_US',
-        body_text: 'Rewritten by an unprivileged member',
+        semantic_content: { body_text: 'Rewritten by an unprivileged member' },
       }),
     }),
     { params }

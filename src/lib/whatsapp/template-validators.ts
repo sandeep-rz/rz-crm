@@ -35,6 +35,7 @@ export const TEMPLATE_LIMITS = {
 } as const;
 
 export interface TemplatePayload {
+  semantic_content?: import('./semantic-template').SemanticTemplateContent;
   name: string;
   category: MessageTemplate['category'];
   language: string;
@@ -87,6 +88,14 @@ function assertContiguous(indices: number[], where: string): void {
   }
 }
 
+function assertPositionalTokens(text: string, where: string): void {
+  if (/\{\{|\}\}/.test(text.replace(/\{\{[1-9]\d*\}\}/g, ''))) {
+    throw new Error(
+      `${where} contains malformed or unsupported template variables.`
+    );
+  }
+}
+
 export function validateBody(bodyText: string): number[] {
   if (!bodyText.trim()) throw new Error('Body text is required.');
   if (bodyText.length > TEMPLATE_LIMITS.bodyMaxLength) {
@@ -94,6 +103,7 @@ export function validateBody(bodyText: string): number[] {
       `Body text exceeds ${TEMPLATE_LIMITS.bodyMaxLength} chars (got ${bodyText.length}).`
     );
   }
+  assertPositionalTokens(bodyText, 'Body');
   const indices = extractVariableIndices(bodyText);
   assertContiguous(indices, 'Body');
   return indices;
@@ -106,7 +116,7 @@ export function validateFooter(footerText: string | undefined): void {
       `Footer text exceeds ${TEMPLATE_LIMITS.footerMaxLength} chars (got ${footerText.length}).`
     );
   }
-  if (extractVariableIndices(footerText).length > 0) {
+  if (/\{\{|\}\}/.test(footerText)) {
     throw new Error('Footer text cannot contain {{N}} variables (Meta rule).');
   }
 }
@@ -135,6 +145,7 @@ export function validateHeader(
         `Header text exceeds ${TEMPLATE_LIMITS.headerTextMaxLength} chars (got ${header_content.length}).`
       );
     }
+    assertPositionalTokens(header_content, 'Header');
     const indices = extractVariableIndices(header_content);
     if (indices.length > 1) {
       throw new Error(
@@ -241,6 +252,7 @@ export function validateButtons(buttons: TemplateButton[] | undefined): void {
         } catch {
           throw new Error(`URL button #${i + 1} has an invalid url.`);
         }
+        assertPositionalTokens(b.url, 'Button URL');
         const urlVars = extractVariableIndices(b.url);
         if (urlVars.length > 1) {
           throw new Error(

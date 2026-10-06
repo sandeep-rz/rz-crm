@@ -1,3 +1,8 @@
+import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog';
+import {
+  compileSemanticTemplate,
+  type SemanticTemplateMetadata,
+} from '@/lib/whatsapp/semantic-template';
 import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -30,12 +35,14 @@ function buildUpsertRow(
     status: 'DRAFT' | string;
     metaTemplateId: string | null;
     submissionError: string | null;
+    semanticMetadata: SemanticTemplateMetadata;
   }
 ) {
   return {
     // Account tenancy — required NOT NULL on message_templates as
     // of migration 017. Without this an INSERT throws on the
     // not-null constraint.
+    ...extras.semanticMetadata,
     account_id: accountId,
     // Original author — kept as audit only. The unique index is
     // still on (user_id, name, language) — see the upsert helper
@@ -130,7 +137,19 @@ export async function POST(request: Request) {
       );
     }
 
+    let semanticMetadata: SemanticTemplateMetadata;
     try {
+      if (!payload.semantic_content)
+        throw new Error(
+          'semantic_content is required for RGCRM template authoring.'
+        );
+      const compiled = compileSemanticTemplate(
+        payload,
+        payload.semantic_content,
+        await listMessageVariableDefinitions({ db: supabase })
+      );
+      payload = compiled.transport;
+      semanticMetadata = compiled.metadata;
       validateTemplatePayload(payload);
     } catch (e) {
       return NextResponse.json(
@@ -153,6 +172,25 @@ export async function POST(request: Request) {
       accountId,
       connectionId: requestedConnectionId,
     });
+
+    // A semantic authoring request must not silently replace an already-submitted
+    // template through the create/upsert path; edits use the lifecycle endpoint.
+    const { data: existing, error } = await supabase
+      .from('message_templates')
+      .select('id, meta_template_id')
+      .eq('account_id', accountId)
+      .eq('whatsapp_config_id', config.id)
+      .eq('name', payload.name)
+      .eq('language', payload.language)
+      .maybeSingle();
+    if (error) throw error;
+    if (existing?.meta_template_id)
+      return NextResponse.json(
+        {
+          error: 'This template is already submitted. Use Edit to change it.',
+        },
+        { status: 409 }
+      );
 
     let metaTemplateId: string;
     let metaStatus: string;
@@ -206,6 +244,7 @@ export async function POST(request: Request) {
         await upsertTemplateRow(
           supabase,
           buildUpsertRow(accountId, userId, config.id, payload, {
+            semanticMetadata,
             status: 'DRAFT',
             metaTemplateId: null,
             submissionError: message,
@@ -226,6 +265,7 @@ export async function POST(request: Request) {
     const { data: row, error: upsertErr } = await upsertTemplateRow(
       supabase,
       buildUpsertRow(accountId, userId, config.id, payload, {
+        semanticMetadata,
         status: normalizeStatus(metaStatus),
         metaTemplateId,
         submissionError: null,

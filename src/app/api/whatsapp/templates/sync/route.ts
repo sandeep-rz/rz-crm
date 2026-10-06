@@ -1,3 +1,5 @@
+import { reconcileTemplateSemantics } from '@/lib/whatsapp/semantic-template';
+import type { MessageTemplate } from '@/types';
 import { NextResponse } from 'next/server';
 import {
   ForbiddenError,
@@ -248,7 +250,9 @@ export async function POST(request: Request) {
 
       const { data: existing, error: lookupErr } = await supabase
         .from('message_templates')
-        .select('id')
+        .select(
+          'id, body_text, header_type, header_content, buttons, semantic_content, semantic_variable_mapping, variable_configuration_status, template_origin'
+        )
         .eq('account_id', accountId)
         .eq('whatsapp_config_id', config.id)
         .eq('name', t.name)
@@ -264,10 +268,28 @@ export async function POST(request: Request) {
         continue;
       }
 
+      let semanticMetadata;
+      try {
+        semanticMetadata = reconcileTemplateSemantics(
+          existing as MessageTemplate | null,
+          row as unknown as MessageTemplate
+        );
+      } catch (error) {
+        errors.push({
+          name: t.name,
+          language: t.language,
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Semantic template conflict.',
+        });
+        continue;
+      }
+      const syncedRow = { ...row, ...semanticMetadata };
       if (existing?.id) {
         const { error: updErr } = await supabase
           .from('message_templates')
-          .update(row)
+          .update(syncedRow)
           .eq('id', existing.id);
         if (updErr) {
           errors.push({
@@ -281,7 +303,7 @@ export async function POST(request: Request) {
       } else {
         const { error: insErr } = await supabase
           .from('message_templates')
-          .insert(row);
+          .insert(syncedRow);
         if (insErr) {
           errors.push({
             name: t.name,

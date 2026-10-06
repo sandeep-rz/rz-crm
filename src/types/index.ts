@@ -361,6 +361,11 @@ export interface TemplateSampleValues {
 }
 
 export interface MessageTemplate {
+  template_origin?: 'rgcrm' | 'meta';
+  semantic_content?:
+    import('@/lib/whatsapp/semantic-template').SemanticTemplateContent | null;
+  semantic_variable_mapping?: import('@/lib/whatsapp/semantic-template').TemplateVariableOccurrence[];
+  variable_configuration_status?: 'configured' | 'needs_mapping';
   id: string;
   account_id?: string;
   user_id: string;

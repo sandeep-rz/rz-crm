@@ -1,3 +1,8 @@
+import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog';
+import {
+  compileSemanticTemplate,
+  type SemanticTemplateMetadata,
+} from '@/lib/whatsapp/semantic-template';
 import { NextResponse } from 'next/server';
 import {
   ForbiddenError,
@@ -127,7 +132,19 @@ export async function PATCH(
       );
     }
 
+    let semanticMetadata: SemanticTemplateMetadata;
     try {
+      if (!payload.semantic_content)
+        throw new Error(
+          'semantic_content is required for RGCRM template authoring.'
+        );
+      const compiled = compileSemanticTemplate(
+        payload,
+        payload.semantic_content,
+        await listMessageVariableDefinitions({ db: supabase })
+      );
+      payload = compiled.transport;
+      semanticMetadata = compiled.metadata;
       validateTemplatePayload(payload);
     } catch (e) {
       return NextResponse.json(
@@ -184,6 +201,7 @@ export async function PATCH(
     const { data: row, error: updErr } = await supabase
       .from('message_templates')
       .update({
+        ...semanticMetadata,
         category: payload.category,
         header_type: payload.header_type ?? null,
         header_content: payload.header_content ?? null,

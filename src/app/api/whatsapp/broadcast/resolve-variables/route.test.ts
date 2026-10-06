@@ -115,7 +115,7 @@ describe('Broadcast semantic resolver route', () => {
       definition('contact.first_name', 'contact'),
       definition('contact.email', 'contact'),
       definition('workspace.name', 'workspace'),
-      definition('reservation.check_in', 'reservation'),
+      definition('reservation.check_in_date', 'reservation'),
       definition('property.name', 'property'),
       definition('contact.inactive', 'contact', false),
     ];
@@ -292,7 +292,7 @@ describe('Broadcast semantic resolver route', () => {
   it('rejects inactive and context-unavailable variables', async () => {
     for (const key of [
       'contact.inactive',
-      'reservation.check_in',
+      'reservation.check_in_date',
       'property.name',
     ]) {
       const response = await POST(

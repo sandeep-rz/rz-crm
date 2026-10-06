@@ -948,7 +948,7 @@ describe('send_template semantic variable mappings', () => {
           position: 3,
           value: '2026-10-15',
           source_type: 'catalog_variable',
-          variable_key: 'reservation.check_in',
+          variable_key: 'reservation.check_in_date',
         },
       ],
       missing: [],

@@ -18,14 +18,14 @@ const context: MessageVariableContext = {
     id: 'reservation-a',
     reference: 'ABC123',
     status: 'confirmed',
-    check_in: '2026-10-15',
-    check_out: '2026-10-18',
+    check_in_date: '2026-10-15',
+    check_out_date: '2026-10-18',
     nights: 3,
     guest_count: 2,
     adult_count: 2,
     child_count: 0,
     channel: 'Direct',
-    amount: '12500.00',
+    total_amount: '12500.00',
     currency: 'INR',
   },
   property: {
@@ -38,7 +38,7 @@ const context: MessageVariableContext = {
 describe('resolveContextPath', () => {
   it.each([
     ['contact.first_name', 'Sandeep'],
-    ['reservation.check_in', '2026-10-15'],
+    ['reservation.check_in_date', '2026-10-15'],
     ['property.name', 'Lakeside Meadows'],
     ['workspace.name', 'Workspace A'],
     ['reservation.nights', 3],

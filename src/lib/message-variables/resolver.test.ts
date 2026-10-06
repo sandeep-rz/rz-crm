@@ -79,7 +79,14 @@ const catalog = [
   definition('contact.first_name'),
   definition('contact.phone', 'contact.phone', { is_sensitive: true }),
   definition('property.name'),
-  definition('reservation.check_in'),
+  definition('reservation.check_in_date'),
+  definition('reservation.check_out_date'),
+  definition('reservation.total_amount'),
+  definition('listing.check_in_time', 'listing.check_in_time', {
+    data_type: 'time',
+    resolution_source: 'provider',
+    preview_value: '14:00',
+  }),
   definition('reservation.nights', 'reservation.nights', {
     data_type: 'number',
   }),
@@ -104,14 +111,14 @@ const context: MessageVariableContext = {
     id: 'reservation-a',
     reference: 'ABC123',
     status: 'confirmed',
-    check_in: '2026-10-15',
-    check_out: '2026-10-18',
+    check_in_date: '2026-10-15',
+    check_out_date: '2026-10-18',
     nights: 3,
     guest_count: 2,
     adult_count: 2,
     child_count: 0,
     channel: 'Direct',
-    amount: '12500.50',
+    total_amount: '12500.50',
     currency: 'INR',
   },
   property: {
@@ -149,6 +156,22 @@ const catalogMapping = (variable_key: string, position = 1) => ({
 });
 
 describe('resolveMessageVariables', () => {
+  it('does not treat provider previews as runtime values', async () => {
+    const result = await resolve([catalogMapping('listing.check_in_time')]);
+    expect(result).toMatchObject({
+      success: false,
+      values: [],
+      errors: [],
+      missing: [
+        {
+          variable_key: 'listing.check_in_time',
+          source_scope: 'listing',
+          reason: 'MISSING_CONTEXT_VALUE',
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain('14:00');
+  });
   it('rejects a retired hospitality mapping even when it has a fallback', async () => {
     const result = await resolve([
       { ...catalogMapping('property.wifi_password'), fallback: 'obsolete' },
@@ -181,7 +204,9 @@ describe('resolveMessageVariables', () => {
   it.each([
     ['contact.first_name', 'Sandeep'],
     ['property.name', 'Lakeside Meadows'],
-    ['reservation.check_in', '2026-10-15'],
+    ['reservation.check_in_date', '2026-10-15'],
+    ['reservation.check_out_date', '2026-10-18'],
+    ['reservation.total_amount', '12500.50'],
     ['workspace.name', 'Workspace A'],
   ])('resolves %s from semantic context', async (key, expected) => {
     const result = await resolve([catalogMapping(key)]);
@@ -262,17 +287,20 @@ describe('resolveMessageVariables', () => {
   });
 
   it('returns missing context for a reservation variable in contact-only context', async () => {
-    const result = await resolve([catalogMapping('reservation.check_in')], {
-      context: {
-        contact: context.contact,
-        workspace: context.workspace,
-      },
-    });
+    const result = await resolve(
+      [catalogMapping('reservation.check_in_date')],
+      {
+        context: {
+          contact: context.contact,
+          workspace: context.workspace,
+        },
+      }
+    );
     expect(result).toMatchObject({
       success: false,
       missing: [
         {
-          variable_key: 'reservation.check_in',
+          variable_key: 'reservation.check_in_date',
           reason: 'MISSING_CONTEXT_VALUE',
         },
       ],
@@ -582,7 +610,7 @@ describe('buildAndResolveMessageVariables', () => {
       buildAndResolveMessageVariables({
         accountId: 'account-a',
         reservationId: 'reservation-a',
-        mappings: [catalogMapping('reservation.check_in')],
+        mappings: [catalogMapping('reservation.check_in_date')],
         db: highLevelDb({
           pms_reservations: [{ ...reservationRow, account_id: 'account-b' }],
         }),

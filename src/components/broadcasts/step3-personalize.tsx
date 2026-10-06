@@ -1,5 +1,14 @@
 'use client';
 
+import {
+  MESSAGE_VARIABLE_CATEGORIES,
+  MESSAGE_VARIABLE_CATEGORY_LABELS,
+} from '@/lib/message-variables/contract';
+import type {
+  MessageVariableResolutionSource,
+  MessageVariableSourceScope,
+} from '@/lib/message-variables/contract';
+
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, Eye, ImageIcon, Loader2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -12,10 +21,7 @@ import {
   mappingIdentity,
   sourceScopeAvailabilityMessage,
 } from '@/lib/broadcast-message-variables';
-import type {
-  MessageVariableMapping,
-  MessageVariableSourceScope,
-} from '@/lib/message-variables';
+import type { MessageVariableMapping } from '@/lib/message-variables';
 import { createClient } from '@/lib/supabase/client';
 import type { CustomField, MessageTemplate } from '@/types';
 import { useAuth } from '@/hooks/use-auth';
@@ -27,6 +33,7 @@ interface CatalogOption {
   source_scope: MessageVariableSourceScope;
   preview_value: string | null;
   is_sensitive: boolean;
+  resolution_source: MessageVariableResolutionSource;
 }
 
 interface Step3Props {
@@ -90,7 +97,7 @@ export function Step3Personalize({
         supabase
           .from('message_variable_catalog')
           .select(
-            'variable_key, label, category, source_scope, preview_value, is_sensitive'
+            'variable_key, label, category, source_scope, resolution_source, preview_value, is_sensitive'
           )
           .eq('is_active', true)
           .order('sort_order'),
@@ -307,16 +314,18 @@ export function Step3Personalize({
                   <option value="">
                     {loadingSources ? 'Loading variables…' : 'Select a value…'}
                   </option>
-                  {(
-                    ['contact', 'reservation', 'property', 'workspace'] as const
-                  ).map((category) => {
+                  {MESSAGE_VARIABLE_CATEGORIES.map((category) => {
                     const options = catalog.filter(
                       (definition) => definition.category === category
                     );
                     return options.length ? (
-                      <optgroup key={category} label={category.toUpperCase()}>
+                      <optgroup
+                        key={category}
+                        label={MESSAGE_VARIABLE_CATEGORY_LABELS[category]}
+                      >
                         {options.map((definition) => {
                           const available =
+                            definition.resolution_source !== 'provider' &&
                             capabilities[definition.source_scope];
                           return (
                             <option
@@ -326,7 +335,9 @@ export function Step3Personalize({
                             >
                               {definition.label}
                               {!available
-                                ? ` — ${sourceScopeAvailabilityMessage(definition.source_scope)}`
+                                ? definition.resolution_source === 'provider'
+                                  ? ' — not available yet'
+                                  : ` — ${sourceScopeAvailabilityMessage(definition.source_scope)}`
                                 : ''}
                             </option>
                           );

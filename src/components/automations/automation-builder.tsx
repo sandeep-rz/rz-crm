@@ -1,6 +1,15 @@
 'use client';
 
 import {
+  MESSAGE_VARIABLE_CATEGORIES,
+  MESSAGE_VARIABLE_CATEGORY_LABELS,
+} from '@/lib/message-variables/contract';
+import type {
+  MessageVariableResolutionSource,
+  MessageVariableSourceScope,
+} from '@/lib/message-variables/contract';
+
+import {
   createContext,
   useContext,
   useEffect,
@@ -311,10 +320,11 @@ interface CatalogVariableOption {
   variable_key: string;
   label: string;
   description: string | null;
-  category: 'contact' | 'reservation' | 'property' | 'workspace';
-  source_scope: 'contact' | 'reservation' | 'property' | 'workspace';
+  category: MessageVariableSourceScope;
+  source_scope: MessageVariableSourceScope;
   preview_value: string | null;
   is_sensitive: boolean;
+  resolution_source: MessageVariableResolutionSource;
 }
 
 interface PipelineOption {
@@ -441,7 +451,7 @@ function ResourcesProvider({
         supabase
           .from('message_variable_catalog')
           .select(
-            'variable_key, label, description, category, source_scope, preview_value, is_sensitive'
+            'variable_key, label, description, category, source_scope, resolution_source, preview_value, is_sensitive'
           )
           .eq('is_active', true)
           .order('sort_order'),
@@ -1014,24 +1024,30 @@ function SendTemplateFields({
                   className={SELECT_CLASS}
                 >
                   <option value="">Select a variable…</option>
-                  {(
-                    ['contact', 'reservation', 'property', 'workspace'] as const
-                  ).map((category) => {
+                  {MESSAGE_VARIABLE_CATEGORIES.map((category) => {
                     const options = messageVariables.filter(
                       (variable) => variable.category === category
                     );
                     return options.length > 0 ? (
-                      <optgroup key={category} label={category.toUpperCase()}>
+                      <optgroup
+                        key={category}
+                        label={MESSAGE_VARIABLE_CATEGORY_LABELS[category]}
+                      >
                         {options.map((variable) => (
                           <option
                             key={variable.variable_key}
                             value={`catalog:${variable.variable_key}`}
-                            disabled={!capabilities[variable.source_scope]}
+                            disabled={
+                              variable.resolution_source === 'provider' ||
+                              !capabilities[variable.source_scope]
+                            }
                           >
                             {variable.label}
-                            {!capabilities[variable.source_scope]
-                              ? ' — unavailable for this trigger'
-                              : ''}
+                            {variable.resolution_source === 'provider'
+                              ? ' — not available yet'
+                              : !capabilities[variable.source_scope]
+                                ? ' — unavailable for this trigger'
+                                : ''}
                           </option>
                         ))}
                       </optgroup>

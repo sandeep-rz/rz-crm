@@ -29,6 +29,7 @@ function definition(
     category: sourceScope,
     dataType: 'text',
     sourceScope,
+    resolutionSource: 'context',
     resolverKey: variableKey,
     previewValue: `Preview ${variableKey}`,
     defaultFallback: null,
@@ -82,6 +83,8 @@ describe('Broadcast semantic message variables', () => {
     expect(capabilities).toEqual({
       contact: true,
       workspace: true,
+      listing: false,
+      host: false,
       property: false,
       reservation: false,
     });
@@ -114,13 +117,13 @@ describe('Broadcast semantic message variables', () => {
   it('rejects inactive, unknown, and context-unavailable catalog variables', () => {
     const definitions = [
       definition('contact.inactive', 'contact', false),
-      definition('reservation.check_in', 'reservation'),
+      definition('reservation.check_in_date', 'reservation'),
       definition('property.name', 'property'),
     ];
     for (const [key, issue] of [
       ['contact.inactive', 'INACTIVE_CATALOG_VARIABLE'],
       ['contact.unknown', 'UNKNOWN_CATALOG_VARIABLE'],
-      ['reservation.check_in', 'CONTEXT_UNAVAILABLE'],
+      ['reservation.check_in_date', 'CONTEXT_UNAVAILABLE'],
       ['property.name', 'CONTEXT_UNAVAILABLE'],
     ]) {
       expect(

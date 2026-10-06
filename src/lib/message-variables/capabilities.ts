@@ -2,6 +2,8 @@ export interface MessageVariableContextCapabilities {
   contact: boolean;
   reservation: boolean;
   property: boolean;
+  listing: false;
+  host: false;
   workspace: true;
 }
 
@@ -19,6 +21,9 @@ export function createMessageVariableContextCapabilities(input: {
     contact: Boolean(input.contact),
     reservation,
     property: Boolean(input.property) || reservation,
+    // Vocabulary exists; these contexts have no resolver in Contract v1.
+    listing: false,
+    host: false,
     workspace: true,
   };
 }

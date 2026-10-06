@@ -143,6 +143,8 @@ describe('automation builder hospitality model', () => {
         reservation: true,
         property: true,
         workspace: true,
+        listing: false,
+        host: false,
       });
     }
   );
@@ -155,6 +157,8 @@ describe('automation builder hospitality model', () => {
       reservation: false,
       property: false,
       workspace: true,
+      listing: false,
+      host: false,
     });
   });
 

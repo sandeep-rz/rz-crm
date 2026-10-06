@@ -2,11 +2,13 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 
-export type MessageVariableDataType =
-  'text' | 'phone' | 'email' | 'date' | 'number' | 'currency' | 'url';
-
-export type MessageVariableSourceScope =
-  'contact' | 'reservation' | 'property' | 'workspace';
+// Shared vocabulary metadata is safe to import in client-side pickers.
+export * from './contract';
+import type {
+  MessageVariableDataType,
+  MessageVariableResolutionSource,
+  MessageVariableSourceScope,
+} from './contract';
 
 export interface MessageVariableDefinition {
   id: string;
@@ -16,6 +18,7 @@ export interface MessageVariableDefinition {
   category: MessageVariableSourceScope;
   dataType: MessageVariableDataType;
   sourceScope: MessageVariableSourceScope;
+  resolutionSource: MessageVariableResolutionSource;
   resolverKey: string;
   previewValue: string | null;
   defaultFallback: string | null;
@@ -49,6 +52,7 @@ interface CatalogRow {
   category: MessageVariableSourceScope;
   data_type: MessageVariableDataType;
   source_scope: MessageVariableSourceScope;
+  resolution_source?: MessageVariableResolutionSource;
   resolver_key: string;
   preview_value: string | null;
   default_fallback: string | null;
@@ -74,7 +78,7 @@ export async function listMessageVariableDefinitions(
   let query = db
     .from('message_variable_catalog')
     .select(
-      'id, variable_key, label, description, category, data_type, source_scope, resolver_key, preview_value, default_fallback, is_sensitive, is_active, sort_order'
+      'id, variable_key, label, description, category, data_type, source_scope, resolution_source, resolver_key, preview_value, default_fallback, is_sensitive, is_active, sort_order'
     );
   if (!options.includeInactive) query = query.eq('is_active', true);
 
@@ -91,6 +95,7 @@ export async function listMessageVariableDefinitions(
     category: row.category,
     dataType: row.data_type,
     sourceScope: row.source_scope,
+    resolutionSource: row.resolution_source ?? 'context',
     resolverKey: row.resolver_key,
     previewValue: row.preview_value,
     defaultFallback: row.default_fallback,

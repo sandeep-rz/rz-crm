@@ -127,14 +127,14 @@ describe('buildMessageContext', () => {
       id: 'reservation-a',
       reference: 'ABC123',
       status: 'confirmed',
-      check_in: '2026-10-15',
-      check_out: '2026-10-18',
+      check_in_date: '2026-10-15',
+      check_out_date: '2026-10-18',
       nights: 3,
       guest_count: 4,
       adult_count: 2,
       child_count: 1,
       channel: 'Direct',
-      amount: '12500.50',
+      total_amount: '12500.50',
       currency: 'INR',
     });
     expect(result.property).toMatchObject({
@@ -272,8 +272,8 @@ describe('buildMessageContext', () => {
       { accountId: 'account-a', reservationId: 'reservation-a' },
       client
     );
-    expect(result.reservation?.amount).toBe('12500.50');
-    expect(typeof result.reservation?.amount).toBe('string');
+    expect(result.reservation?.total_amount).toBe('12500.50');
+    expect(typeof result.reservation?.total_amount).toBe('string');
   });
 
   it('contains no provider-specific keys', async () => {

@@ -45,6 +45,7 @@ const active = {
   category: 'contact',
   data_type: 'text',
   source_scope: 'contact',
+  resolution_source: 'context',
   resolver_key: 'contact.full_name',
   preview_value: 'Sandeep Sharma',
   default_fallback: '',
@@ -62,6 +63,52 @@ const inactive = {
 };
 
 describe('message variable catalog service', () => {
+  it('exposes semantic provider metadata and time types without provider paths', async () => {
+    const definitions = await listMessageVariableDefinitions({
+      db: catalogDb([
+        {
+          ...active,
+          id: 'listing-time',
+          variable_key: 'listing.check_in_time',
+          resolver_key: 'listing.check_in_time',
+          category: 'listing',
+          source_scope: 'listing',
+          data_type: 'time',
+          resolution_source: 'provider',
+          preview_value: '14:00',
+        },
+        {
+          ...active,
+          id: 'host-phone',
+          variable_key: 'host.phone',
+          resolver_key: 'host.phone',
+          category: 'host',
+          source_scope: 'host',
+          data_type: 'phone',
+          resolution_source: 'provider',
+          is_sensitive: true,
+        },
+      ]),
+    });
+    expect(definitions).toMatchObject([
+      {
+        variableKey: 'listing.check_in_time',
+        resolverKey: 'listing.check_in_time',
+        category: 'listing',
+        dataType: 'time',
+        resolutionSource: 'provider',
+        previewValue: '14:00',
+      },
+      {
+        variableKey: 'host.phone',
+        category: 'host',
+        dataType: 'phone',
+        resolutionSource: 'provider',
+        isSensitive: true,
+      },
+    ]);
+  });
+
   it('returns active predefined definitions in the picker source', async () => {
     const source = await getMessageVariablePickerSource({
       db: catalogDb([active, inactive]),

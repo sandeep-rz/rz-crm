@@ -15,15 +15,15 @@ export interface MessageReservationContext {
   id: string;
   reference: string | null;
   status: string;
-  check_in: string | null;
-  check_out: string | null;
+  check_in_date: string | null;
+  check_out_date: string | null;
   nights: number | null;
   guest_count: number | null;
   adult_count: number | null;
   child_count: number | null;
   channel: string | null;
   /** Unformatted PostgreSQL NUMERIC representation; never used for arithmetic. */
-  amount: string | null;
+  total_amount: string | null;
   currency: string | null;
 }
 
@@ -164,14 +164,14 @@ function normalizeReservation(row: ReservationRow): MessageReservationContext {
     id: row.id,
     reference: clean(row.reservation_code),
     status: row.status,
-    check_in: row.check_in,
-    check_out: row.check_out,
+    check_in_date: row.check_in,
+    check_out_date: row.check_out,
     nights: nightsBetween(row.check_in, row.check_out),
     guest_count: computedGuestCount(row),
     adult_count: row.adults,
     child_count: row.children,
     channel: clean(row.channel_name) ?? clean(row.channel_code),
-    amount: row.total_amount == null ? null : String(row.total_amount),
+    total_amount: row.total_amount == null ? null : String(row.total_amount),
     currency: clean(row.currency),
   };
 }

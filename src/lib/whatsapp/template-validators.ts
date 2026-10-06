@@ -349,3 +349,15 @@ export function validateTemplatePayload(payload: TemplatePayload): {
     headerVarCount: headerResult.variableCount,
   };
 }
+
+/** Creation/edit preflight only; this does not alter stored templates or send payloads.
+ * https://www.twilio.com/docs/whatsapp/tutorial/message-template-approvals-statuses
+ */
+export function validateTemplateSubmissionBody(body: string): void {
+  const text = body.trim();
+  if (/^\{\{\d+\}\}|\{\{\d+\}\}$/.test(text)) {
+    throw new Error(
+      'Meta template body cannot start or end with a variable. Add text or punctuation around the first and last variable (for example, "Checkout: {{4}}.").'
+    );
+  }
+}

@@ -12,6 +12,9 @@ import {
   Pencil,
   RotateCcw,
   Upload,
+  MessageSquare,
+  CheckCircle2,
+  Globe,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -30,7 +33,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useTranslations } from 'next-intl';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { SettingsPanelHead } from './settings-panel-head';
 import {
   Dialog,
@@ -52,12 +55,14 @@ import { templateStatusConfig } from '@/lib/template-status';
 import { TEMPLATE_LIMITS } from '@/lib/whatsapp/template-validators';
 
 import { SemanticTemplateEditor } from './semantic-template-editor';
+import { VariableSelection } from './semantic-variable-picker';
 import {
   canMapImportedTemplate,
   hasTemplateTokens,
   positionalSlots,
   slotIdentity,
   renderSemanticText,
+  semanticSegments,
   type CatalogVariable,
 } from '@/lib/whatsapp/semantic-template';
 
@@ -70,12 +75,6 @@ const HEADER_FORMATS: HeaderFormat[] = [
   'video',
   'document',
 ];
-
-const categoryColors: Record<string, string> = {
-  Marketing: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
-  Utility: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
-  Authentication: 'bg-amber-600/20 text-amber-400 border-amber-600/30',
-};
 
 interface TemplateFormData {
   name: string;
@@ -196,6 +195,7 @@ export function TemplateManager() {
         (data ?? []).map((row) => ({
           variableKey: row.variable_key,
           label: row.label,
+          description: row.description,
           previewValue: row.preview_value,
           isActive: row.is_active,
           category: row.category,
@@ -682,77 +682,118 @@ export function TemplateManager() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
+        <div className="grid items-stretch gap-5 md:grid-cols-2 2xl:grid-cols-3">
           {templates.map((template) => {
             const statusKey = template.status || 'DRAFT';
             const status = templateStatusConfig[statusKey];
             return (
-              <Card key={template.id}>
-                <CardContent className="flex items-start justify-between pt-4">
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-foreground font-medium">
-                        {template.name}
-                      </h3>
-                      <Badge
-                        className={`border text-xs ${categoryColors[template.category] || ''}`}
-                      >
-                        {template.category}
-                      </Badge>
-                      <Badge className={`border text-xs ${status.classes}`}>
-                        {status.label}
-                      </Badge>
-                      {template.language && (
-                        <span className="text-muted-foreground text-xs uppercase">
-                          {template.language}
-                        </span>
-                      )}
-                      <Badge variant="outline">
-                        {template.variable_configuration_status === 'configured'
-                          ? 'Variables configured'
-                          : 'Needs variable mapping'}
-                      </Badge>
-                      {template.quality_score && (
-                        <span
-                          className={`text-[10px] font-medium uppercase ${
-                            template.quality_score === 'GREEN'
-                              ? 'text-emerald-400'
-                              : template.quality_score === 'YELLOW'
-                                ? 'text-yellow-400'
-                                : 'text-red-400'
-                          }`}
-                          title={t('qualityScoreTitle')}
+              <Card
+                key={template.id}
+                className="gap-0 rounded-2xl py-0 shadow-sm transition-shadow hover:shadow-md"
+              >
+                <CardContent className="flex flex-1 flex-col gap-5 p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-xl">
+                        <MessageSquare className="size-5" aria-hidden="true" />
+                      </div>
+                      <div className="min-w-0 space-y-1.5">
+                        <h3
+                          className="text-foreground truncate text-base font-semibold"
+                          title={template.name}
                         >
-                          {template.quality_score}
-                        </span>
-                      )}
+                          {template.name}
+                        </h3>
+                        <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
+                          <span>{template.category}</span>
+                          {template.language && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span
+                                className="inline-flex items-center gap-1"
+                                title={t('language')}
+                              >
+                                <Globe className="size-3" aria-hidden="true" />
+                                {template.language.replace('_', '–')}
+                              </span>
+                            </>
+                          )}
+                          {template.quality_score && (
+                            <span
+                              title={t('qualityScoreTitle')}
+                              className={`font-medium ${template.quality_score === 'GREEN' ? 'text-emerald-700 dark:text-emerald-400' : template.quality_score === 'YELLOW' ? 'text-amber-700 dark:text-amber-400' : 'text-destructive'}`}
+                            >
+                              {template.quality_score}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-muted-foreground line-clamp-2 text-sm">
+                    <Badge
+                      className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] ${status.classes} ${statusKey === 'PENDING' ? 'text-yellow-800 dark:text-yellow-300' : ''}`}
+                    >
+                      {status.label}
+                    </Badge>
+                  </div>
+                  <div className="bg-muted/40 border-border/60 flex-1 space-y-3 rounded-xl border p-4">
+                    <p className="text-muted-foreground text-[10px] font-semibold tracking-widest uppercase">
+                      {t('cardPreview')}
+                    </p>
+                    <p className="text-foreground/85 line-clamp-6 text-sm leading-7 wrap-anywhere whitespace-pre-wrap">
                       {template.semantic_content
-                        ? renderSemanticText(
-                            template.semantic_content.body_text,
-                            catalog,
-                            'label'
+                        ? semanticSegments(
+                            template.semantic_content.body_text
+                          ).map((segment, index) =>
+                            segment.variableKey ? (
+                              <span
+                                key={index}
+                                className="bg-primary/10 text-primary rounded-md box-decoration-clone px-1.5 py-0.5 text-xs font-medium"
+                              >
+                                {renderSemanticText(
+                                  segment.text,
+                                  catalog,
+                                  'label'
+                                )}
+                              </span>
+                            ) : (
+                              segment.text
+                            )
                           )
                         : template.body_text}
                     </p>
                     {template.footer_text && (
-                      <p className="text-muted-foreground text-xs italic">
+                      <p className="text-muted-foreground border-border/60 border-t pt-3 text-xs whitespace-pre-wrap">
                         {template.footer_text}
                       </p>
                     )}
-                    {(template.rejection_reason ||
-                      template.submission_error) && (
-                      <div className="flex items-start gap-1.5 rounded border border-red-900/40 bg-red-950/20 px-2 py-1.5 text-xs text-red-400">
-                        <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-                        <span>
-                          {template.rejection_reason ||
-                            template.submission_error}
-                        </span>
-                      </div>
-                    )}
                   </div>
-                  <div className="ml-2 flex shrink-0 items-center gap-1">
+                  {(template.rejection_reason || template.submission_error) && (
+                    <div className="bg-destructive/5 text-destructive border-destructive/20 flex items-start gap-2 rounded-lg border p-3 text-xs leading-relaxed">
+                      <AlertCircle
+                        className="mt-0.5 size-4 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 wrap-anywhere">
+                        {template.rejection_reason || template.submission_error}
+                      </span>
+                    </div>
+                  )}
+                </CardContent>
+                <CardFooter className="flex flex-wrap items-center justify-between gap-2 bg-transparent px-5 py-3">
+                  <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
+                    {template.variable_configuration_status === 'configured' ? (
+                      <CheckCircle2
+                        className="text-primary size-3.5"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <AlertCircle className="size-3.5" aria-hidden="true" />
+                    )}
+                    {template.variable_configuration_status === 'configured'
+                      ? t('variablesConfigured')
+                      : t('needsVariableMapping')}
+                  </span>
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
                     {canMapImportedTemplate(template) && (
                       <Button
                         variant="ghost"
@@ -817,7 +858,7 @@ export function TemplateManager() {
                           ? t('deleteMetaLocallyTitle')
                           : t('deleteLocallyTitle')
                       }
-                      className="text-muted-foreground h-8 w-8 hover:bg-red-950/30 hover:text-red-400"
+                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive h-8 w-8"
                     >
                       {deletingId === template.id ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -826,7 +867,7 @@ export function TemplateManager() {
                       )}
                     </Button>
                   </div>
-                </CardContent>
+                </CardFooter>
               </Card>
             );
           })}
@@ -857,37 +898,17 @@ export function TemplateManager() {
                     : ` ${slot.button_index + 1}`}{' '}
                   {`{{${slot.position}}}`}
                 </Label>
-                <select
-                  aria-label={`Map ${slotIdentity(slot)}`}
-                  className="border-border bg-background w-full rounded border p-2"
+                <VariableSelection
+                  label={`Map ${slotIdentity(slot)}`}
+                  catalog={catalog}
                   value={mappingSelection[slotIdentity(slot)] ?? ''}
-                  onChange={(event) =>
+                  onChange={(key) =>
                     setMappingSelection({
                       ...mappingSelection,
-                      [slotIdentity(slot)]: event.target.value,
+                      [slotIdentity(slot)]: key,
                     })
                   }
-                >
-                  <option value="">Select a variable</option>
-                  {[...new Set(catalog.map((v) => v.category))].map(
-                    (category) => (
-                      <optgroup
-                        key={category}
-                        label={
-                          category.charAt(0).toUpperCase() + category.slice(1)
-                        }
-                      >
-                        {catalog
-                          .filter((v) => v.category === category)
-                          .map((v) => (
-                            <option key={v.variableKey} value={v.variableKey}>
-                              {v.label}
-                            </option>
-                          ))}
-                      </optgroup>
-                    )
-                  )}
-                </select>
+                />
               </div>
             ))}
           <DialogFooter>
@@ -1173,6 +1194,7 @@ export function TemplateManager() {
                 catalog={catalog}
                 onChange={(value) => setForm({ ...form, body_text: value })}
                 multiline
+                placeholder={t('bodyPlaceholder')}
               />
               {catalogError && (
                 <p className="text-destructive text-xs">

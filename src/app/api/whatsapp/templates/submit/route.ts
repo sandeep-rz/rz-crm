@@ -1,3 +1,4 @@
+import { templateSubmitError } from '@/lib/whatsapp/template-submit-error';
 import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog';
 import {
   compileSemanticTemplate,
@@ -15,6 +16,7 @@ import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { submitMessageTemplate } from '@/lib/whatsapp/meta-api';
 import {
   validateTemplatePayload,
+  validateTemplateSubmissionBody,
   type TemplatePayload,
 } from '@/lib/whatsapp/template-validators';
 import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components';
@@ -151,6 +153,7 @@ export async function POST(request: Request) {
       payload = compiled.transport;
       semanticMetadata = compiled.metadata;
       validateTemplatePayload(payload);
+      validateTemplateSubmissionBody(payload.body_text);
     } catch (e) {
       return NextResponse.json(
         { error: e instanceof Error ? e.message : 'Validation failed.' },
@@ -238,7 +241,14 @@ export async function POST(request: Request) {
         metaTemplateId = meta.id;
         metaStatus = meta.status;
       } catch (e) {
-        const message = e instanceof Error ? e.message : 'Meta submit failed.';
+        const failure = templateSubmitError(e, accessToken);
+        const message = failure.message;
+        console.error('Meta template submission rejected', {
+          code: failure.diagnostic?.code,
+          error_subcode: failure.diagnostic?.error_subcode,
+          fbtrace_id: failure.diagnostic?.fbtrace_id,
+          http_status: failure.diagnostic?.http_status,
+        });
         // Persist the failure so the user can retry; row stays DRAFT
         // until they fix and re-submit.
         await upsertTemplateRow(
@@ -247,12 +257,13 @@ export async function POST(request: Request) {
             semanticMetadata,
             status: 'DRAFT',
             metaTemplateId: null,
-            submissionError: message,
+            submissionError: failure.stored,
           })
         );
-        const isRateLimit = /\b429\b/.test(message);
+        const isRateLimit = failure.rateLimited;
         return NextResponse.json(
           {
+            meta_error: failure.diagnostic,
             error: isRateLimit
               ? 'Meta rate limit hit (100 template creates per hour). Try again later.'
               : message,

@@ -32,6 +32,8 @@ interface MetaErrorResponse {
     error_subcode?: number;
     type?: string;
     fbtrace_id?: string;
+    error_user_title?: string;
+    error_user_msg?: string;
     /** WhatsApp-specific envelope — `details` is the human-readable part. */
     error_data?: { messaging_product?: string; details?: string };
   };
@@ -53,6 +55,8 @@ export class MetaApiError extends Error {
   readonly type: string | null;
   readonly fbtraceId: string | null;
   readonly httpStatus: number;
+  readonly userTitle: string | null;
+  readonly userMessage: string | null;
   /** `error.error_data.details` — WhatsApp endpoints put the useful text here. */
   readonly details: string | null;
 
@@ -64,6 +68,8 @@ export class MetaApiError extends Error {
       type?: string | null;
       fbtraceId?: string | null;
       httpStatus: number;
+      userTitle?: string | null;
+      userMessage?: string | null;
       details?: string | null;
     }
   ) {
@@ -74,6 +80,8 @@ export class MetaApiError extends Error {
     this.type = fields.type ?? null;
     this.fbtraceId = fields.fbtraceId ?? null;
     this.httpStatus = fields.httpStatus;
+    this.userTitle = fields.userTitle ?? null;
+    this.userMessage = fields.userMessage ?? null;
     this.details = fields.details ?? null;
   }
 }
@@ -104,6 +112,14 @@ async function readMetaError(
     type: envelope?.type ?? null,
     fbtraceId: envelope?.fbtrace_id ?? null,
     httpStatus: response.status,
+    userTitle:
+      typeof envelope?.error_user_title === 'string'
+        ? envelope.error_user_title
+        : null,
+    userMessage:
+      typeof envelope?.error_user_msg === 'string'
+        ? envelope.error_user_msg
+        : null,
     details: envelope?.error_data?.details ?? null,
   });
 }

@@ -1,3 +1,4 @@
+import { templateSubmitError } from '@/lib/whatsapp/template-submit-error';
 import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog';
 import {
   compileSemanticTemplate,
@@ -17,6 +18,7 @@ import {
 } from '@/lib/whatsapp/meta-api';
 import {
   validateTemplatePayload,
+  validateTemplateSubmissionBody,
   type TemplatePayload,
 } from '@/lib/whatsapp/template-validators';
 import { buildMetaTemplatePayload } from '@/lib/whatsapp/template-components';
@@ -146,6 +148,7 @@ export async function PATCH(
       payload = compiled.transport;
       semanticMetadata = compiled.metadata;
       validateTemplatePayload(payload);
+      validateTemplateSubmissionBody(payload.body_text);
     } catch (e) {
       return NextResponse.json(
         { error: e instanceof Error ? e.message : 'Validation failed.' },
@@ -184,16 +187,20 @@ export async function PATCH(
           components: metaPayload.components,
         });
       } catch (e) {
-        const message = e instanceof Error ? e.message : 'Meta edit failed.';
+        const failure = templateSubmitError(e, accessToken);
+        const message = failure.message;
         await supabase
           .from('message_templates')
           .update({
-            submission_error: message,
+            submission_error: failure.stored,
             last_submitted_at: new Date().toISOString(),
           })
           .eq('id', id)
           .eq('account_id', accountId);
-        return NextResponse.json({ error: message }, { status: 502 });
+        return NextResponse.json(
+          { error: message, meta_error: failure.diagnostic },
+          { status: failure.rateLimited ? 429 : 502 }
+        );
       }
     }
 

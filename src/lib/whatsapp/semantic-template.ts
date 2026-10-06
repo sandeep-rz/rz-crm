@@ -18,7 +18,7 @@ export interface TemplateVariableOccurrence {
   variable_key: string;
   sample: string;
 }
-export type CatalogVariable = Pick<
+export type CatalogVariable = { description?: string | null } & Pick<
   MessageVariableDefinition,
   | 'variableKey'
   | 'label'

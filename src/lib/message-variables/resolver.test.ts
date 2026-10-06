@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import type { MessageVariableContext } from './context';
-import { emptyPropertyCommunicationValues } from '@/lib/properties/communication-settings';
 import {
   buildAndResolveMessageVariables,
   resolveMessageVariables,
@@ -80,20 +79,6 @@ const catalog = [
   definition('contact.first_name'),
   definition('contact.phone', 'contact.phone', { is_sensitive: true }),
   definition('property.name'),
-  definition('property.map_url', 'property.map_url', { data_type: 'url' }),
-  definition('property.checkin_method'),
-  definition('property.caretaker_name'),
-  definition('property.caretaker_phone', 'property.caretaker_phone', {
-    data_type: 'phone',
-    is_sensitive: true,
-  }),
-  definition('property.wifi_name'),
-  definition('property.wifi_password', 'property.wifi_password', {
-    is_sensitive: true,
-  }),
-  definition('property.house_manual', 'property.house_manual', {
-    is_sensitive: true,
-  }),
   definition('reservation.check_in'),
   definition('reservation.nights', 'reservation.nights', {
     data_type: 'number',
@@ -132,14 +117,6 @@ const context: MessageVariableContext = {
   property: {
     id: 'property-a',
     name: 'Lakeside Meadows',
-    ...emptyPropertyCommunicationValues(),
-    map_url: 'https://maps.example/lakeside',
-    checkin_method: 'Self check-in',
-    caretaker_name: 'Anil',
-    caretaker_phone: '+919876543210',
-    wifi_name: 'LakesideGuest',
-    wifi_password: 'private-password',
-    house_manual: 'Read the house guide',
   },
   workspace: { id: 'account-a', name: 'Workspace A' },
 };
@@ -172,6 +149,35 @@ const catalogMapping = (variable_key: string, position = 1) => ({
 });
 
 describe('resolveMessageVariables', () => {
+  it('rejects a retired hospitality mapping even when it has a fallback', async () => {
+    const result = await resolve([
+      { ...catalogMapping('property.wifi_password'), fallback: 'obsolete' },
+    ]);
+    expect(result).toMatchObject({
+      success: false,
+      values: [],
+      errors: [
+        {
+          code: 'UNKNOWN_CATALOG_VARIABLE',
+          variable_key: 'property.wifi_password',
+        },
+      ],
+    });
+  });
+
+  it('reports a missing contact value without exposing a sensitive sibling', async () => {
+    const result = await resolve([catalogMapping('contact.phone')], {
+      context: { ...context, contact: { ...context.contact!, phone: null } },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      missing: [
+        { variable_key: 'contact.phone', reason: 'MISSING_CONTEXT_VALUE' },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain('private@example.com');
+  });
+
   it.each([
     ['contact.first_name', 'Sandeep'],
     ['property.name', 'Lakeside Meadows'],
@@ -183,44 +189,6 @@ describe('resolveMessageVariables', () => {
       success: true,
       values: [{ variable_key: key, value: expected }],
     });
-  });
-
-  it.each([
-    ['property.map_url', 'https://maps.example/lakeside'],
-    ['property.checkin_method', 'Self check-in'],
-    ['property.caretaker_name', 'Anil'],
-    ['property.caretaker_phone', '+919876543210'],
-    ['property.wifi_name', 'LakesideGuest'],
-    ['property.wifi_password', 'private-password'],
-    ['property.house_manual', 'Read the house guide'],
-  ])(
-    'resolves communication variable %s through the generic resolver',
-    async (key, expected) => {
-      const result = await resolve([catalogMapping(key)]);
-      expect(result).toMatchObject({
-        success: true,
-        values: [{ variable_key: key, value: expected }],
-      });
-    }
-  );
-
-  it('reports a missing optional property value without exposing a sensitive sibling', async () => {
-    const result = await resolve([catalogMapping('property.wifi_password')], {
-      context: {
-        ...context,
-        property: { ...context.property!, wifi_password: null },
-      },
-    });
-    expect(result).toMatchObject({
-      success: false,
-      missing: [
-        {
-          variable_key: 'property.wifi_password',
-          reason: 'MISSING_CONTEXT_VALUE',
-        },
-      ],
-    });
-    expect(JSON.stringify(result)).not.toContain('private-password');
   });
 
   it('resolves and trims a static value', async () => {
@@ -578,7 +546,6 @@ describe('buildAndResolveMessageVariables', () => {
       contacts: [contactRow],
       pms_properties: [propertyRow],
       pms_reservations: [reservationRow],
-      property_communication_settings: [],
       message_variable_catalog: catalog,
       ...overrides,
     }).client;
@@ -594,33 +561,6 @@ describe('buildAndResolveMessageVariables', () => {
     expect(result).toMatchObject({
       success: true,
       values: [{ variable_key: 'contact.first_name', value: 'Sandeep' }],
-    });
-  });
-
-  it('builds canonical property settings and resolves them through the same production path', async () => {
-    const result = await buildAndResolveMessageVariables({
-      accountId: 'account-a',
-      reservationId: 'reservation-a',
-      mappings: [catalogMapping('property.map_url')],
-      db: highLevelDb({
-        property_communication_settings: [
-          {
-            id: 'settings-a',
-            account_id: 'account-a',
-            pms_property_id: 'property-a',
-            map_url: 'https://maps.example/lakeside',
-          },
-        ],
-      }),
-    });
-    expect(result).toMatchObject({
-      success: true,
-      values: [
-        {
-          variable_key: 'property.map_url',
-          value: 'https://maps.example/lakeside',
-        },
-      ],
     });
   });
 

@@ -1,5 +1,3 @@
-import type { PmsPropertyCommunication } from './provider';
-
 export const RUKIYE_ZARA_PROVIDER = 'rukiye_zara' as const;
 
 const UUID_PATTERN =
@@ -25,7 +23,6 @@ export interface RukiyeZaraProvisionRequest {
     external_property_id: string;
     name: string;
     timezone?: string;
-    communication?: PmsPropertyCommunication | null;
   };
 }
 
@@ -86,43 +83,6 @@ function normalizedString(
   return { value: normalized };
 }
 
-const COMMUNICATION_FIELDS = [
-  'map_url',
-  'checkin_method',
-  'directions',
-  'parking_instructions',
-  'nearby_landmark',
-  'caretaker_name',
-  'caretaker_phone',
-  'emergency_phone',
-  'wifi_name',
-  'wifi_password',
-  'house_manual',
-  'checkout_instructions',
-] as const satisfies readonly (keyof PmsPropertyCommunication)[];
-
-function normalizeCommunication(value: unknown): {
-  value?: PmsPropertyCommunication | null;
-  error?: string;
-} {
-  if (value === null) return { value: null };
-  if (!isRecord(value) || !hasOnlyKeys(value, [...COMMUNICATION_FIELDS])) {
-    return { error: 'property.communication is invalid.' };
-  }
-  const communication: PmsPropertyCommunication = {};
-  for (const field of COMMUNICATION_FIELDS) {
-    if (!(field in value)) continue;
-    const raw = value[field];
-    if (raw !== null && typeof raw !== 'string') {
-      return {
-        error: `property.communication.${field} must be a string or null.`,
-      };
-    }
-    communication[field] = typeof raw === 'string' ? raw.trim() || null : null;
-  }
-  return { value: communication };
-}
-
 export function validateProvisionRequest(value: unknown): ValidationResult {
   if (!isRecord(value)) {
     return { success: false, message: 'Request body must be a JSON object.' };
@@ -134,6 +94,8 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
       'external_account_id',
       'owner',
       'property',
+      // Legacy clients may still send this field; it is discarded below.
+      'communicationSnapshot',
     ])
   ) {
     return { success: false, message: 'Request contains unsupported fields.' };
@@ -153,7 +115,10 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
       'external_property_id',
       'name',
       'timezone',
+      // Retired fields are allowed only for rolling client upgrades.
+      // They are never validated, returned, logged, or persisted.
       'communication',
+      'communicationSnapshot',
     ])
   ) {
     return { success: false, message: 'Property contains unsupported fields.' };
@@ -247,15 +212,6 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
     propertyTimezone = timezone.value;
   }
 
-  let communication: PmsPropertyCommunication | null | undefined;
-  if (value.property.communication !== undefined) {
-    const normalized = normalizeCommunication(value.property.communication);
-    if (normalized.error) {
-      return { success: false, message: normalized.error };
-    }
-    communication = normalized.value;
-  }
-
   return {
     success: true,
     data: {
@@ -270,7 +226,6 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
         external_property_id: externalPropertyId.value!,
         name: propertyName.value!,
         ...(propertyTimezone ? { timezone: propertyTimezone } : {}),
-        ...(communication !== undefined ? { communication } : {}),
       },
     },
   };

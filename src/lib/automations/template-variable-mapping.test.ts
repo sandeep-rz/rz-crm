@@ -92,26 +92,26 @@ describe('automation template variable mapping', () => {
     ).toEqual([]);
   });
 
-  it('accepts new property catalog keys without hospitality-specific mapping logic', () => {
+  it('accepts semantic catalog keys without field-specific mapping logic', () => {
     expect(
       validateTemplateVariableMappings(template(), [
         {
           component: 'body',
           position: 1,
           source_type: 'catalog_variable',
-          variable_key: 'property.map_url',
+          variable_key: 'property.name',
         },
         {
           component: 'body',
           position: 2,
           source_type: 'catalog_variable',
-          variable_key: 'property.caretaker_phone',
+          variable_key: 'contact.phone',
         },
         {
           component: 'body',
           position: 3,
           source_type: 'catalog_variable',
-          variable_key: 'property.wifi_password',
+          variable_key: 'reservation.reference',
         },
       ])
     ).toEqual([]);

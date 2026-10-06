@@ -925,9 +925,9 @@ describe('send_template semantic variable mappings', () => {
         {
           component: 'body',
           position: 2,
-          value: 'https://maps.example/lakeside',
+          value: 'Lakeside Meadows',
           source_type: 'catalog_variable',
-          variable_key: 'property.map_url',
+          variable_key: 'property.name',
         },
         {
           component: 'header',
@@ -977,7 +977,7 @@ describe('send_template semantic variable mappings', () => {
     expect(h.state.metaSendCalls[0]).toMatchObject({
       messageParams: {
         headerText: 'ABC123',
-        body: ['Sandeep', 'https://maps.example/lakeside', '2026-10-15'],
+        body: ['Sandeep', 'Lakeside Meadows', '2026-10-15'],
       },
     });
   });
@@ -989,7 +989,7 @@ describe('send_template semantic variable mappings', () => {
           component: 'body',
           position: 1,
           source_type: 'catalog_variable',
-          variable_key: 'property.wifi_password',
+          variable_key: 'property.name',
         },
       ],
     });
@@ -1001,8 +1001,8 @@ describe('send_template semantic variable mappings', () => {
           component: 'body',
           position: 1,
           source_type: 'catalog_variable',
-          variable_key: 'property.wifi_password',
-          label: 'Wi-Fi password',
+          variable_key: 'property.name',
+          label: 'Property name',
           source_scope: 'property',
           reason: 'MISSING_CONTEXT_VALUE',
         },

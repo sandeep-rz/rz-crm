@@ -3,7 +3,6 @@ import { PmsHttpClient } from '../http-client';
 import {
   PmsProviderError,
   type PmsProperty,
-  type PmsPropertyCommunication,
   type PmsProvider,
   type PmsReservation,
   type PmsReservationPage,
@@ -54,44 +53,6 @@ const numberValue = (
   return value;
 };
 
-const communicationFields = [
-  'map_url',
-  'checkin_method',
-  'directions',
-  'parking_instructions',
-  'nearby_landmark',
-  'caretaker_name',
-  'caretaker_phone',
-  'emergency_phone',
-  'wifi_name',
-  'wifi_password',
-  'house_manual',
-  'checkout_instructions',
-] as const satisfies readonly (keyof PmsPropertyCommunication)[];
-
-function communicationFrom(
-  value: unknown
-): PmsPropertyCommunication | null | undefined {
-  if (value === undefined) return undefined;
-  if (value === null) return null;
-  const item = record(value);
-  return Object.fromEntries(
-    communicationFields
-      .filter((field) => field in item)
-      .map((field) => {
-        const raw = item[field];
-        if (raw === null || raw === undefined) return [field, null];
-        if (typeof raw !== 'string') {
-          throw new PmsProviderError(
-            'invalid_response',
-            `RZ PMS response has an invalid communication.${field}.`
-          );
-        }
-        return [field, raw.trim() || null];
-      })
-  ) as PmsPropertyCommunication;
-}
-
 function propertyFrom(value: unknown): PmsProperty {
   const item = record(value);
   const address = record(item.address);
@@ -109,9 +70,6 @@ function propertyFrom(value: unknown): PmsProperty {
     ),
     currency: nullableString(item.currency),
     createdAt: nullableString(item.created_at),
-    ...(item.communication !== undefined
-      ? { communication: communicationFrom(item.communication) }
-      : {}),
   };
 }
 

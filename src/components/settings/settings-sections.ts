@@ -1,5 +1,4 @@
 import {
-  Building2,
   Coins,
   FileText,
   KeyRound,
@@ -30,7 +29,6 @@ export const SETTINGS_SECTIONS = [
   'whatsapp',
   'templates',
   'quick-replies',
-  'properties',
   'fields',
   'deals',
   'members',
@@ -90,12 +88,6 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
     id: 'quick-replies',
     label: 'Quick replies',
     icon: Zap,
-    group: 'workspace',
-  },
-  properties: {
-    id: 'properties',
-    label: 'Property communication',
-    icon: Building2,
     group: 'workspace',
   },
   fields: {

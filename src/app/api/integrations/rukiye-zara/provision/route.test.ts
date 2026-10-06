@@ -79,6 +79,32 @@ beforeEach(() => {
 });
 
 describe('POST /api/integrations/rukiye-zara/provision', () => {
+  it('discards legacy hospitality fields before invoking provisioning', async () => {
+    const legacy = { wifi_password: 'must-not-be-stored' };
+    const response = await POST(
+      request({
+        ...BODY,
+        communicationSnapshot: legacy,
+        property: {
+          ...BODY.property,
+          communication: legacy,
+          communicationSnapshot: legacy,
+        },
+      })
+    );
+    expect(response.status).toBe(200);
+    expect(h.provision).toHaveBeenCalledWith({
+      ...BODY,
+      owner: { ...BODY.owner, email: BODY.owner.email.toLowerCase() },
+    });
+    expect(JSON.stringify(h.provision.mock.calls)).not.toContain(
+      'must-not-be-stored'
+    );
+    expect(JSON.stringify(await response.json())).not.toContain(
+      'communication'
+    );
+  });
+
   it('returns 401 when provider credentials are missing', async () => {
     const response = await POST(
       request(BODY, { 'Content-Type': 'application/json' })

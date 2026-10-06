@@ -115,13 +115,13 @@ describe('Broadcast semantic message variables', () => {
     const definitions = [
       definition('contact.inactive', 'contact', false),
       definition('reservation.check_in', 'reservation'),
-      definition('property.wifi_name', 'property'),
+      definition('property.name', 'property'),
     ];
     for (const [key, issue] of [
       ['contact.inactive', 'INACTIVE_CATALOG_VARIABLE'],
       ['contact.unknown', 'UNKNOWN_CATALOG_VARIABLE'],
       ['reservation.check_in', 'CONTEXT_UNAVAILABLE'],
-      ['property.wifi_name', 'CONTEXT_UNAVAILABLE'],
+      ['property.name', 'CONTEXT_UNAVAILABLE'],
     ]) {
       expect(
         validateBroadcastVariableMappings({
@@ -229,14 +229,14 @@ describe('Broadcast semantic message variables', () => {
           component: 'body',
           position: 1,
           source_type: 'catalog_variable',
-          variable_key: 'property.wifi_password',
+          variable_key: 'contact.phone',
           reason: 'MISSING_CONTEXT_VALUE',
         },
       ],
       errors: [],
     };
     const message = missingVariableIdentity(result);
-    expect(message).toContain('property.wifi_password');
+    expect(message).toContain('contact.phone');
     expect(message).not.toContain('actual-secret');
   });
 

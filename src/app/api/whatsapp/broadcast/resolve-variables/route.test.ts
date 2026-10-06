@@ -116,7 +116,7 @@ describe('Broadcast semantic resolver route', () => {
       definition('contact.email', 'contact'),
       definition('workspace.name', 'workspace'),
       definition('reservation.check_in', 'reservation'),
-      definition('property.wifi_name', 'property'),
+      definition('property.name', 'property'),
       definition('contact.inactive', 'contact', false),
     ];
     state.buildAndResolve.mockReset();
@@ -293,7 +293,7 @@ describe('Broadcast semantic resolver route', () => {
     for (const key of [
       'contact.inactive',
       'reservation.check_in',
-      'property.wifi_name',
+      'property.name',
     ]) {
       const response = await POST(
         request({

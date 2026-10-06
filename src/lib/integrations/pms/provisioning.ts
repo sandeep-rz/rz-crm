@@ -4,12 +4,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import {
-  normalizePropertyCommunicationPatch,
-  type PropertyCommunicationPatch,
-} from '@/lib/properties/communication-settings';
-import type { PmsPropertyCommunication } from './provider';
-
-import {
   type InitialSyncStatus,
   type RukiyeZaraProvisionRequest,
   type RukiyeZaraProvisionResponse,
@@ -65,12 +59,6 @@ export interface PropertyWriteInput {
   metadata: Record<string, unknown>;
 }
 
-export interface PropertyCommunicationInitializationInput {
-  accountId: string;
-  propertyId: string;
-  values: PropertyCommunicationPatch;
-}
-
 export interface PmsProvisioningStore {
   findExternalIdentity(
     externalUserId: string
@@ -90,14 +78,6 @@ export interface PmsProvisioningStore {
     externalPropertyId: string
   ): Promise<PropertyRecord | null>;
   createProperty(input: PropertyWriteInput): Promise<PropertyRecord>;
-  createPropertyCommunicationIfAbsent(
-    input: PropertyCommunicationInitializationInput
-  ): Promise<void>;
-  deleteProperty(input: {
-    id: string;
-    accountId: string;
-    integrationId: string;
-  }): Promise<void>;
   updateProperty(
     input: PropertyWriteInput & { id: string }
   ): Promise<PropertyRecord>;
@@ -344,40 +324,6 @@ export class SupabasePmsProvisioningStore implements PmsProvisioningStore {
     };
   }
 
-  async createPropertyCommunicationIfAbsent(
-    input: PropertyCommunicationInitializationInput
-  ): Promise<void> {
-    const { error } = await this.admin
-      .from('property_communication_settings')
-      .upsert(
-        {
-          account_id: input.accountId,
-          pms_property_id: input.propertyId,
-          ...input.values,
-        },
-        {
-          onConflict: 'account_id,pms_property_id',
-          ignoreDuplicates: true,
-          defaultToNull: false,
-        }
-      );
-    if (error) storageFailure(error);
-  }
-
-  async deleteProperty(input: {
-    id: string;
-    accountId: string;
-    integrationId: string;
-  }): Promise<void> {
-    const { error } = await this.admin
-      .from('pms_properties')
-      .delete()
-      .eq('id', input.id)
-      .eq('account_id', input.accountId)
-      .eq('pms_integration_id', input.integrationId);
-    if (error) storageFailure(error);
-  }
-
   async updateProperty(
     input: PropertyWriteInput & { id: string }
   ): Promise<PropertyRecord> {
@@ -403,17 +349,6 @@ export class SupabasePmsProvisioningStore implements PmsProvisioningStore {
       metadata: asMetadata(data.metadata),
     };
   }
-}
-
-function initialCommunicationValues(
-  communication: PmsPropertyCommunication | null | undefined
-): PropertyCommunicationPatch | null {
-  if (!communication) return null;
-  const normalized = normalizePropertyCommunicationPatch(communication);
-  const present = Object.fromEntries(
-    Object.entries(normalized).filter(([, value]) => value !== null)
-  ) as PropertyCommunicationPatch;
-  return Object.keys(present).length > 0 ? present : null;
 }
 
 async function resolveIdentity(
@@ -621,31 +556,6 @@ async function resolveProperty(
       timezone: request.property.timezone ?? property.timezone,
       metadata: { ...property.metadata, ...metadata },
     });
-  }
-
-  const communication = initialCommunicationValues(
-    request.property.communication
-  );
-  if (communication) {
-    try {
-      await store.createPropertyCommunicationIfAbsent({
-        accountId: integration.account_id,
-        propertyId: created.id,
-        values: communication,
-      });
-    } catch (error) {
-      try {
-        await store.deleteProperty({
-          id: created.id,
-          accountId: integration.account_id,
-          integrationId: integration.id,
-        });
-      } catch {
-        // Preserve the initialization failure. The create-if-absent write is
-        // idempotent, and the database FK still prevents cross-account data.
-      }
-      throw error;
-    }
   }
 
   return created;

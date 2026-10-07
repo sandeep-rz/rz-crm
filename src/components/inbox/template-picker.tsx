@@ -34,6 +34,7 @@ import {
   type StayReadClient,
 } from '@/lib/contacts/pms-stays';
 import { useAuth } from '@/hooks/use-auth';
+import { validatePreparationMapping } from '@/lib/message-preparation/mapping';
 
 export interface TemplateSendValues {
   body: string[];
@@ -195,10 +196,29 @@ export function TemplatePicker({
   }, [accountId, open, whatsappConfigId]);
 
   const semantic = selected?.variable_configuration_status === 'configured';
+  const mapping = useMemo(() => {
+    if (!semantic || !selected) return null;
+    try {
+      return validatePreparationMapping(selected);
+    } catch {
+      return null;
+    }
+  }, [semantic, selected]);
+  const catalogUnavailable =
+    catalogError ||
+    Boolean(
+      mapping?.some(
+        (entry) =>
+          !catalog.some(
+            (definition) => definition.variableKey === entry.variable_key
+          )
+      )
+    );
   // Catalog source semantics, not a second variable classification map.
   const requiresReservation = Boolean(
     semantic &&
-    selected?.semantic_variable_mapping?.some((entry) =>
+    !catalogUnavailable &&
+    mapping?.some((entry) =>
       variableRequiresReservation(
         catalog.find(
           (definition) => definition.variableKey === entry.variable_key
@@ -285,7 +305,7 @@ export function TemplatePicker({
   }
 
   function confirm() {
-    if (!selected) return;
+    if (!selected || !canConfirm) return;
     if (semantic) {
       onSelect(selected, {
         body: [],
@@ -310,7 +330,8 @@ export function TemplatePicker({
     [selected]
   );
   const canConfirm = semantic
-    ? !catalogError &&
+    ? mapping !== null &&
+      !catalogUnavailable &&
       (!requiresReservation ||
         (!!reservationId && !staysLoading && !staysError))
     : !!selected &&
@@ -377,7 +398,14 @@ export function TemplatePicker({
                         )}
                       </div>
                       <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                        {t.body_text}
+                        {t.variable_configuration_status === 'configured' &&
+                        t.semantic_content
+                          ? renderSemanticText(
+                              t.semantic_content.body_text,
+                              catalog,
+                              'label'
+                            )
+                          : t.body_text}
                       </p>
                     </div>
                     <ChevronRight className="text-muted-foreground h-4 w-4 flex-shrink-0" />
@@ -402,7 +430,7 @@ export function TemplatePicker({
                   ? renderSemanticText(
                       selected.semantic_content.body_text,
                       catalog,
-                      'preview'
+                      'label'
                     )
                   : renderBodyPreview(selected.body_text, params)}
               </p>
@@ -412,7 +440,10 @@ export function TemplatePicker({
                 </p>
               )}
             </div>
-            {semantic && catalogError && (
+            {semantic && !mapping && (
+              <p className="text-destructive text-xs">{t('invalidMapping')}</p>
+            )}
+            {semantic && catalogUnavailable && (
               <p className="text-destructive text-xs">
                 {t('contextLoadError')}
               </p>

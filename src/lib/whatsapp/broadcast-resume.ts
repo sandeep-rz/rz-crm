@@ -25,6 +25,8 @@ import {
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
+import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog';
+import { semanticBroadcastTemplateIssue } from '@/lib/broadcast-message-variables';
 import { frozenTemplateParams } from '@/lib/broadcast-message-variables';
 
 /** Which recipients a resume pass picks up. */
@@ -122,6 +124,7 @@ export interface ResumePlan {
 interface RecipientRow {
   id: string;
   template_params: unknown;
+  contact_id?: string | null;
   contact: { phone?: string | null } | { phone?: string | null }[] | null;
 }
 
@@ -135,10 +138,11 @@ function contactPhone(row: RecipientRow): string | null {
  * Build a {@link BroadcastPlan} for the recipients of an existing
  * broadcast that still need sending.
  *
- * Params come off the recipient rows (frozen at plan time by migration
+ * Legacy params come off the recipient rows (frozen at plan time by migration
  * 038) rather than being re-resolved from contact data, so a resume
  * sends what the original pass would have sent even if the contact has
- * been edited since.
+ * been edited since. Configured semantic templates instead resolve from each
+ * contact at send time through shared preparation.
  *
  * Throws {@link BroadcastError}; the route maps it.
  */
@@ -150,7 +154,9 @@ export async function planBroadcastResume(
 ): Promise<ResumePlan> {
   const { data: broadcast, error: bcError } = await db
     .from('broadcasts')
-    .select('id, template_name, template_language, whatsapp_config_id')
+    .select(
+      'id, template_name, template_language, whatsapp_config_id, template_variables'
+    )
     .eq('id', broadcastId)
     .eq('account_id', accountId)
     .maybeSingle();
@@ -162,7 +168,7 @@ export async function planBroadcastResume(
   const statuses = scopeStatuses(scope);
   const { data: rawRows, error: recError } = await db
     .from('broadcast_recipients')
-    .select('id, template_params, contact:contacts(phone)')
+    .select('id, contact_id, template_params, contact:contacts(phone)')
     .eq('broadcast_id', broadcastId)
     .in('status', statuses)
     // Oldest first, so repeated capped passes chew through the backlog
@@ -240,8 +246,37 @@ export async function planBroadcastResume(
     );
   }
 
+  if (
+    broadcast.template_variables?.template_id &&
+    broadcast.template_variables.template_id !== resolvedTemplate.row?.id
+  )
+    throw new BroadcastError(
+      'template_not_found',
+      'The selected broadcast template is unavailable.',
+      400
+    );
+  if (
+    broadcast.template_variables?.template_id &&
+    resolvedTemplate.row?.variable_configuration_status !== 'configured'
+  )
+    throw new BroadcastError(
+      'template_not_configured',
+      'This template is not ready to send.',
+      400
+    );
+  if (resolvedTemplate.row?.variable_configuration_status === 'configured') {
+    const issue = semanticBroadcastTemplateIssue(
+      resolvedTemplate.row,
+      await listMessageVariableDefinitions({ db })
+    );
+    if (issue)
+      throw new BroadcastError('template_context_required', issue, 400);
+  }
+
   const plan: BroadcastPlan = {
     broadcastId,
+    accountId,
+    connectionId: config.id,
     templateName: broadcast.template_name,
     templateLanguage: resolvedTemplate.language,
     phoneNumberId: config.phoneNumberId,
@@ -251,6 +286,7 @@ export async function planBroadcastResume(
       const frozen = frozenTemplateParams(row.template_params);
       return {
         recipientRowId: row.id,
+        contactId: row.contact_id ?? undefined,
         phone: sanitizePhoneForMeta(contactPhone(row) ?? ''),
         params: frozen.params ?? frozen.messageParams?.body ?? [],
         ...(frozen.messageParams

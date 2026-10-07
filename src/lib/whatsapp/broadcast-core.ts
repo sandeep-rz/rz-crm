@@ -28,6 +28,10 @@ import {
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import type { MessageTemplate } from '@/types';
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
+import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog';
+import { semanticBroadcastTemplateIssue } from '@/lib/broadcast-message-variables';
+import { buildMetaTemplateMessagePayload } from './meta-template-payload';
+import { TemplatePreparationError } from '@/lib/message-preparation/errors';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
@@ -59,6 +63,7 @@ export interface CreateBroadcastParams {
 
 interface PlannedRecipient {
   recipientRowId: string;
+  contactId?: string;
   phone: string;
   params: string[];
   messageParams?: SendTimeParams;
@@ -66,6 +71,8 @@ interface PlannedRecipient {
 
 export interface BroadcastPlan {
   broadcastId: string;
+  accountId?: string;
+  connectionId?: string;
   templateName: string;
   templateLanguage: string;
   phoneNumberId: string;
@@ -142,6 +149,15 @@ export async function createBroadcast(
     );
   }
   const templateRow = resolvedTemplate.row;
+  const semantic = templateRow?.variable_configuration_status === 'configured';
+  if (semantic) {
+    const issue = semanticBroadcastTemplateIssue(
+      templateRow,
+      await listMessageVariableDefinitions({ db })
+    );
+    if (issue)
+      throw new BroadcastError('template_context_required', issue, 400);
+  }
 
   // Resolve each recipient to a contact. Invalid phones are dropped
   // (counted as rejected) rather than aborting the whole broadcast.
@@ -163,9 +179,10 @@ export async function createBroadcast(
     resolved.push({
       contactId: id,
       phone: sanitized,
-      params: Array.isArray(r.params)
-        ? r.params.filter((p): p is string => typeof p === 'string')
-        : [],
+      params:
+        !semantic && Array.isArray(r.params)
+          ? r.params.filter((p): p is string => typeof p === 'string')
+          : [],
     });
   }
 
@@ -227,7 +244,12 @@ export async function createBroadcast(
   const broadcastId = createdRows[0].broadcast_id as string;
   const { error: connectionPersistError } = await db
     .from('broadcasts')
-    .update({ whatsapp_config_id: config.id })
+    .update({
+      whatsapp_config_id: config.id,
+      ...(semantic
+        ? { template_variables: { template_id: templateRow!.id } }
+        : {}),
+    })
     .eq('id', broadcastId)
     .eq('account_id', accountId);
   if (connectionPersistError) {
@@ -246,6 +268,7 @@ export async function createBroadcast(
       const r = byContact.get(row.contact_id)!;
       return {
         recipientRowId: row.recipient_id,
+        contactId: row.contact_id,
         phone: r.phone,
         params: r.params,
       };
@@ -254,6 +277,8 @@ export async function createBroadcast(
 
   return {
     broadcastId,
+    accountId,
+    connectionId: config.id,
     templateName,
     templateLanguage: resolvedTemplate.language,
     phoneNumberId: config.phoneNumberId,
@@ -281,11 +306,63 @@ export async function deliverBroadcast(
   db: SupabaseClient,
   plan: BroadcastPlan
 ): Promise<void> {
+  const semantic =
+    plan.templateRow?.variable_configuration_status === 'configured';
+  let semanticIssue: string | null = null;
+  if (semantic) {
+    try {
+      semanticIssue = semanticBroadcastTemplateIssue(
+        plan.templateRow!,
+        await listMessageVariableDefinitions({ db })
+      );
+    } catch {
+      semanticIssue = 'The template variable catalog is unavailable.';
+    }
+  }
   for (const recipient of plan.planned) {
     const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
     let lastError: string | null = null;
 
+    let templatePayload:
+      ReturnType<typeof buildMetaTemplateMessagePayload> | undefined;
+    if (semantic) {
+      try {
+        if (semanticIssue)
+          throw new BroadcastError(
+            'template_context_required',
+            semanticIssue,
+            400
+          );
+        if (!plan.accountId || !recipient.contactId)
+          throw new TemplatePreparationError('invalid_input');
+        const { prepareTemplateMessage } =
+          await import('@/lib/message-preparation/prepare-template-message');
+        const prepared = await prepareTemplateMessage(
+          {
+            accountId: plan.accountId,
+            templateId: plan.templateRow!.id,
+            context: { contactId: recipient.contactId },
+          },
+          { db }
+        );
+        if (prepared.template.connectionId !== plan.connectionId)
+          throw new TemplatePreparationError('template_connection_invalid');
+        templatePayload = buildMetaTemplateMessagePayload(prepared);
+      } catch (error) {
+        await db
+          .from('broadcast_recipients')
+          .update({
+            status: 'failed',
+            error_message:
+              error instanceof BroadcastError
+                ? error.message
+                : 'Required template or contact information is unavailable.',
+          })
+          .eq('id', recipient.recipientRowId);
+        continue;
+      }
+    }
     for (const variant of variants) {
       try {
         const result = await sendTemplateMessage({
@@ -294,9 +371,10 @@ export async function deliverBroadcast(
           to: variant,
           templateName: plan.templateName,
           language: plan.templateLanguage,
-          template: plan.templateRow ?? undefined,
-          params: recipient.params,
-          messageParams: recipient.messageParams,
+          templatePayload,
+          template: semantic ? undefined : (plan.templateRow ?? undefined),
+          params: semantic ? undefined : recipient.params,
+          messageParams: semantic ? undefined : recipient.messageParams,
         });
         sentMessageId = result.messageId;
         lastError = null;
@@ -304,7 +382,9 @@ export async function deliverBroadcast(
       } catch (error) {
         const message =
           error instanceof Error ? error.message : 'Unknown error';
-        lastError = message;
+        lastError = semantic
+          ? 'WhatsApp could not send this template.'
+          : message;
         // Only a "recipient not allowed" error is worth another variant.
         if (!isRecipientNotAllowedError(message)) break;
       }

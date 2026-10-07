@@ -1,6 +1,8 @@
+import { variableRequiresReservation } from '@/lib/message-variables/contract';
 import type { MessageTemplate } from '@/types';
 import type {
   MessageVariableDefinition,
+  MessageVariableResolutionSource,
   MessageVariableContextCapabilities,
   MessageVariableMapping,
   MessageVariableSourceScope,
@@ -199,4 +201,32 @@ export function missingVariableIdentity(
     return `${error.component?.toUpperCase() ?? 'MAPPING'} {{${error.position ?? '?'}}}: ${source}`;
   }
   return 'Template variable resolution failed';
+}
+
+/** Contact audiences carry no explicit reservation; never infer one. */
+export function semanticBroadcastTemplateIssue(
+  template: MessageTemplate,
+  definitions: {
+    variableKey: string;
+    sourceScope?: MessageVariableSourceScope;
+    resolutionSource?: MessageVariableResolutionSource;
+    isActive?: boolean;
+  }[]
+): string | null {
+  if (template.variable_configuration_status !== 'configured') return null;
+  if (
+    !template.semantic_content ||
+    !Array.isArray(template.semantic_variable_mapping)
+  )
+    return 'This template is not ready to send.';
+  for (const occurrence of template.semantic_variable_mapping) {
+    const definition = definitions.find(
+      (v) => v.variableKey === occurrence.variable_key
+    );
+    if (!definition || definition.isActive === false)
+      return 'The template variable catalog is unavailable or incomplete.';
+    if (variableRequiresReservation(definition))
+      return "This template requires reservation context and can't be used with this broadcast audience.";
+  }
+  return null;
 }

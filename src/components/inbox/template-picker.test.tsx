@@ -130,7 +130,7 @@ beforeEach(() => {
   h.definitions = [
     {
       variable_key: 'listing.name',
-      label: 'Contact first name',
+      label: 'Listing name',
       preview_value: 'SAMPLE ONLY',
       is_active: true,
       category: 'listing',
@@ -160,7 +160,8 @@ it('auto-selects one relevant contact reservation without collecting runtime val
     'reservation-one'
   );
   expect(host.textContent).toContain('RZ26100711c3');
-  expect(host.textContent).toContain('SAMPLE ONLY');
+  expect(host.textContent).toContain('{{Listing name}}');
+  expect(host.textContent).not.toContain('SAMPLE ONLY');
   expect(host.querySelector('input')).toBeNull();
   expect(sendButton().disabled).toBe(false);
   await act(async () => sendButton().click());
@@ -192,6 +193,7 @@ it('does not request a reservation for CRM-source variables', async () => {
   h.templates = [
     {
       ...semantic,
+      body_text: 'Hello {{1}}',
       semantic_content: { body_text: 'Hello {{workspace.name}}' },
       semantic_variable_mapping: [
         { component: 'BODY', position: 1, variable_key: 'workspace.name' },
@@ -278,4 +280,110 @@ it('resolves contact-context templates without a reservation picker or positiona
   expect(host.querySelector('input')).toBeNull();
   await act(async () => sendButton().click());
   expect(h.select.mock.calls[0][1]).toEqual({ body: [] });
+});
+
+it('blocks malformed configured mappings instead of collecting manual positional values', async () => {
+  h.templates = [{ ...semantic, semantic_variable_mapping: [] }];
+  await openAndPick();
+  expect(host.querySelector('input')).toBeNull();
+  expect(host.querySelector('select')).toBeNull();
+  expect(host.textContent).toContain('invalidMapping');
+  expect(sendButton().disabled).toBe(true);
+  await act(async () => sendButton().click());
+  expect(h.select).not.toHaveBeenCalled();
+});
+it('blocks configured mappings whose catalog definitions are unavailable', async () => {
+  h.definitions = [];
+  await openAndPick();
+  expect(host.querySelector('input')).toBeNull();
+  expect(host.querySelector('select')).toBeNull();
+  expect(host.textContent).toContain('contextLoadError');
+  expect(sendButton().disabled).toBe(true);
+});
+it('keeps imported unmapped templates on the manual send path', async () => {
+  const legacy = {
+    ...semantic,
+    template_origin: 'meta',
+    semantic_content: null,
+    semantic_variable_mapping: [],
+    variable_configuration_status: 'needs_mapping',
+  };
+  h.templates = [legacy];
+  await openAndPick();
+  const input = host.querySelector('input')!;
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value'
+    )!.set!;
+    setter.call(input, 'Manual guest');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(sendButton().disabled).toBe(false);
+  await act(async () => sendButton().click());
+  expect(h.select).toHaveBeenCalledWith(legacy, { body: ['Manual guest'] });
+});
+it('configured booking_confirmat uses catalog labels and automatic values for every transport slot', async () => {
+  const keys = [
+    'contact.first_name',
+    'listing.name',
+    'reservation.check_in_date',
+    'reservation.check_out_date',
+    'property.staff_details',
+  ];
+  const labels = [
+    'Contact first name',
+    'Listing name',
+    'Check-in date',
+    'Check-out date',
+    'Staff details',
+  ];
+  const template = {
+    ...semantic,
+    name: 'booking_confirmat',
+    template_origin: 'rgcrm',
+    body_text: keys.map((_, i) => `Value {{${i + 1}}}`).join('\n'),
+    semantic_content: {
+      body_text: keys.map((key) => `Value {{${key}}}`).join('\n'),
+      button_urls: {},
+    },
+    semantic_variable_mapping: keys.map((key, i) => ({
+      component: 'BODY',
+      position: i + 1,
+      variable_key: key,
+    })),
+  };
+  h.templates = [template];
+  h.definitions = keys.map((key, i) => ({
+    variable_key: key,
+    label: labels[i],
+    source_scope: key.split('.')[0],
+    resolution_source: i === 0 ? 'crm' : 'context',
+    is_active: true,
+  }));
+  await act(async () =>
+    root.render(
+      <TemplatePicker
+        open
+        onOpenChange={() => {}}
+        onSelect={h.select}
+        whatsappConfigId="config"
+        contactId="recipient"
+      />
+    )
+  );
+  expect(host.textContent).toContain('{{Contact first name}}');
+  expect(host.textContent).not.toContain('{{1}}');
+  const button = [...host.querySelectorAll('button')].find((b) =>
+    b.textContent?.includes('booking_confirmat')
+  )!;
+  await act(async () => button.click());
+  expect(host.querySelector('input')).toBeNull();
+  for (const label of labels)
+    expect(host.textContent).toContain(`{{${label}}}`);
+  await act(async () => sendButton().click());
+  expect(h.select).toHaveBeenCalledWith(template, {
+    body: [],
+    reservationId: 'reservation-one',
+  });
 });

@@ -132,6 +132,9 @@ export default function NewBroadcastPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           template_name: template.name,
+          ...(template.variable_configuration_status === 'configured'
+            ? { template_id: template.id }
+            : {}),
           template_language: template.language ?? 'en_US',
           whatsapp_config_id: whatsappConfigId,
           mappings: variables,
@@ -152,7 +155,10 @@ export default function NewBroadcastPage() {
       name: name.trim(),
       template_name: template.name,
       template_language: template.language ?? 'en_US',
-      template_variables: variables,
+      template_variables:
+        template.variable_configuration_status === 'configured'
+          ? { template_id: template.id }
+          : variables,
       audience_filter: {
         type: audience.type,
         tagIds: audience.tagIds,

@@ -3,6 +3,9 @@ import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
+import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog';
+import { semanticBroadcastTemplateIssue } from '@/lib/broadcast-message-variables';
+import { buildMetaTemplateMessagePayload } from '@/lib/whatsapp/meta-template-payload';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import {
   sanitizePhoneForMeta,
@@ -47,6 +50,7 @@ interface BroadcastResult {
  */
 interface NewRecipient {
   phone: string;
+  contact_id?: string;
   /** Body variable values, one per {{N}}. Legacy field. */
   params?: string[];
   /**
@@ -87,6 +91,7 @@ export async function POST(request: Request) {
       recipients: newRecipients,
       phone_numbers,
       template_name,
+      template_id,
       template_language,
       template_params,
       whatsapp_config_id,
@@ -161,6 +166,28 @@ export async function POST(request: Request) {
       );
     }
     const templateRow = resolvedTemplate.row;
+    if (template_id !== undefined && template_id !== templateRow?.id)
+      return NextResponse.json(
+        { error: 'The selected broadcast template is unavailable.' },
+        { status: 400 }
+      );
+    if (
+      template_id !== undefined &&
+      templateRow?.variable_configuration_status !== 'configured'
+    )
+      return NextResponse.json(
+        { error: 'This template is not ready to send.' },
+        { status: 400 }
+      );
+    const semantic =
+      templateRow?.variable_configuration_status === 'configured';
+    if (semantic) {
+      const issue = semanticBroadcastTemplateIssue(
+        templateRow,
+        await listMessageVariableDefinitions({ db: supabase })
+      );
+      if (issue) return NextResponse.json({ error: issue }, { status: 400 });
+    }
 
     const results: BroadcastResult[] = [];
     let sentCount = 0;
@@ -185,6 +212,33 @@ export async function POST(request: Request) {
       let sentMessageId: string | null = null;
       let lastError: string | null = null;
 
+      let templatePayload:
+        ReturnType<typeof buildMetaTemplateMessagePayload> | undefined;
+      if (semantic) {
+        try {
+          const { prepareTemplateMessage } =
+            await import('@/lib/message-preparation/prepare-template-message');
+          const prepared = await prepareTemplateMessage(
+            {
+              accountId,
+              templateId: templateRow!.id,
+              context: { contactId: recipient.contact_id },
+            },
+            { db: supabase }
+          );
+          if (prepared.template.connectionId !== config.id)
+            throw new Error('Template connection mismatch');
+          templatePayload = buildMetaTemplateMessagePayload(prepared);
+        } catch {
+          results.push({
+            phone: recipient.phone,
+            status: 'failed',
+            error: 'Required template or contact information is unavailable.',
+          });
+          failedCount++;
+          continue;
+        }
+      }
       for (const variant of variants) {
         try {
           const result = await sendTemplateMessage({
@@ -193,9 +247,10 @@ export async function POST(request: Request) {
             to: variant,
             templateName: template_name,
             language: resolvedTemplate.language,
-            template: templateRow ?? undefined,
-            messageParams: recipient.messageParams,
-            params: recipient.params ?? [],
+            templatePayload,
+            template: semantic ? undefined : (templateRow ?? undefined),
+            messageParams: semantic ? undefined : recipient.messageParams,
+            params: semantic ? undefined : (recipient.params ?? []),
           });
           sentMessageId = result.messageId;
           lastError = null;
@@ -204,10 +259,14 @@ export async function POST(request: Request) {
           const errorMessage =
             error instanceof Error ? error.message : 'Unknown error';
           if (!isRecipientNotAllowedError(errorMessage)) {
-            lastError = errorMessage;
+            lastError = semantic
+              ? 'WhatsApp could not send this template.'
+              : errorMessage;
             break;
           }
-          lastError = errorMessage;
+          lastError = semantic
+            ? 'WhatsApp could not send this template.'
+            : errorMessage;
           // retry with next variant
         }
       }
@@ -220,10 +279,11 @@ export async function POST(request: Request) {
         });
         sentCount++;
       } else {
-        console.error(
-          `Failed to send broadcast to ${recipient.phone}:`,
-          lastError
-        );
+        if (!semantic)
+          console.error(
+            `Failed to send broadcast to ${recipient.phone}:`,
+            lastError
+          );
         results.push({
           phone: recipient.phone,
           status: 'failed',

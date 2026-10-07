@@ -324,7 +324,8 @@
       "loadingReservations": "Carregando reservas…",
       "contextLoadError": "Não foi possível carregar os dados. Feche e abra novamente para tentar.",
       "noReservations": "Não há reservas vinculadas a este contato. Verifique as reservas sincronizadas antes de enviar.",
-      "previewHint": "A prévia usa exemplos. Os valores da reserva são carregados apenas ao enviar."
+      "invalidMapping": "A configuração de variáveis deste modelo está incompleta. Configure-o em Modelos de mensagens antes de enviar.",
+      "previewHint": "A prévia mostra os rótulos das variáveis. Os valores são preenchidos automaticamente ao enviar."
     },
     "sidebar": {
       "contactInfo": "Informações do contato",

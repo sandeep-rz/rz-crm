@@ -86,7 +86,7 @@ interface BroadcastApiResult {
   error?: string;
 }
 
-interface SemanticResolutionResult {
+interface LegacyResolutionResult {
   contact_id: string;
   success: boolean;
   message_params?: Record<string, unknown> | null;
@@ -433,11 +433,13 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         throw new Error('No contacts found for this audience.');
       }
 
-      // New broadcasts resolve through the shared semantic resolver on the
-      // server. The route derives account_id from the authenticated session
-      // and builds context from each exact persisted contact id.
-      const semanticByContact = new Map<string, SemanticResolutionResult>();
-      if (Array.isArray(payload.variables)) {
+      // Validate configured semantics without freezing recipient values. The
+      // send endpoint prepares each exact contact at send time. Historical
+      // mappings retain their existing pre-resolution/frozen values.
+      const semantic =
+        payload.template.variable_configuration_status === 'configured';
+      const legacyByContact = new Map<string, LegacyResolutionResult>();
+      if (semantic || Array.isArray(payload.variables)) {
         const response = await fetch(
           '/api/whatsapp/broadcast/resolve-variables',
           {
@@ -445,6 +447,9 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               template_name: payload.template.name,
+              ...(semantic
+                ? { template_id: payload.template.id, validate_only: true }
+                : {}),
               template_language: payload.template.language ?? 'en_US',
               whatsapp_config_id: payload.whatsappConfigId,
               contact_ids: contacts.map((contact) => contact.id),
@@ -458,9 +463,8 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             result.error ?? 'Template variable resolution failed.'
           );
         }
-        for (const item of (result.results ??
-          []) as SemanticResolutionResult[]) {
-          semanticByContact.set(item.contact_id, item);
+        for (const item of (result.results ?? []) as LegacyResolutionResult[]) {
+          legacyByContact.set(item.contact_id, item);
         }
       }
 
@@ -475,7 +479,9 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           name: payload.name,
           template_name: payload.template.name,
           template_language: payload.template.language ?? 'en_US',
-          template_variables: payload.variables,
+          template_variables: semantic
+            ? { template_id: payload.template.id }
+            : payload.variables,
           audience_filter: {
             type: payload.audience.type,
             tagIds: payload.audience.tagIds,
@@ -500,7 +506,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       }
 
       // ── Step 3: Insert recipient rows ─────────────────────────────
-      // Custom values are fetched BEFORE the insert so each row can
+      // Legacy custom values are fetched BEFORE the insert so each row can
       // carry its resolved template params. Those params are what makes
       // the campaign resumable server-side (issue #472): the send loop
       // below runs in this browser tab, and if the tab goes away the
@@ -515,9 +521,17 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         headerType === 'document';
       const headerMediaUrl = payload.headerMediaUrl?.trim();
       let recipientRows: RecipientInsertRow[];
-      if (Array.isArray(payload.variables)) {
+      if (semantic) {
+        recipientRows = contacts.map((contact) => ({
+          broadcast_id: broadcast.id,
+          contact_id: contact.id,
+          status: 'pending' as const,
+          template_params: [],
+          error_message: null,
+        }));
+      } else if (Array.isArray(payload.variables)) {
         recipientRows = contacts.map((contact) => {
-          const resolved = semanticByContact.get(contact.id);
+          const resolved = legacyByContact.get(contact.id);
           const messageParams = {
             ...(resolved?.message_params ?? { body: [] }),
             ...(isMediaHeader && headerMediaUrl ? { headerMediaUrl } : {}),
@@ -614,10 +628,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             const frozen = frozenTemplateParams(r.template_params);
             return {
               phone: r.contact!.phone as string,
-              // Read back off the row rather than re-resolved, so this
-              // pass and any later resume send identical params.
-              ...frozen,
-              ...(!frozen.messageParams && isMediaHeader && headerMediaUrl
+              ...(semantic ? { contact_id: r.contact_id } : {}),
+              // Legacy sends replay frozen params; semantic sends carry only
+              // contact identity for server-side preparation.
+              ...(semantic ? {} : frozen),
+              ...(!semantic &&
+              !frozen.messageParams &&
+              isMediaHeader &&
+              headerMediaUrl
                 ? { messageParams: { headerMediaUrl } }
                 : {}),
             };
@@ -637,6 +655,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
               body: JSON.stringify({
                 recipients: apiRecipients,
                 template_name: payload.template.name,
+                ...(semantic ? { template_id: payload.template.id } : {}),
                 template_language: payload.template.language ?? 'en_US',
                 whatsapp_config_id: payload.whatsappConfigId,
               }),

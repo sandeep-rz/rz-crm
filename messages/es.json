@@ -324,7 +324,8 @@
       "loadingReservations": "Cargando reservas…",
       "contextLoadError": "No se pudieron cargar los datos. Cierra y vuelve a abrir para reintentar.",
       "noReservations": "No hay reservas vinculadas a este contacto. Revisa las reservas sincronizadas antes de enviar.",
-      "previewHint": "La vista previa usa ejemplos. Los valores de la reserva se cargan al enviar."
+      "invalidMapping": "La configuración de variables de esta plantilla está incompleta. Configúrala en Plantillas de mensajes antes de enviar.",
+      "previewHint": "La vista previa muestra las etiquetas de las variables. Los valores se completan automáticamente al enviar."
     },
     "sidebar": {
       "contactInfo": "Información del contacto",

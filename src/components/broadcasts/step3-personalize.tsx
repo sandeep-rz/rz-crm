@@ -16,11 +16,13 @@ import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+  semanticBroadcastTemplateIssue,
   getBroadcastVariableCapabilities,
   inspectBroadcastVariableSlots,
   mappingIdentity,
   sourceScopeAvailabilityMessage,
 } from '@/lib/broadcast-message-variables';
+import { renderSemanticText } from '@/lib/whatsapp/semantic-template';
 import type { MessageVariableMapping } from '@/lib/message-variables';
 import { createClient } from '@/lib/supabase/client';
 import type { CustomField, MessageTemplate } from '@/types';
@@ -101,11 +103,13 @@ export function Step3Personalize({
           )
           .eq('is_active', true)
           .order('sort_order'),
-        supabase
-          .from('custom_fields')
-          .select('*')
-          .eq('account_id', accountId)
-          .order('field_name'),
+        template.variable_configuration_status === 'configured'
+          ? Promise.resolve({ data: [] })
+          : supabase
+              .from('custom_fields')
+              .select('*')
+              .eq('account_id', accountId)
+              .order('field_name'),
       ]);
       if (cancelled) return;
       setCatalog((catalogResult.data as CatalogOption[] | null) ?? []);
@@ -115,7 +119,7 @@ export function Step3Personalize({
     return () => {
       cancelled = true;
     };
-  }, [accountId]);
+  }, [accountId, template.variable_configuration_status]);
 
   const mediaHeaderType = isMediaHeaderType(template.header_type)
     ? template.header_type
@@ -217,6 +221,65 @@ export function Step3Personalize({
     }
     return preview;
   };
+
+  if (template.variable_configuration_status === 'configured') {
+    const definitions = catalog.map((v, i) => ({
+      variableKey: v.variable_key,
+      label: v.label,
+      previewValue: v.preview_value,
+      category: v.category,
+      sourceScope: v.source_scope,
+      resolutionSource: v.resolution_source,
+      isActive: true,
+      sortOrder: i,
+    }));
+    const issue = semanticBroadcastTemplateIssue(template, definitions);
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-foreground text-lg font-semibold">
+            {t('personalize.title')}
+          </h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Contact and workspace information is filled automatically for each
+            recipient when sent.
+          </p>
+        </div>
+        <div className="border-border bg-card/50 rounded-xl border p-4">
+          {template.semantic_content?.header_content ? (
+            <p className="text-sm font-medium">
+              {renderSemanticText(
+                template.semantic_content.header_content,
+                definitions,
+                'label'
+              )}
+            </p>
+          ) : null}
+          <p className="text-sm whitespace-pre-wrap">
+            {renderSemanticText(
+              template.semantic_content?.body_text ?? '',
+              definitions,
+              'label'
+            )}
+          </p>
+        </div>
+        {issue ? (
+          <p role="alert" className="text-destructive text-sm">
+            {issue}
+          </p>
+        ) : null}
+        <div className="border-border flex justify-between border-t pt-4">
+          <Button variant="outline" onClick={onBack}>
+            {t('back')}
+          </Button>
+          <Button onClick={onNext} disabled={loadingSources || Boolean(issue)}>
+            {t('next')}
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

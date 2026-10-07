@@ -6,6 +6,15 @@ import { MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Loader2, FileText, ArrowRight } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { semanticBroadcastTemplateIssue } from '@/lib/broadcast-message-variables';
+import {
+  renderSemanticText,
+  type CatalogVariable,
+} from '@/lib/whatsapp/semantic-template';
+import type {
+  MessageVariableSourceScope,
+  MessageVariableResolutionSource,
+} from '@/lib/message-variables/contract';
 import { useAuth } from '@/hooks/use-auth';
 
 const categoryColors: Record<string, string> = {
@@ -31,14 +40,26 @@ export function Step1ChooseTemplate({
 }: Step1Props) {
   const t = useTranslations('Broadcasts.wizard');
   const { accountId } = useAuth();
+  const [catalog, setCatalog] = useState<
+    (CatalogVariable & {
+      sourceScope: MessageVariableSourceScope;
+      resolutionSource: MessageVariableResolutionSource;
+    })[]
+  >([]);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     async function fetchTemplates() {
+      setLoading(true);
+      setError(null);
+      setTemplates([]);
+      setCatalog([]);
       try {
-        if (!accountId) {
+        // Connection selection loads asynchronously; never filter a UUID by ''.
+        if (!accountId || !whatsappConfigId.trim()) {
           setTemplates([]);
           return;
         }
@@ -46,31 +67,63 @@ export function Step1ChooseTemplate({
         // Only APPROVED templates can be sent via Meta — anything else
         // would 400 at broadcast time. Hide them rather than letting
         // the user pick a template that will fail.
-        const { data, error: fetchError } = await supabase
+        const templateQuery = supabase
           .from('message_templates')
           .select('*')
           .eq('account_id', accountId)
           .eq('status', 'APPROVED')
           .eq('whatsapp_config_id', whatsappConfigId)
           .order('created_at', { ascending: false });
+        const [{ data, error: fetchError }, definitions] = await Promise.all([
+          templateQuery,
+          supabase
+            .from('message_variable_catalog')
+            .select(
+              'variable_key,label,preview_value,category,sort_order,source_scope,resolution_source,is_active'
+            )
+            .eq('is_active', true)
+            .order('sort_order'),
+        ]);
+        if (cancelled) return;
+        setCatalog(
+          (definitions.data ?? []).map((v) => ({
+            variableKey: v.variable_key,
+            label: v.label,
+            previewValue: v.preview_value,
+            category: v.category,
+            sortOrder: v.sort_order,
+            sourceScope: v.source_scope,
+            resolutionSource: v.resolution_source,
+            isActive: v.is_active,
+          }))
+        );
 
         if (fetchError) throw fetchError;
         setTemplates(data ?? []);
       } catch (err) {
+        if (cancelled) return;
         setError(
           err instanceof Error ? err.message : t('chooseTemplate.errorLoad')
         );
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
-    fetchTemplates();
+    void fetchTemplates();
+    return () => {
+      cancelled = true;
+    };
   }, [accountId, whatsappConfigId, t]);
 
-  if (loading) {
+  if (loading || !accountId || !whatsappConfigId.trim()) {
     return (
-      <div className="flex h-64 items-center justify-center">
+      <div
+        role="status"
+        aria-busy="true"
+        aria-label={t('chooseTemplate.title')}
+        className="flex h-64 items-center justify-center"
+      >
         <Loader2 className="text-primary h-6 w-6 animate-spin" />
       </div>
     );
@@ -108,6 +161,7 @@ export function Step1ChooseTemplate({
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {templates.map((template) => {
+            const issue = semanticBroadcastTemplateIssue(template, catalog);
             const isSelected = selectedTemplate?.id === template.id;
             const catColor =
               categoryColors[template.category] ?? categoryColors.Utility;
@@ -115,8 +169,9 @@ export function Step1ChooseTemplate({
             return (
               <button
                 key={template.id}
+                disabled={Boolean(issue)}
                 onClick={() => onSelect(template)}
-                className={`flex flex-col gap-3 rounded-xl border p-4 text-left transition-all ${
+                className={`flex flex-col gap-3 rounded-xl border p-4 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
                   isSelected
                     ? 'border-primary bg-primary/5 ring-primary/30 ring-1'
                     : 'border-border bg-card/50 hover:border-border hover:bg-card'
@@ -133,8 +188,17 @@ export function Step1ChooseTemplate({
                   </span>
                 </div>
                 <p className="text-muted-foreground line-clamp-3 text-xs">
-                  {template.body_text}
+                  {template.semantic_content
+                    ? renderSemanticText(
+                        template.semantic_content.body_text,
+                        catalog,
+                        'label'
+                      )
+                    : template.body_text}
                 </p>
+                {issue ? (
+                  <p className="text-destructive text-xs">{issue}</p>
+                ) : null}
                 <div className="text-muted-foreground flex items-center gap-2 text-[10px]">
                   <span>{template.language ?? 'en_US'}</span>
                   {/* Status is omitted on purpose — every template
@@ -157,7 +221,12 @@ export function Step1ChooseTemplate({
         </Button>
         <Button
           onClick={onNext}
-          disabled={!selectedTemplate}
+          disabled={
+            !whatsappConfigId.trim() ||
+            !selectedTemplate ||
+            selectedTemplate.whatsapp_config_id !== whatsappConfigId ||
+            Boolean(semanticBroadcastTemplateIssue(selectedTemplate, catalog))
+          }
           className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           {t('next')}

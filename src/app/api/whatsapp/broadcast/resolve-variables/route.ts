@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import {
+  semanticBroadcastTemplateIssue,
   getBroadcastVariableCapabilities,
   inspectBroadcastVariableSlots,
   missingVariableIdentity,
@@ -26,6 +27,7 @@ interface ResolveRequestBody {
   contact_ids?: unknown;
   mappings?: unknown;
   validate_only?: unknown;
+  template_id?: unknown;
 }
 
 function badRequest(error: string, details?: string[]) {
@@ -73,6 +75,35 @@ export async function POST(request: Request) {
       includeInactive: true,
       db: supabase,
     });
+    if (
+      body.template_id !== undefined &&
+      body.template_id !== resolvedTemplate.row.id
+    )
+      return badRequest('The selected broadcast template is unavailable.');
+    if (
+      body.template_id !== undefined &&
+      resolvedTemplate.row.variable_configuration_status !== 'configured'
+    )
+      return badRequest('This template is not ready to send.');
+    if (resolvedTemplate.row.variable_configuration_status === 'configured') {
+      const issue = semanticBroadcastTemplateIssue(
+        resolvedTemplate.row,
+        definitions
+      );
+      if (issue) return badRequest(issue);
+      const { validatePreparationMapping } =
+        await import('@/lib/message-preparation/mapping');
+      try {
+        validatePreparationMapping(resolvedTemplate.row);
+      } catch {
+        return badRequest('This template is not ready to send.');
+      }
+      if (body.validate_only !== true)
+        return badRequest(
+          'Semantic values are resolved when each recipient is sent.'
+        );
+      return NextResponse.json({ success: true });
+    }
     const mappings = body.mappings ?? [];
     const validationIssues = validateBroadcastVariableMappings({
       mappings,

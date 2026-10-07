@@ -77,6 +77,8 @@ export interface PmsReservationPage {
 
 export type PmsProviderErrorCode =
   | 'configuration'
+  | 'invalid_request'
+  | 'timeout'
   | 'authentication'
   | 'access_denied'
   | 'not_found'
@@ -88,7 +90,8 @@ export class PmsProviderError extends Error {
   constructor(
     public readonly code: PmsProviderErrorCode,
     message: string,
-    public readonly cause?: unknown
+    public readonly cause?: unknown,
+    public readonly diagnostics?: { httpStatus: number; providerCode?: string }
   ) {
     super(message);
     this.name = 'PmsProviderError';

@@ -976,6 +976,15 @@
       "back": "Voltar às automações"
     },
     "logs": {
+      "retry": "Tentar novamente",
+      "retrying": "A tentar novamente…",
+      "retryQueued": "Na fila",
+      "retrySuccess": "Automação colocada na fila para nova tentativa.",
+      "retryCompleted": "Esta automação já foi concluída.",
+      "retryAlreadyQueued": "Esta execução já está na fila.",
+      "retryIneligible": "Esta execução já não pode ser repetida.",
+      "retryError": "Não foi possível colocar esta execução na fila. Tente novamente.",
+      "attempt": "Tentativa {count}",
       "title": "Logs de execução",
       "loadError": "Falha ao carregar os logs",
       "emptyTitle": "Nenhuma execução ainda",
@@ -985,6 +994,7 @@
       "stepPlural": "{count} etapas",
       "noSteps": "Nenhuma etapa registrada.",
       "status": {
+        "processing": "Em processamento",
         "success": "sucesso",
         "partial": "parcial",
         "failed": "falhou"

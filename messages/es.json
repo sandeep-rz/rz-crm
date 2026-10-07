@@ -976,6 +976,15 @@
       "back": "Volver a automatizaciones"
     },
     "logs": {
+      "retry": "Reintentar",
+      "retrying": "Reintentando…",
+      "retryQueued": "En cola",
+      "retrySuccess": "Automatización en cola para reintentar.",
+      "retryCompleted": "Esta automatización ya se ha completado.",
+      "retryAlreadyQueued": "Esta ejecución ya está en cola.",
+      "retryIneligible": "Esta ejecución ya no se puede reintentar.",
+      "retryError": "No se pudo poner esta ejecución en cola. Inténtalo de nuevo.",
+      "attempt": "Intento {count}",
       "title": "Registros de ejecución",
       "loadError": "Error al cargar los registros",
       "emptyTitle": "Aún no hay ejecuciones",
@@ -985,6 +994,7 @@
       "stepPlural": "{count} pasos",
       "noSteps": "No se registraron pasos.",
       "status": {
+        "processing": "Procesando",
         "success": "éxito",
         "partial": "parcial",
         "failed": "fallida"

@@ -976,6 +976,15 @@
       "back": "Back to Automations"
     },
     "logs": {
+      "retry": "Retry",
+      "retrying": "Retrying…",
+      "retryQueued": "Queued",
+      "retrySuccess": "Automation queued for retry.",
+      "retryCompleted": "This automation has already completed.",
+      "retryAlreadyQueued": "This execution is already queued.",
+      "retryIneligible": "This execution can no longer be retried.",
+      "retryError": "Unable to queue this execution. Please try again.",
+      "attempt": "Attempt {count}",
       "title": "Execution logs",
       "loadError": "Failed to load logs",
       "emptyTitle": "No executions yet",
@@ -985,6 +994,7 @@
       "stepPlural": "{count} steps",
       "noSteps": "No steps recorded.",
       "status": {
+        "processing": "Processing",
         "success": "success",
         "partial": "partial",
         "failed": "failed"

@@ -731,6 +731,9 @@ export interface AutomationLogStepResult {
 }
 
 export interface AutomationLog {
+  trigger_job_id?: string | null;
+  trigger_job_attempt_count?: number | null;
+  trigger_job_execution_state?: 'processing' | 'completed' | 'failed' | null;
   id: string;
   automation_id: string;
   user_id: string;

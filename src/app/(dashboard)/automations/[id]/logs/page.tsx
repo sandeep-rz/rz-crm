@@ -12,7 +12,9 @@ import {
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
-import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/use-auth';
+import { ExecutionRetry } from '@/components/automations/execution-retry';
+import type { RetryActivityLog } from '@/lib/automations/manual-retry';
 import type {
   Automation,
   AutomationLog,
@@ -29,37 +31,51 @@ export default function AutomationLogsPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const { accountId } = useAuth();
+  const [revision, setRevision] = useState(0);
   const t = useTranslations('Automations.logs');
   const tRelative = useTranslations('Automations.relative');
 
   const [automation, setAutomation] = useState<Automation | null>(null);
-  const [logs, setLogs] = useState<AutomationLog[] | null>(null);
+  const [logs, setLogs] = useState<RetryActivityLog[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openLogId, setOpenLogId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!accountId) return;
+    const controller = new AbortController();
     async function load() {
       try {
-        const supabase = createClient();
-        const [autRes, logRes] = await Promise.all([
-          supabase.from('automations').select('*').eq('id', id).maybeSingle(),
-          supabase
-            .from('automation_logs')
-            .select('*, contact:contacts(id, name, phone)')
-            .eq('automation_id', id)
-            .order('created_at', { ascending: false })
-            .limit(100),
-        ]);
-        if (autRes.error) throw autRes.error;
-        if (logRes.error) throw logRes.error;
-        setAutomation(autRes.data as Automation | null);
-        setLogs((logRes.data ?? []) as AutomationLog[]);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : t('loadError'));
+        const response = await fetch(`/api/automations/${id}/logs`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(t('loadError'));
+        const body = await response.json();
+        if (!controller.signal.aborted) {
+          setAutomation(body.automation as Automation);
+          setLogs(body.logs as RetryActivityLog[]);
+          setError(null);
+        }
+      } catch {
+        if (!controller.signal.aborted) setError(t('loadError'));
       }
     }
-    load();
-  }, [id]);
+    void load();
+    return () => controller.abort();
+  }, [id, accountId, revision, t]);
+
+  useEffect(() => {
+    if (
+      !logs?.some(
+        (log) =>
+          log.manual_retry_state === 'already_retried' ||
+          log.trigger_job_execution_state === 'processing'
+      )
+    )
+      return;
+    const timer = setInterval(() => setRevision((value) => value + 1), 10000);
+    return () => clearInterval(timer);
+  }, [logs]);
 
   if (error) {
     return (
@@ -113,36 +129,71 @@ export default function AutomationLogsPage({
                 key={log.id}
                 className="border-border bg-card rounded-xl border"
               >
-                <button
-                  type="button"
-                  onClick={() => setOpenLogId(isOpen ? null : log.id)}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left"
-                >
-                  {isOpen ? (
-                    <ChevronDown className="text-muted-foreground h-4 w-4" />
-                  ) : (
-                    <ChevronRight className="text-muted-foreground h-4 w-4" />
-                  )}
-                  <StatusBadge status={log.status} t={t} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-foreground truncate text-sm font-medium">
-                      {log.contact?.name ??
-                        log.contact?.phone ??
-                        t('unknownContact')}
+                <div className="flex items-center gap-3 pr-4">
+                  <button
+                    type="button"
+                    onClick={() => setOpenLogId(isOpen ? null : log.id)}
+                    className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
+                  >
+                    {isOpen ? (
+                      <ChevronDown className="text-muted-foreground h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="text-muted-foreground h-4 w-4" />
+                    )}
+                    <StatusBadge
+                      status={
+                        log.trigger_job_execution_state === 'processing'
+                          ? 'processing'
+                          : log.status
+                      }
+                      t={t}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-foreground truncate text-sm font-medium">
+                        {log.contact?.name ??
+                          log.contact?.phone ??
+                          t('unknownContact')}
+                      </div>
+                      <div className="text-muted-foreground truncate text-xs">
+                        {log.trigger_job_attempt_count && (
+                          <>
+                            {t('attempt', {
+                              count: log.trigger_job_attempt_count,
+                            })}{' '}
+                            ·{' '}
+                          </>
+                        )}
+                        {log.trigger_event} · {log.steps_executed?.length ?? 0}{' '}
+                        {log.steps_executed?.length === 1
+                          ? t('step', { count: 1 }).replace('1 ', '')
+                          : t('stepPlural', {
+                              count: log.steps_executed?.length ?? 0,
+                            }).replace(/^[0-9]+ /, '')}
+                      </div>
                     </div>
-                    <div className="text-muted-foreground truncate text-xs">
-                      {log.trigger_event} · {log.steps_executed?.length ?? 0}{' '}
-                      {log.steps_executed?.length === 1
-                        ? t('step', { count: 1 }).replace('1 ', '')
-                        : t('stepPlural', {
-                            count: log.steps_executed?.length ?? 0,
-                          }).replace(/^[0-9]+ /, '')}
+                    <div className="text-muted-foreground text-xs">
+                      {formatRelative(log.created_at, tRelative)}
                     </div>
-                  </div>
-                  <div className="text-muted-foreground text-xs">
-                    {formatRelative(log.created_at, tRelative)}
-                  </div>
-                </button>
+                  </button>
+                  <ExecutionRetry
+                    logId={log.id}
+                    state={log.manual_retry_state}
+                    onQueued={() => {
+                      setLogs(
+                        (current) =>
+                          current?.map((row) =>
+                            row.id === log.id
+                              ? {
+                                  ...row,
+                                  manual_retry_state: 'already_retried',
+                                }
+                              : row
+                          ) ?? null
+                      );
+                      setRevision((value) => value + 1);
+                    }}
+                  />
+                </div>
                 {isOpen && (
                   <div className="border-border border-t px-4 py-3">
                     {log.error_message && (
@@ -175,13 +226,13 @@ function StatusBadge({
   status,
   t,
 }: {
-  status: AutomationLog['status'];
+  status: AutomationLog['status'] | 'processing';
   t: ReturnType<typeof useTranslations>;
 }) {
   const classes =
     status === 'success'
       ? 'border-primary/30 bg-primary/10 text-primary'
-      : status === 'partial'
+      : status === 'partial' || status === 'processing'
         ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
         : 'border-red-500/30 bg-red-500/10 text-red-300';
   return (

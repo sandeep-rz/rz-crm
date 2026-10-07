@@ -976,6 +976,15 @@
       "back": "자동화로 돌아가기"
     },
     "logs": {
+      "retry": "재시도",
+      "retrying": "재시도 중…",
+      "retryQueued": "대기 중",
+      "retrySuccess": "자동화 재시도가 예약되었습니다.",
+      "retryCompleted": "이 자동화는 이미 완료되었습니다.",
+      "retryAlreadyQueued": "이 실행은 이미 대기 중입니다.",
+      "retryIneligible": "이 실행은 더 이상 재시도할 수 없습니다.",
+      "retryError": "실행을 대기열에 추가할 수 없습니다. 다시 시도하세요.",
+      "attempt": "시도 {count}",
       "title": "실행 로그",
       "loadError": "로그를 불러오지 못했습니다",
       "emptyTitle": "아직 실행 기록이 없습니다",
@@ -985,6 +994,7 @@
       "stepPlural": "단계 {count}개",
       "noSteps": "기록된 단계가 없습니다.",
       "status": {
+        "processing": "처리 중",
         "success": "성공",
         "partial": "부분 성공",
         "failed": "실패"

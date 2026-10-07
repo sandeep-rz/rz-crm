@@ -496,6 +496,12 @@ export interface SendTemplateMessageArgs {
   accessToken: string;
   to: string;
   templateName: string;
+  /** Already validated semantic send payload; bypass legacy component rebuilding. */
+  templatePayload?: {
+    name: string;
+    language: { code: string };
+    components?: import('./template-send-builder').MetaSendComponent[];
+  };
   language?: string;
   /**
    * Legacy body-only params. Kept for backward compat with callers
@@ -554,7 +560,10 @@ export async function sendTemplateMessage(
     language: { code: language },
   };
 
-  if (template) {
+  if (args.templatePayload) {
+    // Use the assembly result verbatim, including its explicit language.
+    Object.assign(templatePayload, args.templatePayload);
+  } else if (template) {
     const components = buildSendComponents(template, {
       // Legacy callers pass body values in `params`; fold them into
       // `messageParams.body` so the new path covers them too.

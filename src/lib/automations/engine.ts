@@ -41,6 +41,11 @@ import type { ReservationAutomationContext } from './pms-context';
 import { matchesReservationTriggerConfig } from './pms-scheduler';
 import { buildAndResolveMessageVariables } from '@/lib/message-variables';
 import { groupResolvedTemplateParameters } from './template-variable-mapping';
+import { AutomationTemplateSendError } from './template-send-error';
+import { WhatsAppConnectionError } from '@/lib/whatsapp/connection-resolver';
+import { SendMessageError } from '@/lib/whatsapp/send-message';
+import { MetaApiError } from '@/lib/whatsapp/meta-api';
+import { TemplatePreparationError } from '@/lib/message-preparation/errors';
 
 // ------------------------------------------------------------
 // Public API
@@ -67,6 +72,7 @@ export interface AutomationExecutionResult {
   logId: string | null;
   status: 'success' | 'partial' | 'failed' | 'processing' | 'suppressed';
   errorMessage: string | null;
+  retryable?: boolean;
   disposition:
     | 'executed'
     | 'already_completed'
@@ -411,7 +417,9 @@ async function executeAutomation(
     log = { id: insertedLog.id as string };
   }
 
+  const failure: { retryable?: boolean } = {};
   await executeStepsFrom({
+    failure,
     automation,
     contactId: input.contactId ?? null,
     context: input.context ?? {},
@@ -450,10 +458,14 @@ async function executeAutomation(
     status: finalLog.status as AutomationExecutionResult['status'],
     errorMessage: finalLog.error_message as string | null,
     disposition: 'executed',
+    ...(failure.retryable !== undefined
+      ? { retryable: failure.retryable }
+      : {}),
   };
 }
 
 interface ExecuteArgs {
+  failure?: { retryable?: boolean };
   automation: Automation;
   contactId: string | null;
   context: AutomationContext;
@@ -565,10 +577,14 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
           logId: args.logId,
           continuationId: null,
         });
+        if (args.failure?.retryable !== undefined) {
+          status = 'failed';
+          break;
+        }
         continue;
       }
 
-      const detail = await runStep(step, args);
+      const detail = await executeAutomationStep(step, args);
       results.push({
         step_id: step.id,
         step_type: step.step_type,
@@ -576,7 +592,29 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         detail,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg =
+        err instanceof TemplatePreparationError
+          ? [
+              err.code,
+              err.diagnostics.variableKey
+                ? `variable_key=${err.diagnostics.variableKey}`
+                : null,
+              ...(err.diagnostics.runtimeFailures ?? []).map(
+                (f) =>
+                  `${f.source}:${f.code}${f.httpStatus ? ` HTTP=${f.httpStatus}` : ''}`
+              ),
+            ]
+              .filter(Boolean)
+              .join('; ')
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      if (
+        (err instanceof TemplatePreparationError ||
+          err instanceof AutomationTemplateSendError) &&
+        args.failure
+      )
+        args.failure.retryable = err.retryable;
       results.push({
         step_id: step.id,
         step_type: step.step_type,
@@ -610,7 +648,8 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
   await recordWaitContinuationCompleted(args);
 }
 
-async function runStep(
+/** Trusted engine step boundary, also used for read-only DEV verification. */
+export async function executeAutomationStep(
   step: AutomationStep,
   args: ExecuteArgs
 ): Promise<string> {
@@ -656,7 +695,63 @@ async function runStep(
 
     case 'send_template': {
       const cfg = step.step_config as SendTemplateStepConfig;
-      if (!args.contactId) throw new Error('send_template needs a contact');
+      if (!args.contactId) {
+        if (cfg.template_id !== undefined)
+          throw new TemplatePreparationError('invalid_input');
+        throw new Error('send_template needs a contact');
+      }
+      // Identity, never a cached name or action-level mapping, selects this path.
+      if (cfg.template_id !== undefined) {
+        const reservationId = args.context.reservation?.reservation_id;
+        if (!reservationId) throw new TemplatePreparationError('invalid_input');
+        // Load server-only preparation only for semantic actions.
+        const { prepareTemplateMessage } =
+          await import('@/lib/message-preparation/prepare-template-message');
+        const { buildMetaTemplateMessagePayload } =
+          await import('@/lib/whatsapp/meta-template-payload');
+        const prepared = await prepareTemplateMessage({
+          accountId: args.automation.account_id,
+          templateId: cfg.template_id,
+          context: { reservationId },
+        });
+        const templatePayload = buildMetaTemplateMessagePayload(prepared);
+        try {
+          const conversationId = await resolveConversationId(
+            args,
+            prepared.template.connectionId
+          );
+          const { whatsapp_message_id } = await engineSendTemplate({
+            accountId: args.automation.account_id,
+            userId: args.automation.user_id,
+            conversationId,
+            contactId: args.contactId,
+            templateName: prepared.template.name,
+            language: prepared.template.language,
+            connectionId: prepared.template.connectionId,
+            preparedTemplate: prepared,
+            templatePayload,
+          });
+          return `template sent via Meta (${whatsapp_message_id})`;
+        } catch (error) {
+          if (error instanceof AutomationTemplateSendError) throw error;
+          if (error instanceof WhatsAppConnectionError)
+            throw new AutomationTemplateSendError(
+              `template_connection_${error.code}`,
+              error.status >= 500 && error.code !== 'invalid_credentials'
+            );
+          if (error instanceof SendMessageError)
+            throw new AutomationTemplateSendError(
+              `template_target_${error.code}`,
+              error.status >= 500
+            );
+          if (error instanceof MetaApiError)
+            throw new AutomationTemplateSendError(
+              `meta_send_failed_http_${error.httpStatus}_code_${error.code ?? 'unknown'}`,
+              error.httpStatus >= 500 || error.httpStatus === 429
+            );
+          throw new AutomationTemplateSendError('template_send_failed', true);
+        }
+      }
       if (!cfg.template_name)
         throw new Error('send_template needs template_name');
       if (Array.isArray(cfg.variable_mappings)) {
@@ -993,9 +1088,12 @@ async function runStep(
  * manual engine POSTs. Throws if none exists — send steps have
  * no meaningful target without a conversation.
  */
-async function resolveConversationId(args: ExecuteArgs): Promise<string> {
+async function resolveConversationId(
+  args: ExecuteArgs,
+  connectionId?: string
+): Promise<string> {
   const fromCtx = args.context.conversation_id;
-  if (fromCtx) {
+  if (fromCtx && !connectionId) {
     if (!args.contactId)
       throw new Error('cannot validate conversation: no contact');
     const { data, error } = await supabaseAdmin()
@@ -1014,7 +1112,7 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
     throw new Error('cannot resolve conversation: no contact');
   const connection = await resolveWhatsAppConnection(supabaseAdmin(), {
     accountId: args.automation.account_id,
-    connectionId: args.automation.whatsapp_config_id,
+    connectionId: connectionId ?? args.automation.whatsapp_config_id,
     entity: { type: 'automation', id: args.automation.id },
   });
   const db = supabaseAdmin();

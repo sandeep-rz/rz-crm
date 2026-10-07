@@ -128,6 +128,19 @@ function validateOne(
       break;
     }
     case 'send_template':
+      if (c.template_id !== undefined) {
+        if (
+          typeof c.template_id !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            c.template_id
+          )
+        )
+          issues.push({
+            path: `${path}.template_id`,
+            message: 'valid template id is required',
+          });
+        break;
+      }
       if (!nonEmpty(c.template_name)) {
         issues.push({
           path: `${path}.template_name`,
@@ -144,9 +157,7 @@ function validateOne(
         );
         for (const error of mappingResult.errors) {
           const suffix =
-            error.mapping_index >= 0
-              ? `[${error.mapping_index}]`
-              : '';
+            error.mapping_index >= 0 ? `[${error.mapping_index}]` : '';
           issues.push({
             path: `${path}.variable_mappings${suffix}`,
             message: `invalid template variable mapping: ${error.code}`,

@@ -610,9 +610,9 @@ export type SendButtonsStepConfig = InteractiveMessagePayload;
 export type SendListStepConfig = InteractiveMessagePayload;
 
 export interface SendTemplateStepConfig {
-  /** Canonical template identity for semantic authoring; execution will migrate in Step 5B. */
+  /** Authoritative template identity for semantic execution. */
   template_id?: string;
-  template_name: string;
+  template_name?: string;
   language?: string;
   /** Legacy automation mapping. Retained for existing execution only. */
   variable_mappings?: MessageVariableMapping[];

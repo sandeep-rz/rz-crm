@@ -336,3 +336,25 @@ describe('PMS automation job worker', () => {
     expect(store.result).toBeNull();
   });
 });
+
+describe('semantic preparation job retry classification', () => {
+  it.each([false, true])(
+    'uses execution retryability %s',
+    async (retryable) => {
+      const store = new MemoryStore();
+      await processPmsAutomationJob(job, {
+        store,
+        loadContext: async () => reservation,
+        dispatch: async () => ({
+          logId: 'log1',
+          status: 'failed',
+          errorMessage: 'runtime_provider_failure',
+          disposition: 'executed',
+          retryable,
+        }),
+      });
+      expect(store.failures[0]).toMatchObject({ retryable });
+      expect(store.markCompletedCalls).toBe(0);
+    }
+  );
+});

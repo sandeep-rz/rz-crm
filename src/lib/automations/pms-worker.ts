@@ -247,7 +247,7 @@ export async function processPmsAutomationJob(
     if (execution.status === 'failed') {
       throw new PmsAutomationJobError(
         execution.errorMessage ?? 'Automation execution failed.',
-        true
+        execution.retryable ?? true
       );
     }
     await store.markCompleted(job, now().toISOString());

@@ -15,7 +15,11 @@ import {
   resolveTemplateRow,
   templateContentText,
 } from '@/lib/whatsapp/template-body';
+import { AutomationTemplateSendError } from './template-send-error';
 import { supabaseAdmin } from './admin-client';
+import type { PreparedTemplateMessage } from '@/lib/message-preparation/types';
+import type { SendTemplateMessageArgs } from '@/lib/whatsapp/meta-api';
+import { renderTemplateBody } from '@/lib/whatsapp/template-body';
 import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
 
 // ------------------------------------------------------------
@@ -49,6 +53,9 @@ interface SendTemplateArgs {
   conversationId: string;
   contactId: string;
   templateName: string;
+  connectionId?: string;
+  preparedTemplate?: PreparedTemplateMessage;
+  templatePayload?: SendTemplateMessageArgs['templatePayload'];
   language?: string;
   params?: string[];
   messageParams?: SendTimeParams;
@@ -132,6 +139,13 @@ async function sendViaMeta(
     .eq('account_id', input.accountId)
     .maybeSingle();
   if (contactErr || !contact) {
+    if (input.kind === 'template' && input.preparedTemplate)
+      throw new AutomationTemplateSendError(
+        contactErr
+          ? 'template_recipient_lookup_failed'
+          : 'template_recipient_not_owned',
+        Boolean(contactErr)
+      );
     throw new Error('contact not found for this account');
   }
 
@@ -143,6 +157,11 @@ async function sendViaMeta(
   // given us a number for this customer (issue #519).
   const sendTarget = resolveContactSendTarget(contact);
   if (!sendTarget) {
+    if (input.kind === 'template' && input.preparedTemplate)
+      throw new AutomationTemplateSendError(
+        'template_recipient_unaddressable',
+        false
+      );
     throw new Error(
       `contact has no usable WhatsApp address (phone: ${contact.phone || 'none'})`
     );
@@ -152,7 +171,19 @@ async function sendViaMeta(
   const config = await resolveWhatsAppConnection(db, {
     accountId: input.accountId,
     conversationId: input.conversationId,
+    ...(input.kind === 'template' && input.connectionId
+      ? { connectionId: input.connectionId }
+      : {}),
   });
+  if (
+    input.kind === 'template' &&
+    input.preparedTemplate &&
+    config.status !== 'connected'
+  )
+    throw new AutomationTemplateSendError(
+      'template_connection_not_connected',
+      false
+    );
   const accessToken = config.accessToken;
 
   // Local template row — read for the body we persist below, not for
@@ -160,7 +191,7 @@ async function sendViaMeta(
   // A missing row is fine: the send still goes out, we just can't
   // reconstruct the text the customer saw.
   const templateRow =
-    input.kind === 'template'
+    input.kind === 'template' && !input.preparedTemplate
       ? (
           await resolveTemplateRow(
             db,
@@ -174,18 +205,46 @@ async function sendViaMeta(
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {
-      const r = await sendTemplateMessage({
-        phoneNumberId: config.phoneNumberId,
-        accessToken,
-        to: phone,
-        templateName: input.templateName,
-        language: input.language,
-        params: input.params,
-        ...(input.messageParams && templateRow
-          ? { template: templateRow, messageParams: input.messageParams }
-          : {}),
-      });
-      return r.messageId;
+      try {
+        const r = await sendTemplateMessage({
+          phoneNumberId: config.phoneNumberId,
+          accessToken,
+          to: phone,
+          templateName: input.templateName,
+          language: input.language,
+          params: input.params,
+          templatePayload: input.templatePayload,
+          ...(input.messageParams && templateRow
+            ? { template: templateRow, messageParams: input.messageParams }
+            : {}),
+        });
+    
+        return r.messageId;
+      } catch (error) {
+        console.error('Meta template send failed', {
+          error:
+            error instanceof Error
+              ? {
+                  name: error.name,
+                  message: error.message,
+                }
+              : String(error),
+    
+          templateName: input.templateName,
+          connectionId: input.connectionId,
+          phoneNumberId: config.phoneNumberId,
+    
+          componentShape: input.templatePayload?.components?.map((component) => ({
+            type: component.type,
+            parameterCount:
+              'parameters' in component && Array.isArray(component.parameters)
+                ? component.parameters.length
+                : 0,
+          })),
+        });
+    
+        throw error;
+      }
     }
     const r = await sendTextMessage({
       phoneNumberId: config.phoneNumberId,
@@ -234,10 +293,20 @@ async function sendViaMeta(
   const content_text =
     input.kind === 'text'
       ? input.text
-      : templateContentText(
-          templateRow,
-          input.messageParams?.body ?? input.params ?? []
-        );
+      : input.preparedTemplate
+        ? renderTemplateBody(
+            input.preparedTemplate.template.body_text,
+            input.preparedTemplate.mapping
+              .filter((m) => m.component === 'BODY')
+              .sort((a, b) => a.position - b.position)
+              .map(
+                (m) => input.preparedTemplate!.resolvedVariables[m.variable_key]
+              )
+          )
+        : templateContentText(
+            templateRow,
+            input.messageParams?.body ?? input.params ?? []
+          );
   const template_name = input.kind === 'template' ? input.templateName : null;
 
   const { error: msgErr } = await db.from('messages').insert({
@@ -252,6 +321,11 @@ async function sendViaMeta(
   if (msgErr) {
     // Meta already has the message; record the DB error but don't pretend
     // the send failed. The engine wraps this in a log line.
+    if (input.kind === 'template' && input.preparedTemplate)
+      throw new AutomationTemplateSendError(
+        'meta_sent_message_persistence_failed',
+        false
+      );
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`);
   }
 

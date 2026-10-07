@@ -1,3 +1,4 @@
+import { TemplatePreparationError } from '@/lib/message-preparation/errors';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
@@ -54,6 +55,8 @@ export async function POST(request: Request) {
       media_url,
       filename,
       template_name,
+      template_id,
+      reservation_id,
       template_language,
       template_params,
       template_message_params,
@@ -72,6 +75,20 @@ export async function POST(request: Request) {
       );
     }
 
+    for (const id of [template_id, reservation_id]) {
+      if (
+        id !== undefined &&
+        (typeof id !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            id
+          ))
+      )
+        return NextResponse.json(
+          { error: 'Invalid template or reservation selection.' },
+          { status: 400 }
+        );
+    }
+
     // Validate the message shape up front — before the contact_id path
     // finds-or-creates a conversation — so an invalid payload 400s
     // without leaving an orphan empty conversation behind.
@@ -81,6 +98,7 @@ export async function POST(request: Request) {
         contentText: content_text,
         mediaUrl: media_url,
         templateName: template_name,
+        templateId: template_id,
         interactivePayload: interactive_payload,
       });
     } catch (err) {
@@ -159,31 +177,69 @@ export async function POST(request: Request) {
     // `SendMessageError` carries a machine code + HTTP status; the
     // dashboard maps it to the internal `{ error }` shape.
     try {
-      const result = await sendMessageToConversation(supabase, accountId, {
-        conversationId,
-        whatsappConfigId:
-          typeof whatsapp_config_id === 'string' ? whatsapp_config_id : null,
-        messageType: message_type,
-        contentText: content_text,
-        mediaUrl: media_url,
-        filename,
-        templateName: template_name,
-        templateLanguage: template_language,
-        templateParams: template_params,
-        templateMessageParams: template_message_params,
-        interactivePayload: interactive_payload,
-        replyToMessageId: reply_to_message_id,
-      });
+      const result = await sendMessageToConversation(
+        supabase,
+        accountId,
+        {
+          conversationId,
+          whatsappConfigId:
+            typeof whatsapp_config_id === 'string' ? whatsapp_config_id : null,
+          messageType: message_type,
+          contentText: content_text,
+          mediaUrl: media_url,
+          filename,
+          templateName: template_name,
+          templateLanguage: template_language,
+          templateParams: template_params,
+          templateMessageParams: template_message_params,
+          interactivePayload: interactive_payload,
+          replyToMessageId: reply_to_message_id,
+        },
+        message_type === 'template'
+          ? { templateId: template_id, reservationId: reservation_id }
+          : undefined
+      );
 
       return NextResponse.json({
         success: true,
         message_id: result.messageId,
         whatsapp_message_id: result.whatsappMessageId,
+        content_text: result.contentText,
       });
     } catch (err) {
+      if (err instanceof TemplatePreparationError) {
+        const missingReservation = err.diagnostics.runtimeFailures?.some(
+          (failure) => failure.code === 'reservation_context_required'
+        );
+        const unavailable = [
+          'variable_missing',
+          'variable_unsupported',
+          'runtime_provider_failure',
+          'runtime_resolution_failure',
+        ].includes(err.code);
+        return NextResponse.json(
+          {
+            code: err.code,
+            error: missingReservation
+              ? 'Select a reservation before sending this template.'
+              : unavailable
+                ? 'Some required contact or reservation information is unavailable.'
+                : 'This template is not ready to send.',
+          },
+          { status: 400 }
+        );
+      }
       if (err instanceof SendMessageError) {
         return NextResponse.json(
-          { error: err.message },
+          {
+            code: err.code,
+            error:
+              message_type === 'template' && err.code === 'meta_error'
+                ? 'WhatsApp could not send this template.'
+                : message_type === 'template' && err.code === 'db_error'
+                  ? 'WhatsApp accepted this template, but it could not be saved. Check the conversation before sending again.'
+                  : err.message,
+          },
           { status: err.status }
         );
       }

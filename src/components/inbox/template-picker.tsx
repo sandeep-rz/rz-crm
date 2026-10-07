@@ -1,4 +1,8 @@
 'use client';
+import {
+  variableRequiresReservation,
+  type MessageVariableSourceScope,
+} from '@/lib/message-variables/contract';
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -17,11 +21,23 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, ChevronRight, LayoutTemplate, Loader2 } from 'lucide-react';
 import { extractVariableIndices } from '@/lib/whatsapp/template-validators';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
+import {
+  renderSemanticText,
+  type CatalogVariable,
+} from '@/lib/whatsapp/semantic-template';
+import type { MessageVariableResolutionSource } from '@/lib/message-variables/contract';
+import {
+  loadContactStays,
+  formatStayDateShort,
+  type ContactStay,
+  type StayReadClient,
+} from '@/lib/contacts/pms-stays';
 import { useAuth } from '@/hooks/use-auth';
 
 export interface TemplateSendValues {
   body: string[];
+  reservationId?: string;
   headerText?: string;
   buttonParams?: Record<number, string>;
 }
@@ -31,6 +47,7 @@ interface TemplatePickerProps {
   onOpenChange: (open: boolean) => void;
   onSelect: (template: MessageTemplate, values: TemplateSendValues) => void;
   whatsappConfigId?: string | null;
+  contactId?: string | null;
 }
 
 function renderBodyPreview(body: string, params: string[]): string {
@@ -76,9 +93,22 @@ export function TemplatePicker({
   onOpenChange,
   onSelect,
   whatsappConfigId,
+  contactId,
 }: TemplatePickerProps) {
   const t = useTranslations('Inbox.templatePicker');
   const { accountId } = useAuth();
+  const locale = useLocale();
+  const [catalog, setCatalog] = useState<
+    (CatalogVariable & {
+      resolutionSource: MessageVariableResolutionSource;
+      sourceScope: MessageVariableSourceScope;
+    })[]
+  >([]);
+  const [catalogError, setCatalogError] = useState(false);
+  const [stays, setStays] = useState<ContactStay[]>([]);
+  const [staysLoading, setStaysLoading] = useState(false);
+  const [staysError, setStaysError] = useState(false);
+  const [reservationId, setReservationId] = useState('');
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,9 +153,31 @@ export function TemplatePicker({
         .eq('account_id', accountId)
         .eq('status', 'APPROVED');
       if (connectionId) query = query.eq('whatsapp_config_id', connectionId);
-      const { data, error } = await query.order('created_at', {
-        ascending: false,
-      });
+      const [{ data, error }, definitions] = await Promise.all([
+        query.order('created_at', { ascending: false }),
+        supabase
+          .from('message_variable_catalog')
+          .select(
+            'variable_key,label,preview_value,is_active,category,sort_order,resolution_source,source_scope'
+          )
+          .eq('is_active', true)
+          .order('sort_order'),
+      ]);
+      if (!cancelled) {
+        setCatalogError(Boolean(definitions.error));
+        setCatalog(
+          (definitions.data ?? []).map((row) => ({
+            variableKey: row.variable_key,
+            label: row.label,
+            previewValue: row.preview_value,
+            isActive: row.is_active,
+            category: row.category,
+            sortOrder: row.sort_order,
+            resolutionSource: row.resolution_source,
+            sourceScope: row.source_scope,
+          }))
+        );
+      }
 
       if (cancelled) return;
       if (error) {
@@ -142,8 +194,62 @@ export function TemplatePicker({
     };
   }, [accountId, open, whatsappConfigId]);
 
+  const semantic = selected?.variable_configuration_status === 'configured';
+  // Catalog source semantics, not a second variable classification map.
+  const requiresReservation = Boolean(
+    semantic &&
+    selected?.semantic_variable_mapping?.some((entry) =>
+      variableRequiresReservation(
+        catalog.find(
+          (definition) => definition.variableKey === entry.variable_key
+        )
+      )
+    )
+  );
+  useEffect(() => {
+    if (!open || !requiresReservation) return;
+    let cancelled = false;
+    void (async () => {
+      setReservationId('');
+      setStays([]);
+      setStaysError(false);
+      if (!accountId || !contactId) {
+        setStaysError(true);
+        setStaysLoading(false);
+        return;
+      }
+      setStaysLoading(true);
+      try {
+        const rows = await loadContactStays(
+          createClient() as unknown as StayReadClient,
+          { accountId, contactId }
+        );
+        if (cancelled) return;
+        setStays(rows);
+        const relevant = rows.filter((stay) =>
+          ['current', 'upcoming'].includes(stay.timing)
+        );
+        const only =
+          relevant.length === 1
+            ? relevant[0]
+            : rows.length === 1 && rows[0].timing !== 'cancelled'
+              ? rows[0]
+              : undefined;
+        setReservationId(only?.id ?? '');
+      } catch {
+        if (!cancelled) setStaysError(true);
+      } finally {
+        if (!cancelled) setStaysLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, accountId, contactId, requiresReservation]);
+
   function resetSelection() {
     setSelected(null);
+    setReservationId('');
     setParams([]);
     setHeaderText('');
     setButtonParams({});
@@ -155,6 +261,13 @@ export function TemplatePicker({
   }
 
   function pickTemplate(template: MessageTemplate) {
+    if (template.variable_configuration_status === 'configured') {
+      setSelected(template);
+      setParams([]);
+      setHeaderText('');
+      setButtonParams({});
+      return;
+    }
     const slots = collectVariableSlots(template);
     const noInputsNeeded =
       slots.bodyVars.length === 0 &&
@@ -173,6 +286,14 @@ export function TemplatePicker({
 
   function confirm() {
     if (!selected) return;
+    if (semantic) {
+      onSelect(selected, {
+        body: [],
+        ...(requiresReservation ? { reservationId } : {}),
+      });
+      handleOpenChange(false);
+      return;
+    }
     const values: TemplateSendValues = { body: params };
     if (headerText.trim()) values.headerText = headerText.trim();
     if (Object.keys(buttonParams).length > 0) {
@@ -188,14 +309,17 @@ export function TemplatePicker({
     () => (selected ? collectVariableSlots(selected) : null),
     [selected]
   );
-  const canConfirm =
-    !!selected &&
-    !!slots &&
-    slots.bodyVars.every((_, i) => (params[i] ?? '').trim().length > 0) &&
-    (slots.headerVarCount === 0 || headerText.trim().length > 0) &&
-    slots.urlButtonSlots.every(
-      (s) => (buttonParams[s.index] ?? '').trim().length > 0
-    );
+  const canConfirm = semantic
+    ? !catalogError &&
+      (!requiresReservation ||
+        (!!reservationId && !staysLoading && !staysError))
+    : !!selected &&
+      !!slots &&
+      slots.bodyVars.every((_, i) => (params[i] ?? '').trim().length > 0) &&
+      (slots.headerVarCount === 0 || headerText.trim().length > 0) &&
+      slots.urlButtonSlots.every(
+        (s) => (buttonParams[s.index] ?? '').trim().length > 0
+      );
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -206,7 +330,11 @@ export function TemplatePicker({
             {selected ? selected.name : t('sendTemplate')}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            {selected ? t('fillPlaceholders') : t('pickTemplate')}
+            {selected
+              ? semantic
+                ? t('semanticHint')
+                : t('fillPlaceholders')
+              : t('pickTemplate')}
           </DialogDescription>
         </DialogHeader>
 
@@ -264,8 +392,19 @@ export function TemplatePicker({
               <p className="text-muted-foreground mb-1 text-xs">
                 {t('preview')}
               </p>
+              {semantic && (
+                <p className="text-muted-foreground mb-2 text-xs">
+                  {t('previewHint')}
+                </p>
+              )}
               <p className="text-popover-foreground text-sm whitespace-pre-wrap">
-                {renderBodyPreview(selected.body_text, params)}
+                {semantic && selected.semantic_content
+                  ? renderSemanticText(
+                      selected.semantic_content.body_text,
+                      catalog,
+                      'preview'
+                    )
+                  : renderBodyPreview(selected.body_text, params)}
               </p>
               {selected.footer_text && (
                 <p className="text-muted-foreground mt-2 text-xs italic">
@@ -273,7 +412,52 @@ export function TemplatePicker({
                 </p>
               )}
             </div>
-            {slots && slots.headerVarCount > 0 && (
+            {semantic && catalogError && (
+              <p className="text-destructive text-xs">
+                {t('contextLoadError')}
+              </p>
+            )}
+            {requiresReservation && (
+              <div className="space-y-2">
+                <Label htmlFor="template-reservation">{t('reservation')}</Label>
+                <select
+                  id="template-reservation"
+                  value={reservationId}
+                  onChange={(event) => setReservationId(event.target.value)}
+                  disabled={staysLoading || staysError}
+                  className="border-border bg-background text-foreground h-9 w-full rounded-md border px-3 text-sm"
+                >
+                  <option value="">
+                    {staysLoading
+                      ? t('loadingReservations')
+                      : t('selectReservation')}
+                  </option>
+                  {stays.map((stay) => (
+                    <option key={stay.id} value={stay.id}>
+                      {stay.reservationCode ||
+                        stay.propertyName ||
+                        t('reservation')}
+                      {stay.checkIn
+                        ? ` · ${formatStayDateShort(stay.checkIn, locale)}`
+                        : ''}
+                      {stay.checkOut
+                        ? ` – ${formatStayDateShort(stay.checkOut, locale)}`
+                        : ''}
+                    </option>
+                  ))}
+                </select>
+                {staysError ? (
+                  <p className="text-destructive text-xs">
+                    {t('contextLoadError')}
+                  </p>
+                ) : !staysLoading && !stays.length ? (
+                  <p className="text-muted-foreground text-xs">
+                    {t('noReservations')}
+                  </p>
+                ) : null}
+              </div>
+            )}
+            {!semantic && slots && slots.headerVarCount > 0 && (
               <div className="space-y-1">
                 <Label className="text-popover-foreground text-xs">
                   {`Header {{1}}`}
@@ -286,48 +470,50 @@ export function TemplatePicker({
                 />
               </div>
             )}
-            {slots?.bodyVars.map((v, i) => (
-              <div key={v} className="space-y-1">
-                <Label className="text-popover-foreground text-xs">{`Body {{${v}}}`}</Label>
-                <Input
-                  value={params[i] ?? ''}
-                  onChange={(e) => {
-                    const next = [...params];
-                    next[i] = e.target.value;
-                    setParams(next);
-                  }}
-                  placeholder={t('bodyValuePlaceholder', { val: `{{${v}}}` })}
-                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
-                />
-              </div>
-            ))}
-            {slots?.urlButtonSlots.map((slot) => (
-              <div key={slot.index} className="space-y-1">
-                <Label className="text-popover-foreground text-xs">
-                  {`URL button "${slot.text}" — value for `}
-                  {`{{1}}`}
-                </Label>
-                <Input
-                  value={buttonParams[slot.index] ?? ''}
-                  onChange={(e) =>
-                    setButtonParams((prev) => ({
-                      ...prev,
-                      [slot.index]: e.target.value,
-                    }))
-                  }
-                  placeholder={t('urlSuffixValuePlaceholder')}
-                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
-                />
-                <p className="text-muted-foreground text-[10px] break-all">
-                  {t('finalUrl', {
-                    url: slot.url.replace(
-                      /\{\{1\}\}/g,
-                      buttonParams[slot.index] || '{{1}}'
-                    ),
-                  })}
-                </p>
-              </div>
-            ))}
+            {!semantic &&
+              slots?.bodyVars.map((v, i) => (
+                <div key={v} className="space-y-1">
+                  <Label className="text-popover-foreground text-xs">{`Body {{${v}}}`}</Label>
+                  <Input
+                    value={params[i] ?? ''}
+                    onChange={(e) => {
+                      const next = [...params];
+                      next[i] = e.target.value;
+                      setParams(next);
+                    }}
+                    placeholder={t('bodyValuePlaceholder', { val: `{{${v}}}` })}
+                    className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
+              ))}
+            {!semantic &&
+              slots?.urlButtonSlots.map((slot) => (
+                <div key={slot.index} className="space-y-1">
+                  <Label className="text-popover-foreground text-xs">
+                    {`URL button "${slot.text}" — value for `}
+                    {`{{1}}`}
+                  </Label>
+                  <Input
+                    value={buttonParams[slot.index] ?? ''}
+                    onChange={(e) =>
+                      setButtonParams((prev) => ({
+                        ...prev,
+                        [slot.index]: e.target.value,
+                      }))
+                    }
+                    placeholder={t('urlSuffixValuePlaceholder')}
+                    className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+                  />
+                  <p className="text-muted-foreground text-[10px] break-all">
+                    {t('finalUrl', {
+                      url: slot.url.replace(
+                        /\{\{1\}\}/g,
+                        buttonParams[slot.index] || '{{1}}'
+                      ),
+                    })}
+                  </p>
+                </div>
+              ))}
           </div>
         )}
 

@@ -42,9 +42,12 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils';
 import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity';
+import type { PreparedTemplateMessage } from '@/lib/message-preparation/types';
+import type { buildMetaTemplateMessagePayload } from '@/lib/whatsapp/meta-template-payload';
 import type { MessageTemplate } from '@/types';
 import {
   resolveTemplateRow,
+  renderTemplateBody,
   templateBodyParams,
   templateContentText,
 } from '@/lib/whatsapp/template-body';
@@ -96,6 +99,7 @@ export interface SendMessageResult {
   messageId: string;
   /** Meta's `wamid` for the delivered message. */
   whatsappMessageId: string;
+  contentText?: string | null;
 }
 
 /**
@@ -118,6 +122,7 @@ export function validateSendMessageParams(params: {
   contentText?: string | null;
   mediaUrl?: string | null;
   templateName?: string | null;
+  templateId?: string;
   interactivePayload?: InteractiveMessagePayload | null;
 }): void {
   const {
@@ -150,7 +155,7 @@ export function validateSendMessageParams(params: {
     );
   }
 
-  if (messageType === 'template' && !templateName) {
+  if (messageType === 'template' && !templateName && !params.templateId) {
     throw new SendMessageError(
       'bad_request',
       'template_name is required for template messages',
@@ -193,7 +198,8 @@ export function validateSendMessageParams(params: {
 export async function sendMessageToConversation(
   db: SupabaseClient,
   accountId: string,
-  params: SendMessageParams
+  params: SendMessageParams,
+  manualTemplate?: { templateId?: string; reservationId?: string }
 ): Promise<SendMessageResult> {
   const {
     conversationId,
@@ -223,6 +229,7 @@ export async function sendMessageToConversation(
     contentText,
     mediaUrl,
     templateName,
+    templateId: manualTemplate?.templateId,
     interactivePayload,
   });
 
@@ -323,7 +330,28 @@ export async function sendMessageToConversation(
   // a row (see resolveTemplateRow).
   let templateRow: MessageTemplate | null = null;
   let sendLanguage = templateLanguage || 'en_US';
-  if (messageType === 'template' && templateName) {
+  let sendTemplateName = templateName;
+  let prepared: PreparedTemplateMessage | undefined;
+  let templatePayload:
+    ReturnType<typeof buildMetaTemplateMessagePayload> | undefined;
+  if (messageType === 'template' && manualTemplate?.templateId) {
+    const { data, error } = await db
+      .from('message_templates')
+      .select('*')
+      .eq('id', manualTemplate.templateId)
+      .eq('account_id', accountId)
+      .eq('whatsapp_config_id', config.id)
+      .maybeSingle();
+    if (error || !data)
+      throw new SendMessageError(
+        'template_not_found',
+        'This template is not available for this conversation.',
+        404
+      );
+    templateRow = data as MessageTemplate;
+    sendTemplateName = templateRow.name;
+    sendLanguage = templateRow.language || 'en_US';
+  } else if (messageType === 'template' && templateName) {
     const resolved = await resolveTemplateRow(
       db,
       accountId,
@@ -342,18 +370,49 @@ export async function sendMessageToConversation(
     sendLanguage = resolved.language;
   }
 
+  if (
+    messageType === 'template' &&
+    manualTemplate &&
+    templateRow?.variable_configuration_status === 'configured'
+  ) {
+    const { prepareTemplateMessage } =
+      await import('@/lib/message-preparation/prepare-template-message');
+    const { buildMetaTemplateMessagePayload } =
+      await import('@/lib/whatsapp/meta-template-payload');
+    prepared = await prepareTemplateMessage({
+      accountId,
+      templateId: templateRow.id,
+      context: {
+        contactId: conversation.contact.id,
+        reservationId: manualTemplate.reservationId,
+      },
+    });
+    if (prepared.template.connectionId !== config.id)
+      throw new SendMessageError(
+        'template_connection_invalid',
+        'This template belongs to a different WhatsApp connection.',
+        400
+      );
+    templatePayload = buildMetaTemplateMessagePayload(prepared);
+    sendTemplateName = prepared.template.name;
+    sendLanguage = prepared.template.language;
+  }
+
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
         phoneNumberId: config.phoneNumberId,
         accessToken,
         to: phone,
-        templateName: templateName!,
+        templateName: sendTemplateName!,
         language: sendLanguage,
-        template: templateRow ?? undefined,
-        messageParams: templateMessageParams ?? undefined,
-        params: templateParams || [],
+        template: prepared ? undefined : (templateRow ?? undefined),
+        messageParams: prepared
+          ? undefined
+          : (templateMessageParams ?? undefined),
+        params: prepared ? undefined : templateParams || [],
         contextMessageId,
+        templatePayload,
       });
       return result.messageId;
     }
@@ -471,11 +530,22 @@ export async function sendMessageToConversation(
     messageType === 'interactive'
       ? interactivePayload!.body
       : messageType === 'template'
-        ? templateContentText(
-            templateRow,
-            templateBodyParams(templateParams, templateMessageParams),
-            contentText
-          )
+        ? prepared && templatePayload
+          ? renderTemplateBody(
+              prepared.template.body_text,
+              (
+                templatePayload.components?.find(
+                  (component) => component.type === 'body'
+                )?.parameters ?? []
+              ).map((parameter) =>
+                parameter.type === 'text' ? parameter.text : ''
+              )
+            )
+          : templateContentText(
+              templateRow,
+              templateBodyParams(templateParams, templateMessageParams),
+              contentText
+            )
         : (contentText ?? null);
 
   const { data: messageRecord, error: msgError } = await db
@@ -486,7 +556,7 @@ export async function sendMessageToConversation(
       content_type: messageType,
       content_text: persistedText,
       media_url: mediaUrl || null,
-      template_name: templateName || null,
+      template_name: sendTemplateName || null,
       interactive_payload:
         messageType === 'interactive' ? interactivePayload : null,
       message_id: waMessageId,
@@ -542,5 +612,9 @@ export async function sendMessageToConversation(
     );
   }
 
-  return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
+  return {
+    messageId: messageRecord.id,
+    whatsappMessageId: waMessageId,
+    contentText: persistedText,
+  };
 }

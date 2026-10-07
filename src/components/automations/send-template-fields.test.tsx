@@ -4,6 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import type { MessageTemplate } from '@/types';
 import type { CatalogVariable } from '@/lib/whatsapp/semantic-template';
+import type {
+  MessageVariableSourceScope,
+  MessageVariableResolutionSource,
+} from '@/lib/message-variables/contract';
 import { SendTemplateFields } from './send-template-fields';
 import {
   selectSemanticTemplateAction,
@@ -21,13 +25,18 @@ vi.mock('next/link', () => ({
 let root: Root, host: HTMLDivElement;
 let config: Record<string, unknown>;
 let templates: MessageTemplate[];
-let catalog: CatalogVariable[];
+let catalog: (CatalogVariable & {
+  sourceScope?: MessageVariableSourceScope;
+  resolutionSource?: MessageVariableResolutionSource;
+})[];
+let reservationAvailable: boolean;
 const render = () =>
   root.render(
     <SendTemplateFields
       config={config}
       templates={templates}
       catalog={catalog}
+      reservationAvailable={reservationAvailable}
       connectionId="connection"
       labels={{ template: 'Template', select: 'Select template' }}
       onChange={(next) => {
@@ -40,6 +49,7 @@ beforeEach(async () => {
   (
     globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
+  reservationAvailable = true;
   config = {
     template_name: 'booking_confirmat',
     language: 'en_US',
@@ -219,4 +229,40 @@ it('performs no runtime resolution or network calls during preview/selection', a
   } finally {
     fetcher.mockRestore();
   }
+});
+
+it('disables provider templates and warns about saved selections on CRM triggers', async () => {
+  reservationAvailable = false;
+  catalog.forEach((v) => {
+    v.sourceScope = v.category;
+    v.resolutionSource = 'context';
+  });
+  await act(render);
+  expect(
+    host.querySelector('option[value="template"]')!.hasAttribute('disabled')
+  ).toBe(true);
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+    'needs a reservation'
+  );
+});
+it('allows CRM contact/workspace templates for non-PMS triggers', async () => {
+  reservationAvailable = false;
+  templates[0].semantic_content = {
+    body_text: 'Welcome {{contact.first_name}}',
+  };
+  templates[0].semantic_variable_mapping = [
+    {
+      component: 'BODY',
+      position: 1,
+      variable_key: 'contact.first_name',
+      sample: 'sample',
+    },
+  ];
+  catalog[0].sourceScope = 'contact';
+  catalog[0].resolutionSource = 'context';
+  await act(render);
+  expect(
+    host.querySelector('option[value="template"]')!.hasAttribute('disabled')
+  ).toBe(false);
+  expect(host.querySelector('[role="alert"]')).toBeNull();
 });

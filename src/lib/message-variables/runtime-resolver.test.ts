@@ -107,6 +107,8 @@ beforeEach(() => {
           : variable_key === 'reservation.nights'
             ? 'derived'
             : 'context',
+      source_scope: variable_key.split('.')[0],
+      resolver_key: variable_key,
       category: variable_key.split('.')[0],
       sort_order: i,
       preview_value: 'EDITOR SAMPLE NOT RUNTIME',
@@ -404,7 +406,7 @@ describe('provider-neutral runtime resolution', () => {
     );
   });
   it('requires a canonical reservation for provider values', async () => {
-    const request = input();
+    const request = input(['property.name']);
     request.context = {};
     failure(
       await resolveRuntimeVariables(request, { db }),
@@ -584,4 +586,123 @@ it('aborts an actual abort-aware in-flight fetch at the default ten-second deadl
   await vi.advanceTimersByTimeAsync(1);
   failure(await promise, 'timeout', true);
   expect(aborted).toBe(true);
+});
+
+it('resolves all CRM contact fields with no PMS integration and no provider request', async () => {
+  const contactId = id(55);
+  const keys = [
+    'contact.first_name',
+    'contact.last_name',
+    'contact.full_name',
+    'contact.phone',
+    'contact.email',
+  ];
+  tables = {
+    message_variable_catalog: [
+      ...tables.message_variable_catalog.filter(
+        (v) => v.variable_key === 'workspace.name'
+      ),
+      ...keys.map((variable_key) => ({
+        variable_key,
+        resolver_key: variable_key,
+        source_scope: 'contact',
+        resolution_source: 'context',
+        is_active: true,
+      })),
+    ],
+    contacts: [
+      {
+        id: contactId,
+        account_id: account,
+        name: '  Taylor  Jane Smith ',
+        phone: '+15551234567',
+        email: 'taylor@example.test',
+      },
+    ],
+    accounts: tables.accounts,
+  };
+  const result = await resolveRuntimeVariables(
+    {
+      accountId: account,
+      context: { contactId },
+      variableKeys: [...keys, 'workspace.name'],
+    },
+    { db }
+  );
+  expect(result.success).toBe(true);
+  expect(
+    Object.fromEntries(
+      Object.entries(result.values).map(([k, v]) => [k, v.value])
+    )
+  ).toEqual({
+    'contact.first_name': 'Taylor',
+    'contact.last_name': 'Jane Smith',
+    'contact.full_name': 'Taylor Jane Smith',
+    'contact.phone': '+15551234567',
+    'contact.email': 'taylor@example.test',
+    'workspace.name': 'Current workspace',
+  });
+  expect(reads).toEqual(['message_variable_catalog', 'contacts', 'accounts']);
+  expect(fetcher).not.toHaveBeenCalled();
+});
+it('keeps explicit reservation guest identity authoritative over CRM contact', async () => {
+  tables.contacts = [
+    { id: id(55), account_id: account, name: 'Different CRM recipient' },
+  ];
+  const result = await resolveRuntimeVariables(
+    { ...input(), context: { contactId: id(55), reservationId: reservation } },
+    {
+      db,
+      createAdapter: () => ({
+        resolveVariables: async () => ({
+          'contact.first_name': { status: 'resolved', value: 'Booking guest' },
+        }),
+      }),
+    }
+  );
+  expect(result.values['contact.first_name']).toEqual({
+    status: 'resolved',
+    value: 'Booking guest',
+    source: 'provider',
+  });
+  expect(reads).not.toContain('contacts');
+});
+it.each(['missing', 'foreign', 'database', 'empty'])(
+  'keeps CRM contact failure distinct: %s',
+  async (kind) => {
+    tables.contacts =
+      kind === 'missing'
+        ? []
+        : [
+            {
+              id: id(55),
+              account_id: kind === 'foreign' ? id(99) : account,
+              name: kind === 'empty' ? ' ' : 'Taylor',
+            },
+          ];
+    if (kind === 'database') failedTable = 'contacts';
+    const result = await resolveRuntimeVariables(
+      {
+        accountId: account,
+        context: { contactId: id(55) },
+        variableKeys: ['contact.first_name'],
+      },
+      { db }
+    );
+    if (kind === 'empty')
+      expect(result.values['contact.first_name'].status).toBe('missing');
+    else
+      expect(result.failures[0].code).toBe(
+        kind === 'database' ? 'lookup_failed' : 'contact_not_found'
+      );
+    expect(fetcher).not.toHaveBeenCalled();
+  }
+);
+it('reports missing CRM context without requiring or contacting PMS', async () => {
+  const result = await resolveRuntimeVariables(
+    { accountId: account, context: {}, variableKeys: ['contact.first_name'] },
+    { db }
+  );
+  expect(result.failures[0].code).toBe('contact_context_required');
+  expect(reads).toEqual(['message_variable_catalog']);
 });

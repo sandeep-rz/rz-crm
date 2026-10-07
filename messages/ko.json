@@ -317,7 +317,14 @@
       "finalUrl": "최종 URL: {url}",
       "back": "뒤로",
       "cancel": "취소",
-      "send": "템플릿 보내기"
+      "send": "템플릿 보내기",
+      "semanticHint": "전송 시 값이 자동으로 입력됩니다.",
+      "reservation": "예약",
+      "selectReservation": "예약 선택",
+      "loadingReservations": "예약 불러오는 중…",
+      "contextLoadError": "템플릿 또는 예약 정보를 불러올 수 없습니다. 닫고 다시 열어 시도하세요.",
+      "noReservations": "이 연락처에 연결된 예약이 없습니다. 전송 전에 동기화된 예약을 확인하세요.",
+      "previewHint": "미리보기에는 예시 값이 표시됩니다. 예약 값은 전송 시에만 불러옵니다."
     },
     "sidebar": {
       "contactInfo": "연락처 정보",

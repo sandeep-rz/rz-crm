@@ -2099,6 +2099,8 @@ function StepEditor({
           templates={resources.templates}
           catalog={resources.messageVariables.map((v) => ({
             variableKey: v.variable_key,
+            sourceScope: v.source_scope,
+            resolutionSource: v.resolution_source,
             label: v.label,
             previewValue: v.preview_value,
             category: v.category,
@@ -2106,6 +2108,7 @@ function StepEditor({
             sortOrder: 0,
           }))}
           connectionId={resources.selectedConnectionId}
+          reservationAvailable={isPmsAutomationTrigger(resources.triggerType)}
           onChange={(config) => onChange({ ...step, step_config: config })}
           labels={{
             template: t('templates.templateLabel'),

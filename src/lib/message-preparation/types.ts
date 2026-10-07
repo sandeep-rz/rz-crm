@@ -20,11 +20,11 @@ export type PreparedTemplateIdentity = Pick<
 export interface PrepareTemplateMessageInput {
   accountId: string;
   templateId: string;
-  context: { reservationId: string };
+  context: { contactId?: string; reservationId?: string };
 }
 export interface PreparedTemplateMessage {
   template: PreparedTemplateIdentity;
-  context: { reservationId: string };
+  context: { contactId?: string; reservationId?: string };
   resolvedVariables: Record<string, string>;
   mapping: PreparedVariableOccurrence[];
 }

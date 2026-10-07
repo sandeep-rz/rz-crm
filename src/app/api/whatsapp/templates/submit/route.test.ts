@@ -10,7 +10,8 @@ const mocks = vi.hoisted(() => ({
   catalog: vi.fn(),
 }));
 const db = {
-  from: () => {
+  from: (table: string) => {
+    if (table.startsWith('pms_')) throw new Error('No PMS integration exists');
     let write: Record<string, unknown> | undefined;
     const q = {
       select: () => q,
@@ -371,4 +372,54 @@ it('returns useful Meta details and retains diagnostics without the access token
   expect(state.writes[0].submission_error).toContain('2388299');
   expect(JSON.stringify(log.mock.calls)).not.toContain('Remove the terminal');
   log.mockRestore();
+});
+
+it('creates a contact/workspace semantic template and submits positional Meta content with no PMS', async () => {
+  mocks.catalog.mockResolvedValue([
+    {
+      variableKey: 'contact.first_name',
+      label: 'Contact first name',
+      previewValue: 'Taylor',
+      isActive: true,
+      category: 'contact',
+      sortOrder: 1,
+    },
+    {
+      variableKey: 'workspace.name',
+      label: 'Workspace name',
+      previewValue: 'Our team',
+      isActive: true,
+      category: 'workspace',
+      sortOrder: 2,
+    },
+  ]);
+  const response = await POST(
+    request({
+      ...semantic,
+      semantic_content: {
+        body_text:
+          'Hi {{contact.first_name}}, welcome to {{workspace.name}}. We are happy to help you.',
+      },
+    })
+  );
+  expect(response.status).toBe(200);
+  expect(mocks.submit.mock.calls[0][0].payload.components[0]).toEqual({
+    type: 'BODY',
+    text: 'Hi {{1}}, welcome to {{2}}. We are happy to help you.',
+    example: { body_text: [['Taylor', 'Our team']] },
+  });
+  expect(state.writes[0].semantic_variable_mapping).toEqual([
+    {
+      component: 'BODY',
+      position: 1,
+      variable_key: 'contact.first_name',
+      sample: 'Taylor',
+    },
+    {
+      component: 'BODY',
+      position: 2,
+      variable_key: 'workspace.name',
+      sample: 'Our team',
+    },
+  ]);
 });

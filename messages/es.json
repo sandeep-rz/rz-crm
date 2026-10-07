@@ -317,7 +317,14 @@
       "finalUrl": "URL final: {url}",
       "back": "Atrás",
       "cancel": "Cancelar",
-      "send": "Enviar plantilla"
+      "send": "Enviar plantilla",
+      "semanticHint": "Los valores se completan automáticamente al enviar.",
+      "reservation": "Reserva",
+      "selectReservation": "Selecciona una reserva",
+      "loadingReservations": "Cargando reservas…",
+      "contextLoadError": "No se pudieron cargar los datos. Cierra y vuelve a abrir para reintentar.",
+      "noReservations": "No hay reservas vinculadas a este contacto. Revisa las reservas sincronizadas antes de enviar.",
+      "previewHint": "La vista previa usa ejemplos. Los valores de la reserva se cargan al enviar."
     },
     "sidebar": {
       "contactInfo": "Información del contacto",

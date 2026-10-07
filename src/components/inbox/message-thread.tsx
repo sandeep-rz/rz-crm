@@ -670,13 +670,17 @@ export function MessageThread({
       template: MessageTemplate,
       values: {
         body: string[];
+        reservationId?: string;
         headerText?: string;
         buttonParams?: Record<number, string>;
       }
     ) => {
       if (!conversation) return;
 
-      const renderedBody = renderTemplateBody(template.body_text, values.body);
+      const renderedBody =
+        template.variable_configuration_status === 'configured'
+          ? template.name
+          : renderTemplateBody(template.body_text, values.body);
       const tempId = `temp-${Date.now()}`;
 
       const optimisticMsg: Message = {
@@ -698,6 +702,8 @@ export function MessageThread({
           body: JSON.stringify({
             conversation_id: conversation.id,
             message_type: 'template',
+            template_id: template.id,
+            reservation_id: values.reservationId,
             template_name: template.name,
             template_language: template.language,
             // Structured params drive the new send-builder path
@@ -724,7 +730,12 @@ export function MessageThread({
           return;
         }
 
-        onUpdateMessage(tempId, { status: 'sent' });
+        onUpdateMessage(tempId, {
+          status: 'sent',
+          ...(typeof payload.content_text === 'string'
+            ? { content_text: payload.content_text }
+            : {}),
+        });
       } catch (err) {
         console.error('Failed to send template:', err);
         const reason = err instanceof Error ? err.message : 'network error';
@@ -1210,6 +1221,7 @@ export function MessageThread({
       />
 
       <TemplatePicker
+        contactId={conversation?.contact_id}
         whatsappConfigId={conversation?.whatsapp_config_id}
         open={templateModalOpen}
         onOpenChange={setTemplateModalOpen}

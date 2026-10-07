@@ -2,6 +2,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 import { listMessageVariableDefinitions } from './catalog';
+import { variableRequiresReservation } from './contract';
 import { createConnectedVariableResolver } from '@/lib/integrations/pms/variable-registry';
 import { PmsProviderError } from '@/lib/integrations/pms/provider';
 import type {
@@ -11,7 +12,7 @@ import type {
 
 export interface RuntimeVariableInput {
   accountId: string;
-  context: { reservationId?: string };
+  context: { contactId?: string; reservationId?: string };
   variableKeys: string[];
 }
 export type RuntimeVariableValue = ConnectedVariableValue & {
@@ -119,7 +120,7 @@ async function connectedContext(
   };
 }
 
-/** Trusted server callers supply an authorized workspace ID. No browser API or send wiring. */
+/** Trusted server callers supply an authorized workspace ID. Account-scoped CRM reads and one optional bulk provider request. */
 export async function resolveRuntimeVariables(
   input: RuntimeVariableInput,
   options: {
@@ -152,7 +153,12 @@ export async function resolveRuntimeVariables(
     typeof input.accountId !== 'string' ||
     !uuid.test(input.accountId) ||
     !object(input.context) ||
-    Object.keys(input.context).some((key) => key !== 'reservationId') ||
+    Object.keys(input.context).some(
+      (key) => !['contactId', 'reservationId'].includes(key)
+    ) ||
+    (input.context.contactId !== undefined &&
+      (typeof input.context.contactId !== 'string' ||
+        !uuid.test(input.context.contactId))) ||
     (input.context.reservationId !== undefined &&
       (typeof input.context.reservationId !== 'string' ||
         !uuid.test(input.context.reservationId))) ||
@@ -184,10 +190,74 @@ export async function resolveRuntimeVariables(
     fail('invalid_variables', 'catalog', result.invalidKeys);
     return result;
   }
-  // Ownership policy: workspace.name is CRM-owned. Context/derived/provider keys
-  // in reservation operations are source-owned and must be late-bound at PMS.
-  const local = keys.filter((key) => key === 'workspace.name');
-  const remote = keys.filter((key) => key !== 'workspace.name');
+  const definition = (key: string) =>
+    catalog.find((v) => v.variableKey === key)!;
+  const local = keys.filter(
+    (key) =>
+      !variableRequiresReservation(definition(key)) &&
+      definition(key).sourceScope === 'workspace'
+  );
+  const contacts = keys.filter(
+    (key) =>
+      !variableRequiresReservation(definition(key)) &&
+      definition(key).sourceScope === 'contact' &&
+      !(
+        input.context.reservationId &&
+        definition(key).resolutionSource === 'context'
+      )
+  );
+  const remote = keys.filter(
+    (key) => !local.includes(key) && !contacts.includes(key)
+  );
+  if (contacts.length) {
+    if (!input.context.contactId) {
+      fail('contact_context_required', 'context', contacts);
+    } else {
+      try {
+        const { data, error } = await db
+          .from('contacts')
+          .select('id,account_id,name,phone,email')
+          .eq('id', input.context.contactId)
+          .eq('account_id', input.accountId)
+          .maybeSingle();
+        if (error) throw new ContextFailure('lookup_failed', true);
+        if (
+          !data ||
+          data.id !== input.context.contactId ||
+          data.account_id !== input.accountId
+        )
+          throw new ContextFailure('contact_not_found');
+        const name =
+          typeof data.name === 'string'
+            ? data.name.trim().split(/\s+/).filter(Boolean)
+            : [];
+        // CRM stores a single name. Match the catalog's first/rest semantics.
+        const values: Record<string, unknown> = {
+          'contact.first_name': name[0],
+          'contact.last_name': name.slice(1).join(' '),
+          'contact.full_name': name.join(' '),
+          'contact.phone': data.phone,
+          'contact.email': data.email,
+        };
+        for (const key of contacts) {
+          const resolverKey = definition(key).resolverKey;
+          const value = values[resolverKey];
+          result.values[key] = !Object.hasOwn(values, resolverKey)
+            ? { status: 'unsupported', value: null, source: 'crm' }
+            : typeof value === 'string' && value.trim()
+              ? { status: 'resolved', value: value.trim(), source: 'crm' }
+              : { status: 'missing', value: null, source: 'crm' };
+        }
+      } catch (error) {
+        fail(
+          error instanceof ContextFailure ? error.code : 'lookup_failed',
+          'crm',
+          contacts,
+          !(error instanceof ContextFailure) || error.retryable
+        );
+      }
+    }
+  }
   if (local.length) {
     try {
       const { data, error } = await db
@@ -198,10 +268,13 @@ export async function resolveRuntimeVariables(
       if (error) throw new ContextFailure('lookup_failed', true);
       if (!data || data.id !== input.accountId)
         throw new ContextFailure('workspace_not_found');
-      result.values['workspace.name'] =
-        typeof data.name === 'string' && data.name.trim()
-          ? { status: 'resolved', value: data.name, source: 'crm' }
-          : { status: 'missing', value: null, source: 'crm' };
+      for (const key of local)
+        result.values[key] =
+          definition(key).resolverKey !== 'workspace.name'
+            ? { status: 'unsupported', value: null, source: 'crm' }
+            : typeof data.name === 'string' && data.name.trim()
+              ? { status: 'resolved', value: data.name, source: 'crm' }
+              : { status: 'missing', value: null, source: 'crm' };
     } catch (error) {
       fail(
         error instanceof ContextFailure ? error.code : 'lookup_failed',

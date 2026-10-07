@@ -1,5 +1,10 @@
 'use client';
 import Link from 'next/link';
+import {
+  variableRequiresReservation,
+  type MessageVariableSourceScope,
+  type MessageVariableResolutionSource,
+} from '@/lib/message-variables/contract';
 import type { MessageTemplate } from '@/types';
 import {
   renderSemanticText,
@@ -16,12 +21,17 @@ export function SendTemplateFields({
   templates,
   catalog,
   connectionId,
+  reservationAvailable = true,
   onChange,
   labels,
 }: {
   config: Record<string, unknown>;
   templates: MessageTemplate[];
-  catalog: CatalogVariable[];
+  catalog: (CatalogVariable & {
+    sourceScope?: MessageVariableSourceScope;
+    resolutionSource?: MessageVariableResolutionSource;
+  })[];
+  reservationAvailable?: boolean;
   connectionId?: string | null;
   onChange: (config: Record<string, unknown>) => void;
   labels: { template: string; select: string };
@@ -33,6 +43,14 @@ export function SendTemplateFields({
           t.name === config.template_name &&
           (t.language ?? 'en_US') === (config.language ?? 'en_US')
       );
+  const needsReservation = (template: MessageTemplate) =>
+    template.semantic_variable_mapping?.some((entry) =>
+      variableRequiresReservation(
+        catalog.find((v) => v.variableKey === entry.variable_key)
+      )
+    );
+  const incompatible =
+    selected && !reservationAvailable && needsReservation(selected);
   const usable = selected && semanticTemplateIsUsable(selected, connectionId);
   const semantic = usable ? selected.semantic_content : null;
   return (
@@ -57,7 +75,10 @@ export function SendTemplateFields({
             <option
               key={template.id}
               value={template.id}
-              disabled={!semanticTemplateIsUsable(template, connectionId)}
+              disabled={
+                !semanticTemplateIsUsable(template, connectionId) ||
+                (!reservationAvailable && Boolean(needsReservation(template)))
+              }
             >
               {template.name} ({template.language ?? ''})
             </option>
@@ -69,6 +90,12 @@ export function SendTemplateFields({
           ) : null}
         </select>
       </label>
+      {incompatible ? (
+        <p role="alert" className="text-destructive text-xs">
+          This template needs a reservation. Choose a reservation trigger or a
+          template using contact and workspace information.
+        </p>
+      ) : null}
       {semantic && selected ? (
         <div className="border-border bg-muted/40 space-y-2 rounded-lg border p-3">
           <p className="text-muted-foreground text-[11px] font-medium uppercase">

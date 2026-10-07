@@ -183,7 +183,10 @@ describe('semantic automation execution', () => {
     expect(h.prepare).toHaveBeenCalledExactlyOnceWith({
       accountId: 'account',
       templateId,
-      context: { reservationId: 'canonical-reservation' },
+      context: {
+        contactId: 'recipient',
+        reservationId: 'canonical-reservation',
+      },
     });
     expect(h.legacy).not.toHaveBeenCalled();
     expect(h.send).toHaveBeenCalledTimes(1);
@@ -296,15 +299,17 @@ describe('semantic automation execution', () => {
       connectionId: 'template-connection',
     });
   });
-  it('rejects missing canonical reservation before preparation or send', async () => {
+  it('executes CRM-only templates without fabricating reservation context', async () => {
     const input = args();
-    input.context = { vars: { reservation_id: 'fake' } };
-    await expect(executeAutomationStep(action(), input)).rejects.toMatchObject({
-      code: 'invalid_input',
-      retryable: false,
+    input.context = {};
+    await executeAutomationStep(action(), input);
+    expect(h.prepare).toHaveBeenCalledExactlyOnceWith({
+      accountId: 'account',
+      templateId,
+      context: { contactId: 'recipient', reservationId: undefined },
     });
-    expect(h.prepare).not.toHaveBeenCalled();
-    expect(h.send).not.toHaveBeenCalled();
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.legacy).not.toHaveBeenCalled();
   });
   it('requires a separate recipient', async () => {
     await expect(

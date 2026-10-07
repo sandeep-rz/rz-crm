@@ -703,7 +703,6 @@ export async function executeAutomationStep(
       // Identity, never a cached name or action-level mapping, selects this path.
       if (cfg.template_id !== undefined) {
         const reservationId = args.context.reservation?.reservation_id;
-        if (!reservationId) throw new TemplatePreparationError('invalid_input');
         // Load server-only preparation only for semantic actions.
         const { prepareTemplateMessage } =
           await import('@/lib/message-preparation/prepare-template-message');
@@ -712,7 +711,7 @@ export async function executeAutomationStep(
         const prepared = await prepareTemplateMessage({
           accountId: args.automation.account_id,
           templateId: cfg.template_id,
-          context: { reservationId },
+          context: { contactId: args.contactId, reservationId },
         });
         const templatePayload = buildMetaTemplateMessagePayload(prepared);
         try {

@@ -317,7 +317,14 @@
       "finalUrl": "Final URL: {url}",
       "back": "Back",
       "cancel": "Cancel",
-      "send": "Send template"
+      "send": "Send template",
+      "semanticHint": "Values are filled automatically when you send.",
+      "reservation": "Reservation",
+      "selectReservation": "Select a reservation",
+      "loadingReservations": "Loading reservations…",
+      "contextLoadError": "Could not load template or reservation details. Close and reopen to try again.",
+      "noReservations": "No reservations are linked to this contact. Check the contact’s synced reservations before sending.",
+      "previewHint": "Preview uses sample values. Booking values are loaded only when sending."
     },
     "sidebar": {
       "contactInfo": "Contact info",

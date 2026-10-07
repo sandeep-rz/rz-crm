@@ -452,6 +452,9 @@ export function ContactDetailView({
           // contact, mirroring the inbox template-send payload otherwise.
           contact_id: contactId,
           message_type: 'template',
+          template_id: template.id,
+          reservation_id: values.reservationId,
+          whatsapp_config_id: template.whatsapp_config_id,
           template_name: template.name,
           template_language: template.language,
           template_message_params: {
@@ -995,6 +998,7 @@ export function ContactDetailView({
         }}
       />
       <TemplatePicker
+        contactId={contactId}
         open={templatePickerOpen}
         onOpenChange={setTemplatePickerOpen}
         onSelect={handleSendTemplate}

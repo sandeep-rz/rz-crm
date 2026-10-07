@@ -207,6 +207,32 @@ describe('POST /api/automations WhatsApp dependency', () => {
     expect(mocks.insertPayloads[0].whatsapp_config_id).toBe('connection-1');
   });
 
+  it('creates an active CRM-trigger semantic send without any PMS database access', async () => {
+    const steps = [
+      {
+        step_type: 'send_template',
+        step_config: { template_id: '00000000-0000-4000-8000-000000000044' },
+      },
+    ];
+    const response = await POST(
+      request({
+        name: 'Welcome contact',
+        trigger_type: 'new_contact_created',
+        trigger_config: {},
+        is_active: true,
+        whatsapp_config_id: 'connection-1',
+        steps,
+      })
+    );
+    expect(response.status).toBe(201);
+    expect(mocks.insertSteps).toHaveBeenCalled();
+    expect(mocks.insertPayloads[0]).toMatchObject({
+      trigger_type: 'new_contact_created',
+      is_active: true,
+    });
+    expect(mocks.backfill).not.toHaveBeenCalled();
+  });
+
   it('rejects a foreign-workspace connection', async () => {
     const { WhatsAppConnectionError } =
       await import('@/lib/whatsapp/connection-resolver');

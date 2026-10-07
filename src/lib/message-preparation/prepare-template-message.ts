@@ -31,9 +31,15 @@ export async function prepareTemplateMessage(
       (k) => typeof input[k] === 'string' && uuid.test(input[k] as string)
     ) ||
     !object(input.context) ||
-    Object.keys(input.context).some((k) => k !== 'reservationId') ||
-    typeof input.context.reservationId !== 'string' ||
-    !uuid.test(input.context.reservationId)
+    Object.keys(input.context).some(
+      (k) => !['contactId', 'reservationId'].includes(k)
+    ) ||
+    (input.context.contactId !== undefined &&
+      (typeof input.context.contactId !== 'string' ||
+        !uuid.test(input.context.contactId))) ||
+    (input.context.reservationId !== undefined &&
+      (typeof input.context.reservationId !== 'string' ||
+        !uuid.test(input.context.reservationId)))
   )
     throw new TemplatePreparationError('invalid_input');
   let db: SupabaseClient;
@@ -111,7 +117,7 @@ export async function prepareTemplateMessage(
     runtime = await (options.resolveVariables ?? resolveRuntimeVariables)(
       {
         accountId: input.accountId,
-        context: { reservationId: input.context.reservationId },
+        context: { ...input.context },
         variableKeys: keys,
       },
       { db }
@@ -186,7 +192,7 @@ export async function prepareTemplateMessage(
         throw new TemplatePreparationError('unsupported_template_component');
       }),
     },
-    context: { reservationId: input.context.reservationId },
+    context: { ...input.context },
     resolvedVariables,
     mapping,
   };

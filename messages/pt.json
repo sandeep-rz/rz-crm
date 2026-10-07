@@ -985,8 +985,8 @@
       "retryIneligible": "Esta execução já não pode ser repetida.",
       "retryError": "Não foi possível colocar esta execução na fila. Tente novamente.",
       "attempt": "Tentativa {count}",
-      "title": "Logs de execução",
-      "loadError": "Falha ao carregar os logs",
+      "title": "Atividade",
+      "loadError": "Não foi possível carregar a atividade.",
       "emptyTitle": "Nenhuma execução ainda",
       "emptyDesc": "Acione esta automação para ver as execuções aqui.",
       "unknownContact": "Contato desconhecido",
@@ -994,13 +994,89 @@
       "stepPlural": "{count} etapas",
       "noSteps": "Nenhuma etapa registrada.",
       "status": {
-        "processing": "Em processamento",
+        "processing": "Em execução",
         "success": "sucesso",
         "partial": "parcial",
-        "failed": "falhou"
+        "failed": "Falhou",
+        "completed": "Concluída",
+        "queued": "Agendada / na fila"
       },
       "back": "Voltar",
-      "backAria": "Voltar"
+      "backAria": "Voltar",
+      "timeline": "Etapas da execução",
+      "automationTriggered": "Automação iniciada",
+      "reservation": "Reserva {reference}",
+      "inProgress": "A automação está em execução",
+      "waiting": "Aguardando a próxima etapa",
+      "executionFailed": "A automação não pôde continuar",
+      "failure": {
+        "connection": "Verifique a conexão do WhatsApp e reconecte se necessário.",
+        "template": "O modelo não está pronto para envio. Verifique a aprovação e as variáveis.",
+        "variables": "Não foi possível carregar os dados da mensagem. Verifique a reserva e a integração.",
+        "reservation": "Os dados da reserva estão indisponíveis. Verifique a sincronização.",
+        "recipient": "Verifique os dados de contato do hóspede antes de tentar novamente.",
+        "templateSend": "Não foi possível enviar o modelo do WhatsApp. Verifique o modelo e a conexão.",
+        "generic": "Esta automação não pôde terminar. Revise as configurações antes de tentar novamente."
+      },
+      "timelineSteps": {
+        "other": {
+          "skipped": "Etapa ignorada",
+          "success": "Etapa concluída",
+          "failed": "Etapa falhou"
+        },
+        "send_template": {
+          "success": "Modelo do WhatsApp enviado",
+          "failed": "Falha no modelo do WhatsApp"
+        },
+        "send_message": {
+          "success": "Mensagem do WhatsApp enviada",
+          "failed": "Falha na mensagem do WhatsApp"
+        },
+        "send_buttons": {
+          "success": "Botões do WhatsApp enviados",
+          "failed": "Falha nos botões do WhatsApp"
+        },
+        "send_list": {
+          "success": "Lista do WhatsApp enviada",
+          "failed": "Falha na lista do WhatsApp"
+        },
+        "condition": {
+          "success": "Condições verificadas",
+          "failed": "Falha na verificação das condições"
+        },
+        "wait": {
+          "success": "Espera agendada",
+          "failed": "Não foi possível agendar a espera"
+        },
+        "add_tag": {
+          "success": "Etiqueta do contato adicionada",
+          "failed": "Não foi possível adicionar a etiqueta"
+        },
+        "remove_tag": {
+          "success": "Etiqueta do contato removida",
+          "failed": "Não foi possível remover a etiqueta"
+        },
+        "assign_conversation": {
+          "success": "Conversa atribuída",
+          "failed": "Não foi possível atribuir a conversa"
+        },
+        "update_contact_field": {
+          "success": "Contato atualizado",
+          "failed": "Não foi possível atualizar o contato"
+        },
+        "create_deal": {
+          "success": "Negócio criado",
+          "failed": "Não foi possível criar o negócio"
+        },
+        "send_webhook": {
+          "success": "Serviço conectado notificado",
+          "failed": "Não foi possível notificar o serviço conectado"
+        },
+        "close_conversation": {
+          "success": "Conversa encerrada",
+          "failed": "Não foi possível encerrar a conversa"
+        }
+      }
     },
     "relative": {
       "never": "nunca",

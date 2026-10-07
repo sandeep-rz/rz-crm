@@ -5,24 +5,23 @@ import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
   Check,
+  Clock,
+  Minus,
   Loader2,
   X,
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useFormatter, useTranslations } from 'next-intl';
 
 import { useAuth } from '@/hooks/use-auth';
 import { ExecutionRetry } from '@/components/automations/execution-retry';
 import type { RetryActivityLog } from '@/lib/automations/manual-retry';
-import type {
-  Automation,
-  AutomationLog,
-  AutomationLogStepResult,
-} from '@/types';
+import type { Automation } from '@/types';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { formatRelative } from '@/lib/automations/trigger-meta';
+import { formatRelative, isKnownTrigger } from '@/lib/automations/trigger-meta';
 
 export default function AutomationLogsPage({
   params,
@@ -34,9 +33,14 @@ export default function AutomationLogsPage({
   const { accountId } = useAuth();
   const [revision, setRevision] = useState(0);
   const t = useTranslations('Automations.logs');
+  const tTriggers = useTranslations('Automations.builder.triggers');
+  const format = useFormatter();
   const tRelative = useTranslations('Automations.relative');
 
-  const [automation, setAutomation] = useState<Automation | null>(null);
+  const [automation, setAutomation] = useState<Pick<
+    Automation,
+    'id' | 'name' | 'trigger_type'
+  > | null>(null);
   const [logs, setLogs] = useState<RetryActivityLog[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openLogId, setOpenLogId] = useState<string | null>(null);
@@ -68,8 +72,10 @@ export default function AutomationLogsPage({
     if (
       !logs?.some(
         (log) =>
-          log.manual_retry_state === 'already_retried' ||
-          log.trigger_job_execution_state === 'processing'
+          log.trigger_job_execution_state === 'processing' ||
+          log.job_status === 'scheduled' ||
+          log.job_status === 'processing' ||
+          log.status === 'partial'
       )
     )
       return;
@@ -124,60 +130,100 @@ export default function AutomationLogsPage({
         <ul className="space-y-2">
           {logs.map((log) => {
             const isOpen = openLogId === log.id;
+            const status =
+              log.trigger_job_execution_state === 'processing'
+                ? 'processing'
+                : log.status === 'partial'
+                  ? 'queued'
+                  : log.status === 'success'
+                    ? 'completed'
+                    : 'failed';
+            // A queued retry is separate from the failed historical attempt.
+            const retryQueued =
+              log.job_status === 'scheduled' &&
+              log.job_attempt_count === log.trigger_job_attempt_count;
+            const retryState =
+              log.manual_retry_state === 'already_retried' && !retryQueued
+                ? 'not_eligible'
+                : log.manual_retry_state;
+            const trigger = isKnownTrigger(log.trigger_event)
+              ? tTriggers(`${log.trigger_event}.label`)
+              : t('automationTriggered');
             return (
               <li
                 key={log.id}
-                className="border-border bg-card rounded-xl border"
+                className="border-border bg-card overflow-hidden rounded-xl border shadow-sm"
               >
-                <div className="flex items-center gap-3 pr-4">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 p-4">
                   <button
                     type="button"
+                    aria-expanded={isOpen}
+                    aria-controls={`timeline-${log.id}`}
                     onClick={() => setOpenLogId(isOpen ? null : log.id)}
-                    className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"
+                    className="focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 rounded-md text-left outline-none focus-visible:ring-2"
                   >
                     {isOpen ? (
-                      <ChevronDown className="text-muted-foreground h-4 w-4" />
+                      <ChevronDown className="text-muted-foreground mt-1 h-4 w-4 shrink-0" />
                     ) : (
-                      <ChevronRight className="text-muted-foreground h-4 w-4" />
+                      <ChevronRight className="text-muted-foreground mt-1 h-4 w-4 shrink-0" />
                     )}
-                    <StatusBadge
-                      status={
-                        log.trigger_job_execution_state === 'processing'
-                          ? 'processing'
-                          : log.status
-                      }
-                      t={t}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-foreground truncate text-sm font-medium">
-                        {log.contact?.name ??
-                          log.contact?.phone ??
-                          t('unknownContact')}
-                      </div>
-                      <div className="text-muted-foreground truncate text-xs">
-                        {log.trigger_job_attempt_count && (
-                          <>
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-foreground truncate text-sm font-semibold">
+                          {automation.name}
+                        </span>
+                        <StatusBadge status={status} t={t} />
+                        {log.trigger_job_attempt_count != null && (
+                          <Badge variant="outline">
                             {t('attempt', {
                               count: log.trigger_job_attempt_count,
-                            })}{' '}
-                            ·{' '}
-                          </>
+                            })}
+                          </Badge>
                         )}
-                        {log.trigger_event} · {log.steps_executed?.length ?? 0}{' '}
-                        {log.steps_executed?.length === 1
-                          ? t('step', { count: 1 }).replace('1 ', '')
-                          : t('stepPlural', {
-                              count: log.steps_executed?.length ?? 0,
-                            }).replace(/^[0-9]+ /, '')}
+                        {retryQueued && retryState !== 'already_retried' && (
+                          <Badge variant="secondary">{t('retryQueued')}</Badge>
+                        )}
                       </div>
-                    </div>
-                    <div className="text-muted-foreground text-xs">
-                      {formatRelative(log.created_at, tRelative)}
+                      <div className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                        <span>{trigger}</span>
+                        {log.contact && (
+                          <span className="text-foreground">
+                            {log.contact.name ||
+                              log.contact.phone ||
+                              t('unknownContact')}
+                          </span>
+                        )}
+                        {log.reservation_reference && (
+                          <span>
+                            {t('reservation', {
+                              reference: log.reservation_reference,
+                            })}
+                          </span>
+                        )}
+                      </div>
+                      <time
+                        dateTime={log.created_at}
+                        className="text-muted-foreground block text-xs"
+                      >
+                        {format.dateTime(new Date(log.created_at), {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        })}
+                        <span className="ml-2">
+                          · {formatRelative(log.created_at, tRelative)}
+                        </span>
+                      </time>
+                      {status === 'failed' && (
+                        <p className="text-destructive text-xs">
+                          {t(`failure.${log.failure_reason ?? 'generic'}`)}
+                        </p>
+                      )}
                     </div>
                   </button>
                   <ExecutionRetry
+                    key={`${log.id}:${log.job_status}:${log.job_attempt_count}`}
                     logId={log.id}
-                    state={log.manual_retry_state}
+                    state={retryState}
                     onQueued={() => {
                       setLogs(
                         (current) =>
@@ -186,6 +232,9 @@ export default function AutomationLogsPage({
                               ? {
                                   ...row,
                                   manual_retry_state: 'already_retried',
+                                  job_status: 'scheduled',
+                                  job_attempt_count:
+                                    row.trigger_job_attempt_count ?? undefined,
                                 }
                               : row
                           ) ?? null
@@ -195,22 +244,55 @@ export default function AutomationLogsPage({
                   />
                 </div>
                 {isOpen && (
-                  <div className="border-border border-t px-4 py-3">
-                    {log.error_message && (
-                      <p className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                        {log.error_message}
-                      </p>
-                    )}
-                    <ul className="space-y-1.5">
-                      {(log.steps_executed ?? []).map((r, i) => (
-                        <StepRow key={i} result={r} />
+                  <div
+                    id={`timeline-${log.id}`}
+                    className="border-border bg-muted/20 border-t px-5 py-4 sm:pl-11"
+                  >
+                    <p className="text-muted-foreground mb-3 text-xs font-medium">
+                      {t('timeline')}
+                    </p>
+                    <ol className="space-y-3">
+                      <StepRow
+                        label={t('automationTriggered')}
+                        status="success"
+                      />
+                      {log.steps_executed.map((step, index) => (
+                        <StepRow
+                          key={index}
+                          status={step.status}
+                          label={
+                            t.has(
+                              `timelineSteps.${step.step_type}.${step.status}`
+                            )
+                              ? t(
+                                  `timelineSteps.${step.step_type}.${step.status}`
+                                )
+                              : t(`timelineSteps.other.${step.status}`)
+                          }
+                          reason={
+                            step.status === 'failed'
+                              ? t(`failure.${step.failure_reason ?? 'generic'}`)
+                              : undefined
+                          }
+                        />
                       ))}
-                      {(log.steps_executed ?? []).length === 0 && (
-                        <li className="text-muted-foreground text-xs">
-                          {t('noSteps')}
-                        </li>
+                      {status === 'processing' && (
+                        <StepRow label={t('inProgress')} status="processing" />
                       )}
-                    </ul>
+                      {status === 'queued' && (
+                        <StepRow label={t('waiting')} status="queued" />
+                      )}
+                      {log.steps_executed.length === 0 &&
+                        status === 'failed' && (
+                          <StepRow
+                            label={t('executionFailed')}
+                            status="failed"
+                            reason={t(
+                              `failure.${log.failure_reason ?? 'generic'}`
+                            )}
+                          />
+                        )}
+                    </ol>
                   </div>
                 )}
               </li>
@@ -226,46 +308,65 @@ function StatusBadge({
   status,
   t,
 }: {
-  status: AutomationLog['status'] | 'processing';
+  status: 'completed' | 'failed' | 'processing' | 'queued';
   t: ReturnType<typeof useTranslations>;
 }) {
-  const classes =
-    status === 'success'
-      ? 'border-primary/30 bg-primary/10 text-primary'
-      : status === 'partial' || status === 'processing'
-        ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
-        : 'border-red-500/30 bg-red-500/10 text-red-300';
   return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
-        classes
-      )}
+    <Badge
+      variant={status === 'failed' ? 'destructive' : 'secondary'}
+      className={
+        status === 'completed' ? 'bg-primary/10 text-primary' : undefined
+      }
     >
       {t(`status.${status}`)}
-    </span>
+    </Badge>
   );
 }
 
-function StepRow({ result }: { result: AutomationLogStepResult }) {
-  const ok = result.status === 'success';
+function StepRow({
+  label,
+  status,
+  reason,
+}: {
+  label: string;
+  status: 'success' | 'failed' | 'skipped' | 'processing' | 'queued';
+  reason?: string;
+}) {
   return (
-    <li className="flex items-start gap-2 text-xs">
+    <li className="flex items-start gap-3 text-xs">
       <span
         className={cn(
-          'mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full',
-          ok ? 'bg-primary/20 text-primary' : 'bg-red-500/20 text-red-400'
+          'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full',
+          status === 'success'
+            ? 'bg-primary/10 text-primary'
+            : status === 'failed'
+              ? 'bg-destructive/10 text-destructive'
+              : 'bg-muted text-muted-foreground'
         )}
         aria-hidden
       >
-        {ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+        {status === 'success' ? (
+          <Check className="h-3 w-3" />
+        ) : status === 'failed' ? (
+          <X className="h-3 w-3" />
+        ) : status === 'processing' ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : status === 'queued' ? (
+          <Clock className="h-3 w-3" />
+        ) : (
+          <Minus className="h-3 w-3" />
+        )}
       </span>
-      <span className="text-muted-foreground">{result.step_type}</span>
-      {result.detail && (
-        <span className="text-muted-foreground truncate">
-          — {result.detail}
-        </span>
-      )}
+      <div className="min-w-0 pt-0.5">
+        <p
+          className={
+            status === 'skipped' ? 'text-muted-foreground' : 'text-foreground'
+          }
+        >
+          {label}
+        </p>
+        {reason && <p className="text-destructive mt-1">{reason}</p>}
+      </div>
     </li>
   );
 }

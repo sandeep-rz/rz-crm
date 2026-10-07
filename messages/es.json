@@ -985,8 +985,8 @@
       "retryIneligible": "Esta ejecución ya no se puede reintentar.",
       "retryError": "No se pudo poner esta ejecución en cola. Inténtalo de nuevo.",
       "attempt": "Intento {count}",
-      "title": "Registros de ejecución",
-      "loadError": "Error al cargar los registros",
+      "title": "Actividad",
+      "loadError": "No se pudo cargar la actividad.",
       "emptyTitle": "Aún no hay ejecuciones",
       "emptyDesc": "Activa esta automatización para ver sus ejecuciones aquí.",
       "unknownContact": "Contacto desconocido",
@@ -994,13 +994,89 @@
       "stepPlural": "{count} pasos",
       "noSteps": "No se registraron pasos.",
       "status": {
-        "processing": "Procesando",
+        "processing": "En curso",
         "success": "éxito",
         "partial": "parcial",
-        "failed": "fallida"
+        "failed": "Fallida",
+        "completed": "Completada",
+        "queued": "Programada / en cola"
       },
       "back": "Atrás",
-      "backAria": "Atrás"
+      "backAria": "Atrás",
+      "timeline": "Pasos de la ejecución",
+      "automationTriggered": "Automatización iniciada",
+      "reservation": "Reserva {reference}",
+      "inProgress": "La automatización está en curso",
+      "waiting": "Esperando el siguiente paso",
+      "executionFailed": "La automatización no pudo continuar",
+      "failure": {
+        "connection": "Revisa la conexión de WhatsApp y vuelve a conectarla si es necesario.",
+        "template": "La plantilla no está lista para enviar. Revisa su aprobación y sus variables.",
+        "variables": "No se pudieron cargar los datos del mensaje. Revisa la reserva y la integración.",
+        "reservation": "Los datos de la reserva no están disponibles. Revisa la sincronización.",
+        "recipient": "Revisa los datos de contacto del huésped antes de reintentar.",
+        "templateSend": "No se pudo enviar la plantilla de WhatsApp. Revisa la plantilla y la conexión.",
+        "generic": "La automatización no pudo finalizar. Revisa su configuración antes de reintentar."
+      },
+      "timelineSteps": {
+        "other": {
+          "skipped": "Paso omitido",
+          "success": "Paso completado",
+          "failed": "Paso fallido"
+        },
+        "send_template": {
+          "success": "Plantilla de WhatsApp enviada",
+          "failed": "Falló la plantilla de WhatsApp"
+        },
+        "send_message": {
+          "success": "Mensaje de WhatsApp enviado",
+          "failed": "Falló el mensaje de WhatsApp"
+        },
+        "send_buttons": {
+          "success": "Botones de WhatsApp enviados",
+          "failed": "Fallaron los botones de WhatsApp"
+        },
+        "send_list": {
+          "success": "Lista de WhatsApp enviada",
+          "failed": "Falló la lista de WhatsApp"
+        },
+        "condition": {
+          "success": "Condiciones comprobadas",
+          "failed": "Falló la comprobación de condiciones"
+        },
+        "wait": {
+          "success": "Espera programada",
+          "failed": "No se pudo programar la espera"
+        },
+        "add_tag": {
+          "success": "Etiqueta del contacto añadida",
+          "failed": "No se pudo añadir la etiqueta"
+        },
+        "remove_tag": {
+          "success": "Etiqueta del contacto eliminada",
+          "failed": "No se pudo eliminar la etiqueta"
+        },
+        "assign_conversation": {
+          "success": "Conversación asignada",
+          "failed": "No se pudo asignar la conversación"
+        },
+        "update_contact_field": {
+          "success": "Contacto actualizado",
+          "failed": "No se pudo actualizar el contacto"
+        },
+        "create_deal": {
+          "success": "Oportunidad creada",
+          "failed": "No se pudo crear la oportunidad"
+        },
+        "send_webhook": {
+          "success": "Servicio conectado notificado",
+          "failed": "No se pudo notificar al servicio conectado"
+        },
+        "close_conversation": {
+          "success": "Conversación cerrada",
+          "failed": "No se pudo cerrar la conversación"
+        }
+      }
     },
     "relative": {
       "never": "nunca",

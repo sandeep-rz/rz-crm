@@ -101,3 +101,104 @@ it('database errors are controlled and contain no raw SQL', async () => {
   expect(response.status).toBe(503);
   expect(JSON.stringify(await response.json())).not.toContain('SECRET');
 });
+it('returns reservation and queue metadata while excluding technical diagnostics', async () => {
+  h.logs = [
+    {
+      id: 'execution',
+      status: 'failed',
+      trigger_job_id: 'job',
+      trigger_job_attempt_count: 1,
+      trigger_job_execution_state: 'failed',
+      trigger_event: 'reservation_confirmed',
+      created_at: '2026-10-07T00:00:00Z',
+      error_message:
+        'variable_missing; variable_key=secret.variable; ACCESS_TOKEN=private',
+      contact: { id: 'private-contact-id', name: 'Taylor', phone: '+123' },
+      trigger_job: {
+        status: 'scheduled',
+        attempt_count: 1,
+        reservation: { reservation_code: 'BOOK-102' },
+      },
+      steps_executed: [
+        {
+          step_id: 'private-step-id',
+          step_type: 'send_template',
+          status: 'failed',
+          detail: 'runtime_provider_failure; PRIVATE PROVIDER PAYLOAD',
+        },
+      ],
+      user_id: 'private-user-id',
+    },
+  ];
+  const response = await GET(request, params);
+  const body = await response.json();
+  expect(body.logs[0]).toMatchObject({
+    reservation_reference: 'BOOK-102',
+    job_status: 'scheduled',
+    job_attempt_count: 1,
+    failure_reason: 'variables',
+  });
+  expect(body.logs[0].steps_executed[0]).toEqual({
+    step_type: 'send_template',
+    status: 'failed',
+    failure_reason: 'variables',
+  });
+  expect(JSON.stringify(body)).not.toMatch(
+    /private|PRIVATE|error_message|step_id|variable_key|ACCESS_TOKEN|trigger_job"/
+  );
+});
+it.each([
+  ['template_connection_invalid', 'connection'],
+  ['template_not_sendable', 'template'],
+  ['template_target_invalid_recipient', 'recipient'],
+  ['meta_send_failed_http_400_code_132018', 'templateSend'],
+  ['Raw stack trace with access_token=PRIVATE', 'generic'],
+])(
+  'maps %s to a safe presentation category without changing eligibility',
+  async (error_message, reason) => {
+    h.logs = [
+      {
+        id: 'execution',
+        trigger_job_id: 'job',
+        status: 'failed',
+        error_message,
+        steps_executed: [],
+      },
+    ];
+    const body = await (await GET(request, params)).json();
+    expect(body.logs[0].failure_reason).toBe(reason);
+    expect(body.logs[0].manual_retry_state).toBe('eligible');
+    expect(JSON.stringify(body)).not.toContain(error_message);
+  }
+);
+it('retains distinct historical attempts with advisory eligibility from the existing RPC', async () => {
+  h.logs = [
+    {
+      id: 'new',
+      trigger_job_id: 'job',
+      status: 'success',
+      trigger_job_attempt_count: 2,
+    },
+    {
+      id: 'old',
+      trigger_job_id: 'job',
+      status: 'failed',
+      trigger_job_attempt_count: 1,
+    },
+  ];
+  h.states.mockResolvedValue({
+    data: [
+      { log_id: 'new', retry_state: 'already_completed' },
+      { log_id: 'old', retry_state: 'already_completed' },
+    ],
+    error: null,
+  });
+  const body = await (await GET(request, params)).json();
+  expect(
+    body.logs.map((log: { id: string; status: string }) => [log.id, log.status])
+  ).toEqual([
+    ['new', 'success'],
+    ['old', 'failed'],
+  ]);
+  expect(h.states).toHaveBeenCalledTimes(1);
+});

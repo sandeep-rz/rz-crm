@@ -985,8 +985,8 @@
       "retryIneligible": "This execution can no longer be retried.",
       "retryError": "Unable to queue this execution. Please try again.",
       "attempt": "Attempt {count}",
-      "title": "Execution logs",
-      "loadError": "Failed to load logs",
+      "title": "Activity",
+      "loadError": "Could not load activity.",
       "emptyTitle": "No executions yet",
       "emptyDesc": "Trigger this automation to see runs here.",
       "unknownContact": "Unknown contact",
@@ -997,10 +997,86 @@
         "processing": "Processing",
         "success": "success",
         "partial": "partial",
-        "failed": "failed"
+        "failed": "Failed",
+        "completed": "Completed",
+        "queued": "Scheduled / queued"
       },
       "back": "Back",
-      "backAria": "Back"
+      "backAria": "Back",
+      "timeline": "Execution timeline",
+      "automationTriggered": "Automation triggered",
+      "reservation": "Reservation {reference}",
+      "inProgress": "Automation is running",
+      "waiting": "Waiting for the next step",
+      "executionFailed": "Automation could not continue",
+      "failure": {
+        "connection": "Check the WhatsApp connection and reconnect if needed.",
+        "template": "The template is not ready to send. Check its approval and variable setup.",
+        "variables": "Required message details could not be loaded. Check the reservation and integration.",
+        "reservation": "Reservation details are unavailable. Check the reservation sync.",
+        "recipient": "Check the guest’s contact details before retrying.",
+        "templateSend": "The WhatsApp template could not be sent. Check the template and WhatsApp connection.",
+        "generic": "This automation could not finish. Review its settings before retrying."
+      },
+      "timelineSteps": {
+        "other": {
+          "skipped": "Step skipped",
+          "success": "Step completed",
+          "failed": "Step failed"
+        },
+        "send_template": {
+          "success": "WhatsApp template sent",
+          "failed": "WhatsApp template failed"
+        },
+        "send_message": {
+          "success": "WhatsApp message sent",
+          "failed": "WhatsApp message failed"
+        },
+        "send_buttons": {
+          "success": "WhatsApp buttons sent",
+          "failed": "WhatsApp buttons failed"
+        },
+        "send_list": {
+          "success": "WhatsApp list sent",
+          "failed": "WhatsApp list failed"
+        },
+        "condition": {
+          "success": "Conditions checked",
+          "failed": "Condition check failed"
+        },
+        "wait": {
+          "success": "Wait scheduled",
+          "failed": "Wait could not be scheduled"
+        },
+        "add_tag": {
+          "success": "Contact tag added",
+          "failed": "Contact tag could not be added"
+        },
+        "remove_tag": {
+          "success": "Contact tag removed",
+          "failed": "Contact tag could not be removed"
+        },
+        "assign_conversation": {
+          "success": "Conversation assigned",
+          "failed": "Conversation could not be assigned"
+        },
+        "update_contact_field": {
+          "success": "Contact updated",
+          "failed": "Contact could not be updated"
+        },
+        "create_deal": {
+          "success": "Deal created",
+          "failed": "Deal could not be created"
+        },
+        "send_webhook": {
+          "success": "Connected service notified",
+          "failed": "Connected service could not be notified"
+        },
+        "close_conversation": {
+          "success": "Conversation closed",
+          "failed": "Conversation could not be closed"
+        }
+      }
     },
     "relative": {
       "never": "never",

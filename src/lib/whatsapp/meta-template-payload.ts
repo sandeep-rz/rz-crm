@@ -1,4 +1,5 @@
 import 'server-only';
+import { normalizeMetaTemplateTextParameter } from './meta-parameter-utils';
 import type { MetaSendComponent } from './template-send-builder';
 import type { PreparedTemplateMessage } from '@/lib/message-preparation/types';
 import { TemplatePreparationError } from '@/lib/message-preparation/errors';
@@ -18,7 +19,7 @@ export function buildMetaTemplateComponents(
     },
     false
   );
-  const text = (key: string) => {
+  const text = (key: string, normalize = true) => {
     const value = Object.hasOwn(prepared.resolvedVariables, key)
       ? prepared.resolvedVariables[key]
       : undefined;
@@ -26,7 +27,10 @@ export function buildMetaTemplateComponents(
       throw new TemplatePreparationError('provider_payload_invalid', {
         variableKey: key,
       });
-    return { type: 'text' as const, text: value };
+    return {
+      type: 'text' as const,
+      text: normalize ? normalizeMetaTemplateTextParameter(value) : value,
+    };
   };
   const out: MetaSendComponent[] = [];
   for (const component of ['HEADER', 'BODY'] as const) {
@@ -75,7 +79,8 @@ export function buildMetaTemplateComponents(
       parameters: mapping
         .filter((m) => m.component === 'BUTTON' && m.button_index === index)
         .sort((a, b) => a.position - b.position)
-        .map((m) => text(m.variable_key)),
+        // URL suffixes stay verbatim: applicability of this text policy is unverified.
+        .map((m) => text(m.variable_key, false)),
     });
   return out;
 }

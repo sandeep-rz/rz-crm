@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useAutomationWhatsAppConnections } from '@/hooks/use-automation-whatsapp-connections';
 
 import {
   AutomationBuilder,
@@ -17,6 +18,7 @@ export default function EditAutomationPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const connections = useAutomationWhatsAppConnections();
   const router = useRouter();
   const t = useTranslations('Automations.edit');
   const [initial, setInitial] = useState<BuilderInitial | null>(null);
@@ -54,7 +56,7 @@ export default function EditAutomationPage({
     );
   }
 
-  if (!initial) {
+  if (!initial || connections === null) {
     return (
       <div className="flex h-screen items-center justify-center">
         <Loader2 className="text-primary h-6 w-6 animate-spin" />
@@ -62,5 +64,5 @@ export default function EditAutomationPage({
     );
   }
 
-  return <AutomationBuilder initial={initial} />;
+  return <AutomationBuilder initial={initial} connections={connections} />;
 }

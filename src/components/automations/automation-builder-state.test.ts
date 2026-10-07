@@ -3,6 +3,30 @@ import { describe, expect, it } from 'vitest';
 import { builderInitialFromApiPayload, toApiSteps } from './automation-builder';
 
 describe('automation builder server-state refresh', () => {
+  it('never serializes obsolete mapping/value state on a selected semantic action', () => {
+    expect(
+      toApiSteps([
+        {
+          cid: 's1',
+          step_type: 'send_template',
+          step_config: {
+            template_id: 't1',
+            template_name: 'welcome',
+            language: 'en',
+            variable_mappings: [],
+            variables: { '1': 'WRONG' },
+            unrelated: 'keep',
+          },
+        },
+      ])[0].step_config
+    ).toEqual({
+      template_id: 't1',
+      template_name: 'welcome',
+      language: 'en',
+      unrelated: 'keep',
+    });
+  });
+
   it('applies the backend paused state after a failed lifecycle mutation', () => {
     expect(
       builderInitialFromApiPayload({
@@ -31,7 +55,7 @@ describe('automation builder server-state refresh', () => {
     });
   });
 
-  it('preserves semantic mappings through save and reload shapes', () => {
+  it('preserves legacy automation mappings through save and reload shapes', () => {
     const variable_mappings = [
       {
         component: 'body',

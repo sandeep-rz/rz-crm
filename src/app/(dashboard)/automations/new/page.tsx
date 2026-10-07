@@ -2,6 +2,8 @@
 
 import { Suspense, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { Loader2 } from 'lucide-react';
+import { useAutomationWhatsAppConnections } from '@/hooks/use-automation-whatsapp-connections';
 
 import {
   AutomationBuilder,
@@ -27,6 +29,7 @@ export default function NewAutomationPage() {
 
 function NewAutomationPageInner() {
   const params = useSearchParams();
+  const connections = useAutomationWhatsAppConnections();
   const template = params.get('template') as TemplateSlug | null;
 
   const initial: BuilderInitial = useMemo(() => {
@@ -60,7 +63,13 @@ function NewAutomationPageInner() {
     };
   }, [template]);
 
-  return <AutomationBuilder initial={initial} />;
+  if (connections === null)
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <Loader2 className="text-primary h-6 w-6 animate-spin" />
+      </div>
+    );
+  return <AutomationBuilder initial={initial} connections={connections} />;
 }
 
 interface SeedRow {

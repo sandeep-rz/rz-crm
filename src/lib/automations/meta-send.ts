@@ -221,19 +221,33 @@ async function sendViaMeta(
     
         return r.messageId;
       } catch (error) {
+        const metaError = error as {
+          name?: string;
+          message?: string;
+          code?: number;
+          subcode?: number;
+          details?: string;
+          userMessage?: string;
+          fbtraceId?: string;
+          httpStatus?: number;
+        };
+      
         console.error('Meta template send failed', {
-          error:
-            error instanceof Error
-              ? {
-                  name: error.name,
-                  message: error.message,
-                }
-              : String(error),
-    
+          error: {
+            name: metaError.name,
+            message: metaError.message,
+            code: metaError.code,
+            subcode: metaError.subcode,
+            details: metaError.details,
+            userMessage: metaError.userMessage,
+            fbtraceId: metaError.fbtraceId,
+            httpStatus: metaError.httpStatus,
+          },
+      
           templateName: input.templateName,
           connectionId: input.connectionId,
           phoneNumberId: config.phoneNumberId,
-    
+      
           componentShape: input.templatePayload?.components?.map((component) => ({
             type: component.type,
             parameterCount:
@@ -242,7 +256,7 @@ async function sendViaMeta(
                 : 0,
           })),
         });
-    
+      
         throw error;
       }
     }

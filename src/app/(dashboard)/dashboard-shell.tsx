@@ -9,7 +9,10 @@ import { Header } from '@/components/layout/header';
 import { AccountAccessAlert } from '@/components/layout/account-access-alert';
 import { PresenceHeartbeat } from '@/components/presence/presence-heartbeat';
 import { BrowserNotificationsListener } from '@/components/notifications/browser-notifications-listener';
-import { WhatsAppCapabilityProvider } from '@/hooks/use-whatsapp-capability';
+import {
+  WhatsAppCapabilityProvider,
+  useWhatsAppCapability,
+} from '@/hooks/use-whatsapp-capability';
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
 // itself can stay a server component and export metadata (noindex) —
@@ -17,6 +20,7 @@ import { WhatsAppCapabilityProvider } from '@/hooks/use-whatsapp-capability';
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const whatsapp = useWhatsAppCapability();
   const router = useRouter();
   const t = useTranslations('DashboardShell');
 
@@ -60,6 +64,26 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           {/* Above every page: writes are being rejected and here's why.
               Renders nothing unless the account/role failed to resolve. */}
           <AccountAccessAlert />
+          {whatsapp.error && (
+            <div
+              role="alert"
+              className="border-border bg-card mb-4 flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+            >
+              <span>
+                {whatsapp.error}
+                {whatsapp.configured
+                  ? ' Showing the last loaded configuration.'
+                  : ''}
+              </span>
+              <button
+                className="text-primary shrink-0 font-medium"
+                onClick={() => void whatsapp.refresh()}
+                disabled={whatsapp.refreshing}
+              >
+                Retry
+              </button>
+            </div>
+          )}
           {children}
         </main>
       </div>

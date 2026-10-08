@@ -23,7 +23,7 @@
  */
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 import { useTranslations } from 'next-intl';
 import {
   ArrowLeft,
@@ -56,15 +56,7 @@ export function EditorHeader() {
     setStatus,
     deleteFlow,
   } = useFlowEditor();
-  const [connections, setConnections] = useState<
-    Array<{ id: string; display_name: string }>
-  >([]);
-  useEffect(() => {
-    fetch('/api/whatsapp/config')
-      .then((response) => response.json())
-      .then((payload) => setConnections(payload.connections ?? []))
-      .catch(() => undefined);
-  }, []);
+  const { connections } = useWhatsAppCapability();
 
   return (
     <div className="flex flex-col gap-1.5 px-6 pt-5">

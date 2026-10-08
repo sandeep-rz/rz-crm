@@ -19,6 +19,12 @@ vi.mock('next-intl', () => ({
   useLocale: () => 'en',
   useTranslations: () => (key: string) => key,
 }));
+vi.mock('@/hooks/use-whatsapp-capability', () => ({
+  useWhatsAppCapability: () => ({
+    loading: false,
+    primaryConnection: { id: 'config' },
+  }),
+}));
 vi.mock('@/hooks/use-auth', () => ({
   useAuth: () => ({ accountId: 'account' }),
 }));

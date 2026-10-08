@@ -2,6 +2,10 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { WhatsAppCapabilityProvider } from './use-whatsapp-capability';
+vi.mock('@/hooks/use-auth', () => ({
+  useAuth: () => ({ accountId: 'account', user: { id: 'user' } }),
+}));
 import { useAutomationWhatsAppConnections } from './use-automation-whatsapp-connections';
 let host: HTMLDivElement, root: Root;
 const fetcher = vi.fn<typeof fetch>();
@@ -38,14 +42,23 @@ it('loads once before showing the builder; subsequent menu interactions/renders 
         respond = resolve;
       })
   );
-  await act(() => root.render(<Page />));
+  await act(() =>
+    root.render(
+      <WhatsAppCapabilityProvider>
+        <Page />
+      </WhatsAppCapabilityProvider>
+    )
+  );
   expect(host.textContent).toBe('Loading page');
   expect(fetcher).toHaveBeenCalledTimes(1);
   await act(() =>
     respond(
       new Response(
         JSON.stringify({
-          connections: [{ id: 'connection', status: 'connected' }],
+          account_id: 'account',
+          connections: [
+            { id: 'connection', status: 'connected', phone_number_id: '123' },
+          ],
         })
       )
     )
@@ -53,7 +66,11 @@ it('loads once before showing the builder; subsequent menu interactions/renders 
   expect(host.querySelector('button')!.disabled).toBe(false);
   await act(() => {
     host.querySelector('button')!.click();
-    root.render(<Page />);
+    root.render(
+      <WhatsAppCapabilityProvider>
+        <Page />
+      </WhatsAppCapabilityProvider>
+    );
   });
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
@@ -63,15 +80,29 @@ it.each([
 ])(
   'disables actions immediately for unavailable connections %j',
   async ({ connections }) => {
-    fetcher.mockResolvedValue(new Response(JSON.stringify({ connections })));
-    await act(() => root.render(<Page />));
+    fetcher.mockResolvedValue(
+      new Response(JSON.stringify({ account_id: 'account', connections }))
+    );
+    await act(() =>
+      root.render(
+        <WhatsAppCapabilityProvider>
+          <Page />
+        </WhatsAppCapabilityProvider>
+      )
+    );
     expect(host.querySelector('button')!.disabled).toBe(true);
     expect(fetcher).toHaveBeenCalledTimes(1);
   }
 );
 it('keeps actions disabled when the page-load check fails', async () => {
   fetcher.mockRejectedValue(new Error('Unavailable'));
-  await act(() => root.render(<Page />));
+  await act(() =>
+    root.render(
+      <WhatsAppCapabilityProvider>
+        <Page />
+      </WhatsAppCapabilityProvider>
+    )
+  );
   expect(host.querySelector('button')!.disabled).toBe(true);
 });
 it('does not trust an unsuccessful response', async () => {
@@ -80,6 +111,12 @@ it('does not trust an unsuccessful response', async () => {
       status: 401,
     })
   );
-  await act(() => root.render(<Page />));
+  await act(() =>
+    root.render(
+      <WhatsAppCapabilityProvider>
+        <Page />
+      </WhatsAppCapabilityProvider>
+    )
+  );
   expect(host.querySelector('button')!.disabled).toBe(true);
 });

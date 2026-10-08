@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
@@ -48,26 +48,13 @@ export default function NewBroadcastPage() {
   const [variables, setVariables] = useState<MessageVariableMapping[]>([]);
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
-  const [connections, setConnections] = useState<
-    Array<{ id: string; display_name: string; is_primary: boolean }>
-  >([]);
-  const [whatsappConfigId, setWhatsappConfigId] = useState('');
-
-  useEffect(() => {
-    if (!whatsapp.available) return;
-    fetch('/api/whatsapp/config')
-      .then((response) => response.json())
-      .then((payload) => {
-        const rows = payload.connections ?? [];
-        setConnections(rows);
-        setWhatsappConfigId(
-          rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ??
-            rows[0]?.id ??
-            ''
-        );
-      })
-      .catch(() => undefined);
-  }, [whatsapp.available]);
+  const connections = whatsapp.connections;
+  const [selectedConnectionId, setWhatsappConfigId] = useState('');
+  const whatsappConfigId = connections.some(
+    (row) => row.id === selectedConnectionId
+  )
+    ? selectedConnectionId
+    : (whatsapp.primaryConnection?.id ?? '');
 
   async function handleSend() {
     if (!template || !whatsapp.available) return;

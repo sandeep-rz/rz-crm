@@ -149,10 +149,14 @@ export function TemplateManager() {
   const [savingMapping, setSavingMapping] = useState(false);
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
-  const [connections, setConnections] = useState<
-    Array<{ id: string; display_name: string; is_primary: boolean }>
-  >([]);
-  const [whatsappConfigId, setWhatsappConfigId] = useState('');
+  const connections = whatsapp.connections;
+  const [selectedConnectionId, setWhatsappConfigId] = useState('');
+  const whatsappConfigId = connections.some(
+    (row) => row.id === selectedConnectionId
+  )
+    ? selectedConnectionId
+    : (whatsapp.primaryConnection?.id ?? '');
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -209,22 +213,21 @@ export function TemplateManager() {
   }, [accountId]);
 
   useEffect(() => {
-    if (authLoading) return;
-    if (!user || !accountId) return;
-    void (async () => {
-      const response = await fetch('/api/whatsapp/config');
-      const payload = await response.json();
-      const rows = payload.connections ?? [];
-      const selectedId =
-        rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ??
-        rows[0]?.id ??
-        '';
-      setConnections(rows);
-      setWhatsappConfigId(selectedId);
-      await fetchTemplates(accountId, selectedId);
-    })();
+    if (authLoading || !user || !accountId || whatsapp.loading) return;
+    if (whatsapp.status === 'error') {
+      setLoading(false);
+      return;
+    }
+    void fetchTemplates(accountId, whatsappConfigId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId, authLoading, user?.id]);
+  }, [
+    accountId,
+    authLoading,
+    user?.id,
+    whatsapp.loading,
+    whatsapp.status,
+    whatsappConfigId,
+  ]);
 
   async function fetchTemplates(
     activeAccountId: string,
@@ -659,7 +662,6 @@ export function TemplateManager() {
             const id = event.target.value;
             setWhatsappConfigId(id);
             setEditingId(null);
-            if (accountId) void fetchTemplates(accountId, id);
           }}
           className="border-border bg-background h-10 w-full max-w-sm rounded-md border px-3 text-sm"
           aria-label="WhatsApp connection"

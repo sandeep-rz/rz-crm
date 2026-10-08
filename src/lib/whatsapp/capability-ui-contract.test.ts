@@ -118,12 +118,24 @@ describe('WhatsApp capability UI contract', () => {
     expect(composer).toContain('useWhatsAppCapability()');
   });
 
-  it('treats data from a different active workspace as loading, never available', () => {
-    expect(provider).toContain('stored.accountId === accountId');
-    expect(provider).toContain("status: current ? stored.status : 'loading'");
-    expect(provider).toContain('available: current ? stored.available : false');
+  it('uses the shared local config rather than a second capability request', () => {
+    expect(provider).toContain("fetch('/api/whatsapp/config'");
+    expect(provider).not.toContain("fetch('/api/whatsapp/capability'");
   });
-
+  it('has no independent normal config fetch in navigation consumers', () => {
+    for (const source of [
+      flows,
+      broadcastNew,
+      templates,
+      read('src/components/flows/header.tsx'),
+      read('src/app/(dashboard)/inbox/page.tsx'),
+      read('src/components/inbox/template-picker.tsx'),
+      read('src/hooks/use-automation-whatsapp-connections.ts'),
+      read('src/components/settings/settings-overview.tsx'),
+    ]) {
+      expect(source).not.toMatch(/fetch\(['"`]\/api\/whatsapp\/config/);
+    }
+  });
   it('keeps loading, unavailable, and request errors distinct', () => {
     expect(provider).toContain("'loading'");
     expect(provider).toContain("'unavailable'");

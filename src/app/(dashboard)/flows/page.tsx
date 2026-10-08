@@ -97,20 +97,22 @@ export default function FlowsPage() {
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
-  const [connections, setConnections] = useState<
-    Array<{ id: string; display_name: string; is_primary: boolean }>
-  >([]);
-  const [whatsappConfigId, setWhatsappConfigId] = useState('');
+  const connections = whatsapp.connections;
+  const [selectedConnectionId, setWhatsappConfigId] = useState('');
+  const whatsappConfigId = connections.some(
+    (row) => row.id === selectedConnectionId
+  )
+    ? selectedConnectionId
+    : (whatsapp.primaryConnection?.id ?? '');
 
   useEffect(() => {
     if (!whatsapp.available) return;
     let cancelled = false;
     (async () => {
       try {
-        const [flowsRes, tmplRes, connectionsRes] = await Promise.all([
+        const [flowsRes, tmplRes] = await Promise.all([
           fetch('/api/flows'),
           fetch('/api/flows/templates'),
-          fetch('/api/whatsapp/config'),
         ]);
         if (!flowsRes.ok) {
           throw new Error(`Failed to load flows: ${flowsRes.status}`);
@@ -124,18 +126,6 @@ export default function FlowsPage() {
             templates: TemplateSummary[];
           };
           if (!cancelled) setTemplates(tmplJson.templates ?? []);
-        }
-        if (connectionsRes.ok) {
-          const payload = await connectionsRes.json();
-          const rows = payload.connections ?? [];
-          if (!cancelled) {
-            setConnections(rows);
-            setWhatsappConfigId(
-              rows.find((row: { is_primary: boolean }) => row.is_primary)?.id ??
-                rows[0]?.id ??
-                ''
-            );
-          }
         }
       } catch (err) {
         if (!cancelled) {

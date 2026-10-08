@@ -32,9 +32,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { WhatsAppConfig } from '@/types';
+import type { WhatsAppConnectionSummary } from '@/lib/whatsapp/config-state';
 
-type ConnectionSummary = Omit<WhatsAppConfig, 'access_token' | 'verify_token'>;
+type ConnectionSummary = WhatsAppConnectionSummary;
 
 export function WhatsAppEmptyState({
   canConnect,
@@ -99,7 +99,7 @@ export function WhatsAppConnectionCard({
               <span
                 className={`size-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`}
               />
-              {connected ? 'Connected' : 'Needs attention'}
+              {connected ? 'Configured' : 'Needs attention'}
             </div>
           </div>
           {showPrimary && connection.is_primary && (

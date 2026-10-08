@@ -14,12 +14,11 @@ import type {
   Contact,
   ConversationStatus,
 } from '@/types';
-import type { WhatsAppConfig } from '@/types';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 import { useRealtime } from '@/hooks/use-realtime';
 import { ConversationList } from '@/components/inbox/conversation-list';
 import { MessageThread } from '@/components/inbox/message-thread';
 import { ContactSidebar } from '@/components/inbox/contact-sidebar';
-import { toast } from 'sonner';
 import { WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
@@ -56,12 +55,10 @@ function InboxPageInner() {
     useState<Conversation | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
-    null
-  );
-  const [whatsappConnections, setWhatsappConnections] = useState<
-    Array<Pick<WhatsAppConfig, 'id' | 'display_name' | 'is_primary' | 'status'>>
-  >([]);
+  const whatsapp = useWhatsAppCapability();
+  const whatsappConnected =
+    whatsapp.loading || whatsapp.status === 'error' ? null : whatsapp.available;
+  const whatsappConnections = whatsapp.connections;
   /**
    * Bumped whenever we want children (ConversationList, MessageThread)
    * to refetch from the DB — used as a safety net against missed
@@ -189,42 +186,6 @@ function InboxPageInner() {
   );
 
   // Check WhatsApp connection status on mount
-  useEffect(() => {
-    const checkConnection = async () => {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
-
-      if (!user) return;
-
-      // A workspace may have zero or more WhatsApp connections. Resolve
-      // account_id through the profile, then let the config API return the
-      // active workspace's connection collection.
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('account_id')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      const accountId = profile?.account_id as string | undefined;
-      if (!accountId) {
-        setWhatsappConnected(false);
-        return;
-      }
-
-      const response = await fetch('/api/whatsapp/config');
-      const payload = await response.json();
-      const rows = payload.connections ?? [];
-      setWhatsappConnections(rows);
-      setWhatsappConnected(
-        rows.some((row: { status: string }) => row.status === 'connected')
-      );
-    };
-
-    checkConnection();
-  }, []);
-
   // Handle realtime message events
   const handleMessageEvent = useCallback(
     (event: { eventType: string; new: Message; old: Partial<Message> }) => {

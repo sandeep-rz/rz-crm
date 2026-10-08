@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/whatsapp/encryption';
+import {
+  explainMetaError,
+  metaErrorPayload,
+} from '@/lib/whatsapp/meta-error-explain';
+import { appSubscriptionState } from '@/lib/whatsapp/waba-pairing';
 import { getSubscribedApps, verifyPhoneNumber } from '@/lib/whatsapp/meta-api';
 
 /**
@@ -76,6 +81,9 @@ export async function GET(request: Request) {
   } catch {
     return NextResponse.json({
       live: false,
+      verified: false,
+      needs_reset: true,
+      reason: 'token_corrupted',
       checks: {
         config_exists: true,
         token_decryptable: false,
@@ -100,17 +108,27 @@ export async function GET(request: Request) {
   };
   const errors: string[] = [];
 
+  let phoneInfo;
+  let phoneFailure: ReturnType<typeof explainMetaError> | null = null;
+  let wabaSubscription = {
+    checked: false,
+    subscribed: null as boolean | null,
+    app_id_match: null as boolean | null,
+  };
+
   // 1. Phone metadata
   try {
-    await verifyPhoneNumber({
+    phoneInfo = await verifyPhoneNumber({
       phoneNumberId: config.phone_number_id,
       accessToken,
     });
     checks.phone_metadata_ok = true;
   } catch (err) {
-    errors.push(
-      `Phone metadata check failed: ${err instanceof Error ? err.message : String(err)}`
-    );
+    phoneFailure = explainMetaError(err, 'verify_number', {
+      phoneNumberId: config.phone_number_id,
+      wabaId: config.waba_id,
+    });
+    errors.push(phoneFailure.summary);
   }
 
   // 2. WABA subscription — only meaningful if we have a waba_id
@@ -120,17 +138,30 @@ export async function GET(request: Request) {
         wabaId: config.waba_id,
         accessToken,
       });
-      // Meta returns the apps subscribed to this WABA. If the list
-      // is non-empty, OUR app is in there (the access_token we used
-      // belongs to our app — Meta wouldn't return data for an app
-      // the token can't see). Treat any entry as success.
-      checks.waba_subscribed_to_app = subs.length > 0;
-      if (!checks.waba_subscribed_to_app) {
+      const subscription = appSubscriptionState(subs, process.env.META_APP_ID);
+      wabaSubscription = {
+        checked: true,
+        subscribed: subscription.subscribed,
+        app_id_match: subscription.appIdMatch,
+      };
+      // Only a confirmed match for our configured app passes this check.
+      checks.waba_subscribed_to_app = subscription.appIdMatch;
+      if (!subscription.subscribed) {
         errors.push(
           'WABA has no subscribed apps. Re-save the configuration to subscribe.'
         );
       }
+      if (subscription.appIdMatch === null) {
+        errors.push(
+          "META_APP_ID is not configured. Cannot verify this app's WABA subscription."
+        );
+      } else if (subscription.subscribed && !subscription.appIdMatch) {
+        errors.push(
+          'The configured Meta app is not subscribed to this WABA. Re-save the configuration to subscribe.'
+        );
+      }
     } catch (err) {
+      wabaSubscription.checked = true;
       errors.push(
         `WABA subscription check failed: ${err instanceof Error ? err.message : String(err)}`
       );
@@ -146,12 +177,26 @@ export async function GET(request: Request) {
     (checks.waba_subscribed_to_app ?? false) &&
     checks.locally_marked_registered;
 
-  return NextResponse.json({
-    live,
-    checks,
-    errors,
-    last_registration_error: config.last_registration_error ?? null,
-    registered_at: config.registered_at ?? null,
-    subscribed_apps_at: config.subscribed_apps_at ?? null,
-  });
+  return NextResponse.json(
+    {
+      live,
+      verified: checks.phone_metadata_ok,
+      checked_at: new Date().toISOString(),
+      phone_info: phoneInfo ?? null,
+      ...(phoneFailure
+        ? {
+            reason: 'meta_api_error',
+            message: phoneFailure.summary,
+            meta: metaErrorPayload(phoneFailure),
+          }
+        : {}),
+      waba_subscription: wabaSubscription,
+      checks,
+      errors,
+      last_registration_error: config.last_registration_error ?? null,
+      registered_at: config.registered_at ?? null,
+      subscribed_apps_at: config.subscribed_apps_at ?? null,
+    },
+    { headers: { 'Cache-Control': 'private, no-store' } }
+  );
 }

@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import {
-  getSubscribedApps,
   listWabaPhoneNumbers,
   registerPhoneNumber,
   subscribeWabaToApp,
@@ -15,12 +14,11 @@ import {
   type MetaErrorContext,
 } from '@/lib/whatsapp/meta-error-explain';
 import {
-  appSubscriptionState,
   describeWabaPhoneMismatch,
   isNumericMetaId,
   phoneNumberBelongsToWaba,
 } from '@/lib/whatsapp/waba-pairing';
-import { encrypt, decrypt } from '@/lib/whatsapp/encryption';
+import { encrypt } from '@/lib/whatsapp/encryption';
 import { resolveVerifyTokenForSave } from '@/lib/whatsapp/verify-token';
 
 /**
@@ -110,222 +108,73 @@ function deleteConnectionError(error: { code?: string } | null) {
   );
 }
 
-/**
- * GET /api/whatsapp/config
- *
- * Used by the "Test API Connection" button and by the page to check
- * whether the saved config is healthy. Returns 200 in all non-auth cases
- * so the UI can render an appropriate message rather than show a 500.
- *
- * Response shape:
- *   { connected: true,  phone_info: {...},
- *     waba_subscription: { checked, subscribed, app_id_match, error? } }
- *   { connected: false, reason: 'no_config',        message: '...' }
- *   { connected: false, reason: 'token_corrupted',  message: '...', needs_reset: true }
- *   { connected: false, reason: 'meta_api_error',   message: '...',
- *     meta: { code, subcode, fbtrace_id, step, field, message } }
- */
+/** Local UI configuration only; live Meta health is an explicit verification operation. */
 export async function GET(request: Request) {
   try {
     const supabase = await createClient();
-
     const {
       data: { user },
       error: authError,
     } = await supabase.auth.getUser();
-
-    if (authError || !user) {
+    if (authError || !user)
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const accountId = await resolveAccountId(supabase, user.id);
-    if (!accountId) {
+    if (!accountId)
       return NextResponse.json(
-        {
-          connected: false,
-          reason: 'no_account',
-          message: 'Your profile is not linked to an account.',
-        },
-        { status: 200 }
+        { error: 'Your profile is not linked to an account.' },
+        { status: 403 }
       );
-    }
-
-    const { data: configs, error: configError } = await supabase
+    const { data: configs, error } = await supabase
       .from('whatsapp_config')
       .select(
-        'id, display_name, is_primary, phone_number_id, waba_id, access_token, verify_token, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, mirror_inbound_media, created_at, updated_at'
+        'id, display_name, is_primary, phone_number_id, waba_id, verify_token, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, mirror_inbound_media, created_at, updated_at'
       )
       .eq('account_id', accountId)
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true });
-
-    if (configError) {
-      console.error('Error fetching whatsapp_config:', configError);
+    if (error)
       return NextResponse.json(
-        {
-          connected: false,
-          reason: 'db_error',
-          message: 'Failed to fetch configuration',
-        },
-        { status: 200 }
+        { error: 'Failed to fetch WhatsApp configuration' },
+        { status: 500 }
       );
-    }
-
-    const safeConnections = (configs ?? []).map((config) => ({
-      id: config.id,
-      display_name: config.display_name || 'WhatsApp connection',
-      is_primary: config.is_primary,
-      phone_number_id: config.phone_number_id,
-      waba_id: config.waba_id,
-      has_verify_token: Boolean(config.verify_token),
-      status: config.status,
-      connected_at: config.connected_at,
-      registered_at: config.registered_at,
-      subscribed_apps_at: config.subscribed_apps_at,
-      last_registration_error: config.last_registration_error,
-      mirror_inbound_media: config.mirror_inbound_media,
-      created_at: config.created_at,
-      updated_at: config.updated_at,
+    const connections = (configs ?? []).map((row) => ({
+      id: row.id,
+      display_name: row.display_name || 'WhatsApp connection',
+      is_primary: row.is_primary,
+      phone_number_id: row.phone_number_id,
+      waba_id: row.waba_id,
+      has_verify_token: Boolean(row.verify_token),
+      status: row.status,
+      connected_at: row.connected_at,
+      registered_at: row.registered_at,
+      subscribed_apps_at: row.subscribed_apps_at,
+      last_registration_error: row.last_registration_error,
+      mirror_inbound_media: row.mirror_inbound_media,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
     }));
-    if (!configs || configs.length === 0) {
-      return NextResponse.json(
-        {
-          connections: [],
-          connected: false,
-          reason: 'no_config',
-          message:
-            'No WhatsApp configuration saved yet. Fill in the form and click Save Configuration.',
-        },
-        { status: 200 }
-      );
-    }
-
     const requestedId = new URL(request.url).searchParams.get('id');
-    const config = requestedId
-      ? configs.find((row) => row.id === requestedId)
-      : (configs.find((row) => row.is_primary) ??
-        (configs.length === 1 ? configs[0] : undefined));
-    if (!config) {
+    const selected = requestedId
+      ? connections.find((row) => row.id === requestedId)
+      : (connections.find((row) => row.is_primary) ??
+        (connections.length === 1 ? connections[0] : undefined));
+    if (requestedId && !selected)
       return NextResponse.json(
-        requestedId
-          ? {
-              error: 'WhatsApp connection not found',
-              connections: safeConnections,
-            }
-          : {
-              error: 'No primary WhatsApp connection is configured',
-              connections: safeConnections,
-            },
-        { status: requestedId ? 404 : 409 }
+        { error: 'WhatsApp connection not found' },
+        { status: 404 }
       );
-    }
-
-    // Try to decrypt the stored token with the current ENCRYPTION_KEY.
-    // If this fails, the key changed (or was never consistent across envs).
-    let accessToken: string;
-    try {
-      accessToken = decrypt(config.access_token);
-    } catch (err) {
-      console.error('[whatsapp/config GET] Token decryption failed:', err);
-      return NextResponse.json(
-        {
-          connected: false,
-          connections: safeConnections,
-          reason: 'token_corrupted',
-          needs_reset: true,
-          message:
-            'The stored access token cannot be decrypted with the current ENCRYPTION_KEY. This usually means the key changed, or it differs between environments (local vs Hostinger vs Vercel). Click "Reset Configuration" below, then re-save.',
-        },
-        { status: 200 }
-      );
-    }
-
-    // Validate credentials against Meta
-    let phoneInfo;
-    try {
-      phoneInfo = await verifyPhoneNumber({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-      });
-    } catch (err) {
-      const explained = explainMetaError(err, 'verify_number', {
-        phoneNumberId: config.phone_number_id,
-        wabaId: config.waba_id,
-      });
-      console.error(
-        '[whatsapp/config GET] Meta API verification failed:',
-        explained.metaMessage
-      );
-      return NextResponse.json(
-        {
-          connected: false,
-          connections: safeConnections,
-          reason: 'meta_api_error',
-          message: explained.summary,
-          meta: metaErrorPayload(explained),
-        },
-        { status: 200 }
-      );
-    }
-
-    // Credentials work. Also report whether the WABA is subscribed to
-    // this app — valid credentials with an unsubscribed WABA is exactly
-    // the "connected but no messages arrive" state (issue #505). Never
-    // fatal: the token may lack whatsapp_business_management and still
-    // be fine for sending.
-    let wabaSubscription: {
-      checked: boolean;
-      subscribed: boolean | null;
-      app_id_match: boolean | null;
-      error?: string;
-    } = { checked: false, subscribed: null, app_id_match: null };
-    if (config.waba_id) {
-      try {
-        const subs = await getSubscribedApps({
-          wabaId: config.waba_id,
-          accessToken,
-        });
-        const state = appSubscriptionState(subs, process.env.META_APP_ID);
-        wabaSubscription = {
-          checked: true,
-          subscribed: state.subscribed,
-          app_id_match: state.appIdMatch,
-        };
-      } catch (err) {
-        const explained = explainMetaError(err, 'subscribed_apps', {
-          wabaId: config.waba_id,
-        });
-        wabaSubscription = {
-          checked: true,
-          subscribed: null,
-          app_id_match: null,
-          error: explained.summary,
-        };
-      }
-    }
-
-    const displayPhoneNumber =
-      typeof phoneInfo?.display_phone_number === 'string' &&
-      phoneInfo.display_phone_number.trim()
-        ? phoneInfo.display_phone_number.trim()
-        : null;
-    const responseConnections = safeConnections.map((connection) =>
-      connection.id === config.id && !config.display_name && displayPhoneNumber
-        ? { ...connection, display_name: displayPhoneNumber }
-        : connection
-    );
-
-    return NextResponse.json({
-      connected: true,
-      connections: responseConnections,
-      selected_connection_id: config.id,
-      phone_info: phoneInfo,
-      waba_subscription: wabaSubscription,
-    });
-  } catch (error) {
-    console.error('Error in WhatsApp config GET:', error);
     return NextResponse.json(
-      { connected: false, reason: 'unknown', message: 'Internal server error' },
+      {
+        account_id: accountId,
+        configured: connections.length > 0,
+        connections,
+        selected_connection_id: selected?.id ?? null,
+      },
+      { headers: { 'Cache-Control': 'private, no-store' } }
+    );
+  } catch {
+    return NextResponse.json(
+      { error: 'Failed to fetch WhatsApp configuration' },
       { status: 500 }
     );
   }

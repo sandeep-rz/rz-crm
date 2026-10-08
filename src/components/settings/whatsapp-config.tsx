@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   RotateCcw,
 } from 'lucide-react';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 import { useAuth } from '@/hooks/use-auth';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
@@ -34,7 +35,7 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion';
-import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
+import type { WhatsAppConnectionSummary } from '@/lib/whatsapp/config-state';
 import {
   AddWhatsAppConnectionButton,
   WhatsAppConnectionCard,
@@ -70,10 +71,6 @@ type WabaSubscription = {
   app_id_match: boolean | null;
   error?: string;
 };
-type ConnectionSummary = Omit<
-  WhatsAppConfigType,
-  'access_token' | 'verify_token'
-> & { has_verify_token?: boolean };
 
 export function WhatsAppConfig() {
   const t = useTranslations('Settings.whatsapp');
@@ -88,13 +85,14 @@ export function WhatsAppConfig() {
     canEditSettings,
   } = useAuth();
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showToken, setShowToken] = useState(false);
-  const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
-  const [connections, setConnections] = useState<ConnectionSummary[]>([]);
+  const [config, setConfig] = useState<WhatsAppConnectionSummary | null>(null);
+  const shared = useWhatsAppCapability();
+  const connections = shared.connections;
+  const invalidate = shared.invalidate;
   const [displayName, setDisplayName] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
@@ -146,6 +144,7 @@ export function WhatsAppConfig() {
   const [verifyingRegistration, setVerifyingRegistration] = useState(false);
   type RegistrationProbe = {
     live: boolean;
+    checked_at?: string;
     checks: Record<string, boolean | null>;
     errors?: string[];
     last_registration_error?: string | null;
@@ -161,30 +160,21 @@ export function WhatsAppConfig() {
       : '';
 
   const fetchConfig = useCallback(
-    async (_acctId: string, preferredId?: string | null) => {
-      setLoading(true);
+    async (
+      _acctId: string,
+      preferredId?: string | null,
+      revalidate = false
+    ) => {
       try {
-        const query = preferredId
-          ? `?id=${encodeURIComponent(preferredId)}`
-          : '';
-        const res = await fetch(`/api/whatsapp/config${query}`, {
-          method: 'GET',
-        });
-        const payload = await res.json();
-        if (!res.ok)
-          throw new Error(payload.error || 'Failed to load connections');
-        const list = (payload.connections ?? []) as ConnectionSummary[];
-        setConnections(list);
+        const payload = revalidate ? await invalidate() : { connections };
+        if (!payload) throw new Error('Failed to load connections');
+        const list = payload.connections;
         const data = preferredId
           ? list.find((row) => row.id === preferredId)
           : (list.find((row) => row.is_primary) ?? list[0] ?? null);
 
         if (data) {
-          setConfig({
-            ...data,
-            access_token: '',
-            verify_token: '',
-          } as WhatsAppConfigType);
+          setConfig(data);
           setDisplayName(data.display_name || '');
           setPhoneNumberId(data.phone_number_id || '');
           setWabaId(data.waba_id || '');
@@ -211,41 +201,18 @@ export function WhatsAppConfig() {
         // Clear any stale probe result when reloading the row.
         setRegistrationProbe(null);
 
-        if (data) {
-          if (payload.connected) {
-            setConnectionStatus('connected');
-            setResetReason(null);
-            setStatusMessage('');
-            setStatusMeta(null);
-            setWabaSubscription(payload.waba_subscription ?? null);
-          } else {
-            setConnectionStatus('disconnected');
-            setResetReason(
-              payload.needs_reset
-                ? 'token_corrupted'
-                : payload.reason === 'meta_api_error'
-                  ? 'meta_api_error'
-                  : null
-            );
-            setStatusMessage(payload.message || '');
-            setStatusMeta(payload.meta ?? null);
-            setWabaSubscription(null);
-          }
-        } else {
-          setConnectionStatus('disconnected');
-          setResetReason(null);
-          setStatusMessage('');
-          setStatusMeta(null);
-          setWabaSubscription(null);
-        }
+        // A local row is configuration, never evidence of a live Meta check.
+        setConnectionStatus('unknown');
+        setResetReason(null);
+        setStatusMessage('');
+        setStatusMeta(null);
+        setWabaSubscription(null);
       } catch (err) {
         console.error('fetchConfig error:', err);
         toast.error(t('loadFailed'));
-      } finally {
-        setLoading(false);
       }
     },
-    [t]
+    [t, connections, invalidate]
   );
 
   useEffect(() => {
@@ -254,16 +221,24 @@ export function WhatsAppConfig() {
     // second guard, the effect would fire with `accountId === null`
     // for the first render window and bail without ever retrying
     // once the profile arrives.
-    if (authLoading || profileLoading) return;
+    if (authLoading || profileLoading || shared.loading) return;
+    if (shared.status === 'error') return;
     if (!user?.id || !accountId) {
       loadedAccountIdRef.current = null;
-      const timeout = window.setTimeout(() => setLoading(false), 0);
-      return () => window.clearTimeout(timeout);
+      return;
     }
     if (loadedAccountIdRef.current === accountId) return;
     loadedAccountIdRef.current = accountId;
     fetchConfig(accountId);
-  }, [authLoading, profileLoading, user?.id, accountId, fetchConfig]);
+  }, [
+    authLoading,
+    profileLoading,
+    user?.id,
+    accountId,
+    fetchConfig,
+    shared.loading,
+    shared.status,
+  ]);
 
   async function handleToggleMirrorMedia(next: boolean) {
     if (!config || !accountId || savingMirror) return;
@@ -280,6 +255,7 @@ export function WhatsAppConfig() {
       });
       if (!res.ok) throw new Error((await res.json()).error || 'Update failed');
       setConfig({ ...config, mirror_inbound_media: next });
+      await shared.invalidate();
     } catch (error) {
       console.error('Failed to update media retention setting:', error);
       setMirrorMedia(previous);
@@ -400,7 +376,7 @@ export function WhatsAppConfig() {
         setPin('');
       }
 
-      if (accountId) await fetchConfig(accountId, config?.id);
+      if (accountId) await fetchConfig(accountId, config?.id, true);
       return data.success === true;
     } catch (err) {
       console.error('Save error:', err);
@@ -415,12 +391,12 @@ export function WhatsAppConfig() {
     try {
       setTesting(true);
       const res = await fetch(
-        `/api/whatsapp/config?id=${encodeURIComponent(config?.id ?? '')}`,
-        { method: 'GET' }
+        `/api/whatsapp/config/verify-registration?id=${encodeURIComponent(config?.id ?? '')}`,
+        { method: 'GET', cache: 'no-store' }
       );
       const payload = await res.json();
 
-      if (payload.connected) {
+      if (res.ok && payload.verified) {
         setConnectionStatus('connected');
         setResetReason(null);
         setStatusMessage('');
@@ -443,9 +419,12 @@ export function WhatsAppConfig() {
         setStatusMessage(payload.message || '');
         setStatusMeta(payload.meta ?? null);
         setWabaSubscription(null);
-        toast.error(payload.message || t('apiConnectionFailed'), {
-          duration: 10000,
-        });
+        toast.error(
+          payload.message || payload.errors?.[0] || t('apiConnectionFailed'),
+          {
+            duration: 10000,
+          }
+        );
       }
     } catch (err) {
       console.error('Test connection error:', err);
@@ -464,6 +443,7 @@ export function WhatsAppConfig() {
         `/api/whatsapp/config/verify-registration?id=${encodeURIComponent(config?.id ?? '')}`,
         {
           method: 'GET',
+          cache: 'no-store',
         }
       );
       const data = (await res.json()) as RegistrationProbe;
@@ -473,7 +453,8 @@ export function WhatsAppConfig() {
       } else {
         toast.error(t('notFullyRegistered'), { duration: 8000 });
       }
-      if (accountId) await fetchConfig(accountId, config?.id);
+      // This diagnostic does not change persisted configuration.
+      await shared.refresh();
     } catch (err) {
       console.error('verify-registration failed:', err);
       toast.error(t('verifyEndpointUnreachable'));
@@ -522,7 +503,7 @@ export function WhatsAppConfig() {
       setSaveFailure(null);
       setWabaSubscription(null);
       setManageOpen(false);
-      if (accountId) await fetchConfig(accountId);
+      if (accountId) await fetchConfig(accountId, undefined, true);
     } catch (err) {
       console.error('Reset error:', err);
       toast.error(t('resetFailed'));
@@ -609,10 +590,10 @@ export function WhatsAppConfig() {
       return;
     }
     toast.success('Primary WhatsApp connection updated');
-    if (accountId) await fetchConfig(accountId, id);
+    if (accountId) await fetchConfig(accountId, id, true);
   }
 
-  if (loading) {
+  if (shared.loading) {
     return (
       <section className="animate-in fade-in-50 duration-200">
         <SettingsPanelHead title={t('title')} description={t('description')} />
@@ -663,7 +644,17 @@ export function WhatsAppConfig() {
   return (
     <section className="animate-in fade-in-50 duration-200">
       <SettingsPanelHead title={t('title')} description={t('description')} />
-      {connections.length === 0 ? (
+      {shared.error && (
+        <Alert className="mb-4">
+          <AlertDescription>
+            {shared.error}{' '}
+            <Button variant="outline" onClick={() => void shared.refresh()}>
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+      {shared.status === 'error' ? null : connections.length === 0 ? (
         <WhatsAppEmptyState
           canConnect={canEditSettings}
           onConnect={handleAddConnection}
@@ -818,19 +809,25 @@ export function WhatsAppConfig() {
             <div className="flex items-center gap-2">
               {connectionStatus === 'connected' ? (
                 <CheckCircle2 className="text-primary size-4" />
+              ) : connectionStatus === 'unknown' ? (
+                <AlertTriangle className="text-muted-foreground size-4" />
               ) : (
                 <XCircle className="size-4 text-red-500" />
               )}
               <AlertTitle className="text-foreground mb-0">
-                {connectionStatus === 'connected'
-                  ? t('credentialsValid')
-                  : t('notConnected')}
+                {connectionStatus === 'unknown'
+                  ? 'Live Meta status not checked'
+                  : connectionStatus === 'connected'
+                    ? 'Last Meta credential check succeeded'
+                    : t('notConnected')}
               </AlertTitle>
             </div>
             <AlertDescription className="text-muted-foreground">
-              {connectionStatus === 'connected'
-                ? t('connectedDesc')
-                : statusMessage || t('notConnectedDesc')}
+              {connectionStatus === 'unknown'
+                ? 'Configuration is stored locally. Use Test API Connection or Verify registration to check Meta now.'
+                : connectionStatus === 'connected'
+                  ? t('connectedDesc')
+                  : statusMessage || t('notConnectedDesc')}
             </AlertDescription>
             {connectionStatus === 'connected' && wabaSubscription?.checked && (
               <p
@@ -899,15 +896,13 @@ export function WhatsAppConfig() {
               </div>
               <AlertDescription className="text-muted-foreground mt-2 text-xs leading-relaxed">
                 {isRegistered ? (
-                  <span
-                    dangerouslySetInnerHTML={{
-                      __html: t('subscribedSince', {
-                        date: config.registered_at
-                          ? new Date(config.registered_at).toLocaleString()
-                          : t('unknownDate'),
-                      }),
-                    }}
-                  />
+                  <span>
+                    Registration last recorded{' '}
+                    {config?.registered_at
+                      ? new Date(config.registered_at).toLocaleString()
+                      : t('unknownDate')}
+                    . Use Verify registration for a live check.
+                  </span>
                 ) : lastRegistrationError ? (
                   <>
                     {t('lastAttemptFailed')}
@@ -932,7 +927,10 @@ export function WhatsAppConfig() {
                           : 'text-amber-400'
                       }
                     >
-                      {registrationProbe.live ? t('live') : t('notLive')}
+                      {registrationProbe.live ? t('live') : t('notLive')}{' '}
+                      {registrationProbe.checked_at
+                        ? ` · Checked ${new Date(registrationProbe.checked_at).toLocaleString()}`
+                        : ''}
                     </span>
                   </p>
                   <ul className="text-muted-foreground space-y-0.5">

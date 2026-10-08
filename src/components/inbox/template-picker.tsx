@@ -1,4 +1,5 @@
 'use client';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 import {
   variableRequiresReservation,
   type MessageVariableSourceScope,
@@ -115,11 +116,13 @@ export function TemplatePicker({
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<MessageTemplate | null>(null);
   const [params, setParams] = useState<string[]>([]);
+  const whatsapp = useWhatsAppCapability();
+  const fallbackConnectionId = whatsapp.primaryConnection?.id ?? null;
   const [headerText, setHeaderText] = useState<string>('');
   const [buttonParams, setButtonParams] = useState<Record<number, string>>({});
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || (!whatsappConfigId && whatsapp.loading)) return;
 
     let cancelled = false;
     (async () => {
@@ -139,15 +142,7 @@ export function TemplatePicker({
 
       // Templates are workspace-owned. Filter by the active workspace rather
       // than creator user_id (which would hide teammate-created templates).
-      let connectionId = whatsappConfigId;
-      if (!connectionId) {
-        const response = await fetch('/api/whatsapp/config');
-        const payload = await response.json();
-        connectionId =
-          payload.connections?.find(
-            (row: { is_primary: boolean }) => row.is_primary
-          )?.id ?? null;
-      }
+      const connectionId = whatsappConfigId || fallbackConnectionId;
       let query = supabase
         .from('message_templates')
         .select('*')
@@ -193,7 +188,13 @@ export function TemplatePicker({
     return () => {
       cancelled = true;
     };
-  }, [accountId, open, whatsappConfigId]);
+  }, [
+    accountId,
+    open,
+    whatsappConfigId,
+    fallbackConnectionId,
+    whatsapp.loading,
+  ]);
 
   const semantic = selected?.variable_configuration_status === 'configured';
   const mapping = useMemo(() => {

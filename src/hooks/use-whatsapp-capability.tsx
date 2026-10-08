@@ -6,101 +6,160 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
-
 import { useAuth } from '@/hooks/use-auth';
-import type { WhatsAppCapabilityPayload } from '@/lib/whatsapp/capability';
+import type {
+  WhatsAppLocalConfig,
+  WhatsAppConnectionSummary,
+} from '@/lib/whatsapp/config-state';
 
 export type WhatsAppCapabilityStatus =
   'loading' | 'available' | 'unavailable' | 'error';
-
 export interface WhatsAppCapability {
   status: WhatsAppCapabilityStatus;
   available: boolean;
   connectionCount: number;
+  configured: boolean;
+  connections: WhatsAppConnectionSummary[];
+  primaryConnection: WhatsAppConnectionSummary | null;
+  loading: boolean;
+  refreshing: boolean;
   error: string | null;
-  refresh: () => void;
+  refresh: () => Promise<WhatsAppLocalConfig | null>;
+  invalidate: () => Promise<WhatsAppLocalConfig | null>;
 }
-
-interface StoredCapability extends WhatsAppCapabilityPayload {
-  accountId: string | null;
-  status: WhatsAppCapabilityStatus;
-  error: string | null;
-}
-
 const CapabilityContext = createContext<WhatsAppCapability | null>(null);
+const emptyConnections: WhatsAppConnectionSummary[] = [];
 
+/** One dashboard-owned request and snapshot, shared by every navigation consumer. */
 export function WhatsAppCapabilityProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { accountId } = useAuth();
-  const [revision, setRevision] = useState(0);
-  const [stored, setStored] = useState<StoredCapability>({
-    accountId: null,
-    status: 'loading',
-    available: false,
-    connectionCount: 0,
-    error: null,
-  });
+  const { accountId, user } = useAuth();
+  const key = accountId && user?.id ? `${user.id}:${accountId}` : null;
+  const activeKey = useRef(key);
+  activeKey.current = key;
+  const [stored, setStored] = useState<{
+    key: string;
+    data: WhatsAppLocalConfig | null;
+    error: string | null;
+    refreshing: boolean;
+  } | null>(null);
+  const inFlight = useRef<{
+    key: string;
+    promise: Promise<WhatsAppLocalConfig | null>;
+  } | null>(null);
+  const lastLoaded = useRef(0);
+
+  const refresh = useCallback((): Promise<WhatsAppLocalConfig | null> => {
+    if (!key || activeKey.current !== key) return Promise.resolve(null);
+    if (inFlight.current?.key === key) return inFlight.current.promise;
+    setStored((old) => ({
+      key,
+      data: old?.key === key ? old.data : null,
+      error: null,
+      refreshing: true,
+    }));
+    const promise = (async () => {
+      try {
+        const response = await fetch('/api/whatsapp/config', {
+          cache: 'no-store',
+        });
+        const body = await response.json();
+        if (!response.ok)
+          throw new Error(
+            body.error || 'Failed to load WhatsApp configuration'
+          );
+        // The server resolves its active account independently. Discard a raced workspace response.
+        if (body.account_id !== accountId || !Array.isArray(body.connections)) {
+          if (activeKey.current === key)
+            setStored({
+              key,
+              data: null,
+              error: 'WhatsApp workspace changed. Retry loading configuration.',
+              refreshing: false,
+            });
+          throw new Error(
+            'WhatsApp workspace changed. Retry loading configuration.'
+          );
+        }
+        if (activeKey.current !== key) return null;
+        lastLoaded.current = Date.now();
+        setStored({ key, data: body, error: null, refreshing: false });
+        return body as WhatsAppLocalConfig;
+      } catch {
+        if (activeKey.current === key)
+          setStored((old) => ({
+            key,
+            data: old?.key === key ? old.data : null,
+            error: 'Could not load WhatsApp configuration. Please retry.',
+            refreshing: false,
+          }));
+        return null;
+      }
+    })();
+    inFlight.current = { key, promise };
+    void promise.then(() => {
+      if (inFlight.current?.promise === promise) inFlight.current = null;
+    });
+    return promise;
+  }, [key, accountId]);
+
+  const invalidate = useCallback(async () => {
+    // A GET already underway may predate the successful mutation. Finish it,
+    // then read again rather than treating that old response as revalidation.
+    if (inFlight.current?.key === key) await inFlight.current.promise;
+    return refresh();
+  }, [key, refresh]);
 
   useEffect(() => {
-    if (!accountId) return;
-    const controller = new AbortController();
+    if (!key) {
+      setStored(null);
+      return;
+    }
+    void refresh();
+    const onFocus = () => {
+      if (Date.now() - lastLoaded.current > 60_000) void refresh();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [key, refresh]);
 
-    void fetch('/api/whatsapp/capability', {
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const body = (await response.json().catch(() => ({}))) as Partial<
-          WhatsAppCapabilityPayload & { error: string }
-        >;
-        if (!response.ok) {
-          throw new Error(body.error || 'Failed to load WhatsApp capability');
-        }
-        const available = body.available === true;
-        setStored({
-          accountId,
-          status: available ? 'available' : 'unavailable',
-          available,
-          connectionCount:
-            typeof body.connectionCount === 'number' ? body.connectionCount : 0,
-          error: null,
-        });
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        setStored({
-          accountId,
-          status: 'error',
-          available: false,
-          connectionCount: 0,
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Failed to load WhatsApp capability',
-        });
-      });
-
-    return () => controller.abort();
-  }, [accountId, revision]);
-
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  const current = stored.accountId === accountId && accountId !== null;
-  const value = useMemo<WhatsAppCapability>(
-    () => ({
-      status: current ? stored.status : 'loading',
-      available: current ? stored.available : false,
-      connectionCount: current ? stored.connectionCount : 0,
-      error: current ? stored.error : null,
+  const current = stored?.key === key && key ? stored : null;
+  const value = useMemo<WhatsAppCapability>(() => {
+    const connections = current?.data?.connections ?? emptyConnections;
+    const connectionCount = connections.filter(
+      (row) => row.status === 'connected' && Boolean(row.phone_number_id)
+    ).length;
+    const available = connectionCount > 0;
+    return {
+      status: current?.data
+        ? available
+          ? 'available'
+          : 'unavailable'
+        : current?.error
+          ? 'error'
+          : 'loading',
+      available,
+      connectionCount,
+      configured: connections.length > 0,
+      connections,
+      primaryConnection:
+        connections.find((row) => row.is_primary) ??
+        (connections.length === 1 ? connections[0] : null),
+      loading: !current?.data && !current?.error,
+      refreshing: current?.refreshing ?? false,
+      error: current?.error ?? null,
       refresh,
-    }),
-    [current, refresh, stored]
-  );
-
+      invalidate,
+    };
+  }, [current, refresh, invalidate]);
   return (
     <CapabilityContext.Provider value={value}>
       {children}
@@ -110,10 +169,9 @@ export function WhatsAppCapabilityProvider({
 
 export function useWhatsAppCapability(): WhatsAppCapability {
   const capability = useContext(CapabilityContext);
-  if (!capability) {
+  if (!capability)
     throw new Error(
       'useWhatsAppCapability must be used inside WhatsAppCapabilityProvider'
     );
-  }
   return capability;
 }

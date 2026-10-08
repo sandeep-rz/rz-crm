@@ -5,6 +5,7 @@ import { ChevronRight, Loader2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 import { createClient } from '@/lib/supabase/client';
+import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/hooks/use-theme';
 import { THEMES } from '@/lib/themes';
@@ -24,11 +25,6 @@ interface OverviewCounts {
   templatesPending: number | null;
   tags: number | null;
   customFields: number | null;
-}
-
-interface WhatsAppStatus {
-  configured: boolean;
-  connected: boolean;
 }
 
 export function SettingsOverview({
@@ -51,15 +47,9 @@ export function SettingsOverview({
 
   const [counts, setCounts] = useState<OverviewCounts | null>(null);
   const [countsLoading, setCountsLoading] = useState(true);
-  // WhatsApp status is tracked separately: its health check decrypts the
-  // token and pings Meta, which is far slower than the cheap count
-  // queries. Gating it independently keeps a slow/flaky Meta round-trip
-  // from blanking the rest of the landing.
-  const [whatsapp, setWhatsapp] = useState<WhatsAppStatus | null>(null);
-  const [whatsappLoading, setWhatsappLoading] = useState(true);
-
+  const whatsapp = useWhatsAppCapability();
   useEffect(() => {
-    if (!user || !accountId) return;
+    if (!user?.id || !accountId) return;
     let cancelled = false;
     const supabase = createClient();
     const acctId = accountId;
@@ -137,27 +127,6 @@ export function SettingsOverview({
       setCountsLoading(false);
     })();
 
-    // WhatsApp connection status — slower, independent.
-    (async () => {
-      setWhatsappLoading(true);
-      const health = await Promise.resolve(
-        fetch('/api/whatsapp/config', { cache: 'no-store' }).then((r) =>
-          r.json()
-        )
-      ).then(
-        (value) => ({ status: 'fulfilled' as const, value }),
-        (reason) => ({ status: 'rejected' as const, reason })
-      );
-      if (cancelled) return;
-      setWhatsapp({
-        configured:
-          health.status === 'fulfilled' &&
-          (health.value?.connections?.length ?? 0) > 0,
-        connected: health.status === 'fulfilled' && !!health.value?.connected,
-      });
-      setWhatsappLoading(false);
-    })();
-
     return () => {
       cancelled = true;
     };
@@ -185,18 +154,19 @@ export function SettingsOverview({
   }[] = [
     {
       section: 'whatsapp',
-      loading: whatsappLoading,
-      subtitle: !whatsapp?.configured ? (
-        t('notSetup')
-      ) : whatsapp.connected ? (
-        <>
-          <StatusDot tone="ok" /> {t('connected')}
-        </>
-      ) : (
-        <>
-          <StatusDot tone="muted" /> {t('needsReconnecting')}
-        </>
-      ),
+      loading: whatsapp.loading,
+      subtitle:
+        whatsapp.error && !whatsapp.configured ? (
+          'Connection information unavailable — retry in WhatsApp settings'
+        ) : !whatsapp.configured ? (
+          t('notSetup')
+        ) : (
+          <>
+            {' '}
+            <StatusDot tone="muted" /> Configured · verify status in WhatsApp
+            settings{' '}
+          </>
+        ),
     },
     {
       section: 'members',

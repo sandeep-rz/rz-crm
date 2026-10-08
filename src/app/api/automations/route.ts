@@ -16,6 +16,7 @@ import {
 } from '@/lib/automations/steps-tree';
 import {
   validateStepsForActivation,
+  validateTemplateActions,
   validateTriggerForActivation,
   validatePmsPropertyTimezonesForActivation,
   validateWhatsAppConnectionForActivation,
@@ -117,6 +118,13 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  const templateIssues = validateTemplateActions(effectiveSteps ?? []);
+  if (templateIssues.length)
+    return NextResponse.json(
+      { error: 'Invalid automation template action', issues: templateIssues },
+      { status: 400 }
+    );
 
   const admin = supabaseAdmin();
   const stageTimingActivation =

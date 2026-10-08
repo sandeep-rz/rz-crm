@@ -16,6 +16,7 @@ import {
 } from '@/lib/automations/steps-tree';
 import {
   validateStepsForActivation,
+  validateTemplateActions,
   validateTriggerForActivation,
   validatePmsPropertyTimezonesForActivation,
   validateWhatsAppConnectionForActivation,
@@ -119,6 +120,13 @@ export async function PATCH(
   if (!existing || existing.account_id !== account.accountId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
+
+  const templateIssues = validateTemplateActions(body.steps ?? []);
+  if (templateIssues.length)
+    return NextResponse.json(
+      { error: 'Invalid automation template action', issues: templateIssues },
+      { status: 400 }
+    );
 
   const update: Record<string, unknown> = {};
   for (const k of [

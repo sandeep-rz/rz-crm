@@ -155,6 +155,44 @@ describe('POST /api/automations WhatsApp dependency', () => {
     }
   );
 
+  it.each([false, true])(
+    'rejects invalid template actions before any write, active=%s',
+    async (is_active) => {
+      for (const step_config of [
+        { template_name: 'old' },
+        { template_id: '11111111-1111-1111-1111-111111111111', variables: {} },
+        {
+          template_id: '11111111-1111-1111-1111-111111111111',
+          variable_mappings: [],
+        },
+      ]) {
+        for (const nested of [false, true]) {
+          const action = { step_type: 'send_template', step_config };
+          const steps = nested
+            ? [
+                {
+                  step_type: 'condition',
+                  step_config: {},
+                  branches: { yes: [], no: [action] },
+                },
+              ]
+            : [action];
+          const response = await POST(
+            request({
+              name: 'Test',
+              trigger_type: 'new_contact_created',
+              is_active,
+              steps,
+            })
+          );
+          expect(response.status).toBe(400);
+          expect(mocks.insertPayloads).toEqual([]);
+          expect(mocks.insertSteps).not.toHaveBeenCalled();
+        }
+      }
+    }
+  );
+
   it('rejects activation of a WhatsApp send automation with no connection', async () => {
     const response = await POST(
       request({
@@ -165,7 +203,9 @@ describe('POST /api/automations WhatsApp dependency', () => {
         steps: [
           {
             step_type: 'send_template',
-            step_config: { template_name: 'welcome' },
+            step_config: {
+              template_id: '11111111-1111-1111-1111-111111111111',
+            },
           },
         ],
       })
@@ -193,7 +233,9 @@ describe('POST /api/automations WhatsApp dependency', () => {
         steps: [
           {
             step_type: 'send_template',
-            step_config: { template_name: 'welcome' },
+            step_config: {
+              template_id: '11111111-1111-1111-1111-111111111111',
+            },
           },
         ],
       })

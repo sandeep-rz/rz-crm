@@ -16,13 +16,6 @@ const h = vi.hoisted(() => ({
     completionRpcError: null as { message: string } | null,
     rpcCalls: [] as { name: string; args: unknown }[],
     metaSendCalls: [] as Record<string, unknown>[],
-    variableResolutionCalls: [] as Record<string, unknown>[],
-    variableResolution: {
-      success: true,
-      values: [],
-      missing: [],
-      errors: [],
-    } as Record<string, unknown>,
     stepQueryFilters: [] as [string, string, unknown][],
     automations: [] as Record<string, unknown>[],
     steps: [] as Record<string, unknown>[],
@@ -218,15 +211,6 @@ vi.mock('./meta-send', () => ({
   engineSendInteractive: vi.fn(async () => ({ whatsapp_message_id: 'm1' })),
 }));
 
-vi.mock('@/lib/message-variables', () => ({
-  buildAndResolveMessageVariables: vi.fn(
-    async (args: Record<string, unknown>) => {
-      h.state.variableResolutionCalls.push(args);
-      return h.state.variableResolution;
-    }
-  ),
-}));
-
 vi.mock('@/lib/whatsapp/encryption', () => ({
   decrypt: (value: string) => value,
 }));
@@ -253,13 +237,6 @@ beforeEach(() => {
   h.state.completionRpcError = null;
   h.state.rpcCalls = [];
   h.state.metaSendCalls = [];
-  h.state.variableResolutionCalls = [];
-  h.state.variableResolution = {
-    success: true,
-    values: [],
-    missing: [],
-    errors: [],
-  };
   h.state.stepQueryFilters = [];
   h.state.automations = [];
   h.state.steps = [];
@@ -887,7 +864,7 @@ function customStep(field: string, value: string) {
   };
 }
 
-describe('send_template semantic variable mappings', () => {
+describe('send_template semantic-only contract', () => {
   function configure(stepConfig: Record<string, unknown>) {
     h.state.owned = { id: 'c1' };
     h.state.ownedConversation = { id: 'conversation-1' };
@@ -908,178 +885,32 @@ describe('send_template semantic variable mappings', () => {
     ];
   }
 
-  it('keeps header and numerically ordered body values separated', async () => {
-    configure({
-      variable_mappings: [
-        {
-          component: 'body',
-          position: 1,
-          source_type: 'catalog_variable',
-          variable_key: 'contact.first_name',
-        },
-      ],
-    });
-    h.state.variableResolution = {
-      success: true,
-      values: [
-        {
-          component: 'body',
-          position: 2,
-          value: 'Lakeside Meadows',
-          source_type: 'catalog_variable',
-          variable_key: 'property.name',
-        },
-        {
-          component: 'header',
-          position: 1,
-          value: 'ABC123',
-          source_type: 'catalog_variable',
-          variable_key: 'reservation.reference',
-        },
-        {
-          component: 'body',
-          position: 1,
-          value: 'Sandeep',
-          source_type: 'catalog_variable',
-          variable_key: 'contact.first_name',
-        },
-        {
-          component: 'body',
-          position: 3,
-          value: '2026-10-15',
-          source_type: 'catalog_variable',
-          variable_key: 'reservation.check_in_date',
-        },
-      ],
-      missing: [],
-      errors: [],
-    };
-
-    await runAutomationsForTrigger({
-      accountId: ACCOUNT,
-      triggerType: 'reservation_confirmed',
-      contactId: 'c1',
-      context: {
-        conversation_id: 'conversation-1',
-        reservation: {
-          reservation_id: 'reservation-1',
-          property_id: 'property-1',
-        } as never,
-      },
-    });
-
-    expect(h.state.variableResolutionCalls[0]).toMatchObject({
-      accountId: ACCOUNT,
-      contactId: 'c1',
-      reservationId: 'reservation-1',
-      propertyId: 'property-1',
-    });
-    expect(h.state.metaSendCalls[0]).toMatchObject({
-      messageParams: {
-        headerText: 'ABC123',
-        body: ['Sandeep', 'Lakeside Meadows', '2026-10-15'],
-      },
-    });
-  });
-
-  it('does not call the sender when a required property variable is missing', async () => {
-    configure({
-      variable_mappings: [
-        {
-          component: 'body',
-          position: 1,
-          source_type: 'catalog_variable',
-          variable_key: 'property.name',
-        },
-      ],
-    });
-    h.state.variableResolution = {
-      success: false,
-      values: [],
-      missing: [
-        {
-          component: 'body',
-          position: 1,
-          source_type: 'catalog_variable',
-          variable_key: 'property.name',
-          label: 'Property name',
-          source_scope: 'property',
-          reason: 'MISSING_CONTEXT_VALUE',
-        },
-      ],
-      errors: [],
-    };
-
-    await runAutomationsForTrigger({
-      accountId: ACCOUNT,
-      triggerType: 'reservation_confirmed',
-      contactId: 'c1',
-      context: {
-        conversation_id: 'conversation-1',
-        reservation: {
-          reservation_id: 'reservation-1',
-          property_id: 'property-1',
-        } as never,
-      },
-    });
-
-    expect(h.state.metaSendCalls).toEqual([]);
-    expect(JSON.stringify(h.state.logUpdates)).not.toContain(
-      'private-password'
-    );
-  });
-
-  it('does not send and logs identity-only diagnostics when resolution fails', async () => {
-    configure({ variable_mappings: [] });
-    h.state.variableResolution = {
-      success: false,
-      values: [],
-      missing: [
-        {
-          component: 'body',
-          position: 1,
-          source_type: 'catalog_variable',
-          variable_key: 'contact.phone',
-          label: 'Contact phone',
-          reason: 'MISSING_CONTEXT_VALUE',
-        },
-      ],
-      errors: [],
-    };
-
-    await runAutomationsForTrigger({
-      accountId: ACCOUNT,
-      triggerType: 'new_message_received',
-      contactId: 'c1',
-      context: { conversation_id: 'conversation-1' },
-    });
-
-    expect(h.state.metaSendCalls).toEqual([]);
-    expect(h.state.logUpdates).toContainEqual(
-      expect.objectContaining({
-        status: 'failed',
-        error_message:
-          'template variable resolution failed: body/1 contact.phone Contact phone MISSING_CONTEXT_VALUE',
-      })
-    );
-    expect(JSON.stringify(h.state.logUpdates)).not.toContain('+919999999999');
-  });
-
-  it('executes legacy variables unchanged without invoking the semantic resolver', async () => {
-    configure({ variables: { '2': 'second', '1': 'first' } });
-
-    await runAutomationsForTrigger({
-      accountId: ACCOUNT,
-      triggerType: 'new_message_received',
-      contactId: 'c1',
-      context: { conversation_id: 'conversation-1' },
-    });
-
-    expect(h.state.variableResolutionCalls).toEqual([]);
-    expect(h.state.metaSendCalls[0]).toMatchObject({
-      params: ['first', 'second'],
-    });
-  });
+  it.each([
+    {},
+    { template_id: '11111111-1111-1111-1111-111111111111', variables: {} },
+    {
+      template_id: '11111111-1111-1111-1111-111111111111',
+      variable_mappings: [],
+    },
+  ])(
+    'fails unsupported template formats before sending: %j',
+    async (config) => {
+      configure(config);
+      await runAutomationsForTrigger({
+        accountId: ACCOUNT,
+        triggerType: 'new_message_received',
+        contactId: 'c1',
+        context: { conversation_id: 'conversation-1' },
+      });
+      expect(h.state.metaSendCalls).toEqual([]);
+      expect(h.state.logUpdates).toContainEqual(
+        expect.objectContaining({
+          status: 'failed',
+          error_message: 'invalid_input',
+        })
+      );
+    }
+  );
 });
 
 describe('triggerMatches — interactive_reply', () => {

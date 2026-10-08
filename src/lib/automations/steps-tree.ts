@@ -1,3 +1,4 @@
+import { validateTemplateActions } from './validate';
 import { supabaseAdmin } from './admin-client';
 
 // ------------------------------------------------------------
@@ -37,6 +38,9 @@ export async function replaceSteps(
   automationId: string,
   input: BuilderStepInput[]
 ): Promise<string | null> {
+  const issues = validateTemplateActions(input);
+  if (issues.length)
+    return issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ');
   const admin = supabaseAdmin();
   const { error: delErr } = await admin
     .from('automation_steps')
@@ -50,7 +54,10 @@ export async function insertSteps(
   automationId: string,
   input: BuilderStepInput[]
 ): Promise<string | null> {
-  if (!input || input.length === 0) return null;
+  const issues = validateTemplateActions(input);
+  if (issues.length)
+    return issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ');
+  if (input.length === 0) return null;
 
   const looksFlat = input.some(
     (s) => s.branch !== undefined || s.parent_index !== undefined

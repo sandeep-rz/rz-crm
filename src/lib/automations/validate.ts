@@ -2,7 +2,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import type { AutomationTriggerType, PmsTriggerConfig } from '@/types';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
-import { validateMessageVariableMappingShape } from '@/lib/message-variables';
 import { isWhatsAppSendStep } from './action-schema';
 import {
   isPmsAutomationTrigger,
@@ -55,6 +54,15 @@ export function validateStepsForActivation(
   return issues;
 }
 
+/** Template actions use the same contract for drafts, activation and execution. */
+export function validateTemplateActions(steps: StepLike[]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!Array.isArray(steps))
+    return [{ path: 'steps', message: 'steps must be an array' }];
+  walk(steps, '', issues, true);
+  return issues;
+}
+
 /**
  * WhatsApp is an action dependency, not an automation-wide dependency.
  * Conditions may contain send actions in either branch, so inspect the full
@@ -90,14 +98,18 @@ export function validateWhatsAppConnectionForActivation(
 function walk(
   steps: StepLike[],
   prefix: string,
-  issues: ValidationIssue[]
+  issues: ValidationIssue[],
+  templatesOnly = false
 ): void {
   steps.forEach((s, i) => {
     const path = `${prefix}steps[${i}]`;
-    validateOne(s, path, issues);
+    if (!templatesOnly || s.step_type === 'send_template')
+      validateOne(s, path, issues);
     if (s.step_type === 'condition' && s.branches) {
-      if (s.branches.yes) walk(s.branches.yes, `${path}.yes.`, issues);
-      if (s.branches.no) walk(s.branches.no, `${path}.no.`, issues);
+      if (s.branches.yes)
+        walk(s.branches.yes, `${path}.yes.`, issues, templatesOnly);
+      if (s.branches.no)
+        walk(s.branches.no, `${path}.no.`, issues, templatesOnly);
     }
   });
 }
@@ -128,39 +140,23 @@ function validateOne(
       break;
     }
     case 'send_template':
-      if (c.template_id !== undefined) {
-        if (
-          typeof c.template_id !== 'string' ||
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-            c.template_id
-          )
+      if (
+        typeof c.template_id !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          c.template_id
         )
-          issues.push({
-            path: `${path}.template_id`,
-            message: 'valid template id is required',
-          });
-        break;
-      }
-      if (!nonEmpty(c.template_name)) {
+      ) {
         issues.push({
-          path: `${path}.template_name`,
-          message: 'template name is required',
+          path: `${path}.template_id`,
+          message: 'valid template id is required',
         });
       }
-      // Legacy Send Template steps use `variables` and must remain valid.
-      // New semantic mappings are structurally validated at the server
-      // boundary; catalog/custom-field existence remains account-aware
-      // runtime validation in the shared resolver.
-      if (c.variable_mappings !== undefined) {
-        const mappingResult = validateMessageVariableMappingShape(
-          c.variable_mappings
-        );
-        for (const error of mappingResult.errors) {
-          const suffix =
-            error.mapping_index >= 0 ? `[${error.mapping_index}]` : '';
+      for (const field of ['variable_mappings', 'variables']) {
+        if (Object.prototype.hasOwnProperty.call(c, field)) {
           issues.push({
-            path: `${path}.variable_mappings${suffix}`,
-            message: `invalid template variable mapping: ${error.code}`,
+            path: `${path}.${field}`,
+            message:
+              'template variables must be configured on the template, not the automation action',
           });
         }
       }

@@ -122,6 +122,45 @@ describe('PATCH /api/automations/[id] WhatsApp dependency', () => {
     mocks.updateError = null;
   });
 
+  it.each([false, true])(
+    'rejects invalid template actions before any write, active=%s',
+    async (is_active) => {
+      for (const step_config of [
+        { template_name: 'old' },
+        { template_id: '11111111-1111-1111-1111-111111111111', variables: {} },
+        {
+          template_id: '11111111-1111-1111-1111-111111111111',
+          variable_mappings: [],
+        },
+      ]) {
+        for (const nested of [false, true]) {
+          const action = { step_type: 'send_template', step_config };
+          const steps = nested
+            ? [
+                {
+                  step_type: 'condition',
+                  step_config: {},
+                  branches: { yes: [], no: [action] },
+                },
+              ]
+            : [action];
+          const response = await PATCH(
+            request({
+              name: 'Test',
+              trigger_type: 'new_contact_created',
+              is_active,
+              steps,
+            }),
+            params
+          );
+          expect(response.status).toBe(400);
+          expect(mocks.updatePayloads).toEqual([]);
+          expect(mocks.replaceSteps).not.toHaveBeenCalled();
+        }
+      }
+    }
+  );
+
   it('can explicitly remove whatsapp_config_id from an active CRM-only automation', async () => {
     const response = await PATCH(request({ whatsapp_config_id: null }), params);
 

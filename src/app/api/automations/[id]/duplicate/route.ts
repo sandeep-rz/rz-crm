@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
+import { validateTemplateActions } from '@/lib/automations/validate';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
 
 export async function POST(
@@ -30,6 +31,21 @@ export async function POST(
   if (!original)
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+  const { data: steps, error: stepsError } = await admin
+    .from('automation_steps')
+    .select('id, parent_step_id, branch, step_type, step_config, position')
+    .eq('automation_id', id)
+    .order('position', { ascending: true });
+
+  if (stepsError)
+    return NextResponse.json({ error: stepsError.message }, { status: 500 });
+  const templateIssues = validateTemplateActions(steps ?? []);
+  if (templateIssues.length)
+    return NextResponse.json(
+      { error: 'Invalid automation template action', issues: templateIssues },
+      { status: 400 }
+    );
+
   const { data: copy, error: copyErr } = await admin
     .from('automations')
     .insert({
@@ -52,12 +68,6 @@ export async function POST(
       { status: 500 }
     );
   }
-
-  const { data: steps } = await admin
-    .from('automation_steps')
-    .select('id, parent_step_id, branch, step_type, step_config, position')
-    .eq('automation_id', id)
-    .order('position', { ascending: true });
 
   if (steps && steps.length > 0) {
     // Re-map parent_step_id: build old→new id map first so the second

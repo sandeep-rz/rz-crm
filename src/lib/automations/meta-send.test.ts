@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { engineSendTemplate } from './meta-send';
+import { engineSendTemplate, engineSendText } from './meta-send';
 import type { PreparedTemplateMessage } from '@/lib/message-preparation/types';
 import { buildMetaTemplateMessagePayload } from '@/lib/whatsapp/meta-template-payload';
 const h = vi.hoisted(() => ({
   send: vi.fn(),
+  text: vi.fn(),
   connection: vi.fn(),
   inserts: [] as Record<string, unknown>[],
   updates: [] as Record<string, unknown>[],
@@ -18,7 +19,7 @@ const h = vi.hoisted(() => ({
 vi.mock('server-only', () => ({}));
 vi.mock('@/lib/whatsapp/meta-api', () => ({
   sendTemplateMessage: h.send,
-  sendTextMessage: vi.fn(),
+  sendTextMessage: h.text,
 }));
 vi.mock('@/lib/whatsapp/connection-resolver', () => ({
   resolveWhatsAppConnection: h.connection,
@@ -175,17 +176,23 @@ describe('existing automation sender with semantic payload', () => {
       expect(h.send).not.toHaveBeenCalled();
     }
   );
-  it('legacy sender still resolves a local row and persists its body', async () => {
-    h.lookup.mockResolvedValue({ row: { body_text: 'Legacy {{1}}' } });
-    await engineSendTemplate({
+  it('text sending and persistence remain available', async () => {
+    h.text.mockResolvedValue({ messageId: 'text-id' });
+    await engineSendText({
       accountId: 'account',
       userId: 'author',
       conversationId: 'conversation',
       contactId: 'contact',
-      templateName: 'legacy',
-      params: ['value'],
+      text: 'Hello',
     });
-    expect(h.lookup).toHaveBeenCalled();
-    expect(h.inserts[0].content_text).toBe('Legacy value');
+    expect(h.text).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello', to: '919876543210' })
+    );
+    expect(h.inserts[0]).toMatchObject({
+      content_text: 'Hello',
+      content_type: 'text',
+      message_id: 'text-id',
+    });
+    expect(h.lookup).not.toHaveBeenCalled();
   });
 });

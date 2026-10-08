@@ -1,5 +1,7 @@
 'use client';
 
+import { validateTemplateActions } from '@/lib/automations/validate';
+
 import type {
   MessageVariableResolutionSource,
   MessageVariableSourceScope,
@@ -261,7 +263,7 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
     case 'send_list':
       return toStepConfig(blankListPayload());
     case 'send_template':
-      return { template_name: '', language: 'en_US' };
+      return { template_id: '' };
     case 'add_tag':
     case 'remove_tag':
       return { tag_id: '' };
@@ -2378,8 +2380,10 @@ export function findTemplateMappingIssue(
   templates: MessageTemplate[],
   connectionId?: string | null
 ): string | null {
+  const issues = validateTemplateActions(steps);
+  if (issues.length) return issues[0].message;
   for (const step of steps) {
-    if (step.step_type === 'send_template' && step.step_config.template_id) {
+    if (step.step_type === 'send_template') {
       const template = templates.find(
         (candidate) => candidate.id === step.step_config.template_id
       );

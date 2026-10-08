@@ -454,3 +454,51 @@ it('keeps reservation-confirmation sends on one provider bulk call with booking 
   expect(writes[0].content_text).toContain('Reception: Ana\nNight team: Ben');
   expect(writes[0].content_text).toContain('+19999999999');
 });
+
+it('automation reservation templates fail without explicit booking context and never guess a reservation', async () => {
+  const { resolveRuntimeVariables } = await vi.importActual<
+    typeof import('@/lib/message-variables/runtime-resolver')
+  >('@/lib/message-variables/runtime-resolver');
+  const bulk = vi.fn();
+  h.resolver.mockImplementation((input, options) =>
+    resolveRuntimeVariables(input, {
+      ...options,
+      createAdapter: () => ({ resolveVariables: bulk }),
+    })
+  );
+  await expect(
+    executeAutomationStep(
+      {
+        id: id(44),
+        step_type: 'send_template',
+        step_config: { template_id: templateId },
+      } as Parameters<typeof executeAutomationStep>[0],
+      {
+        automation: {
+          id: id(45),
+          account_id: account,
+          user_id: id(7),
+          whatsapp_config_id: configId,
+        },
+        contactId: id(8),
+        context: { conversation_id: conversationId },
+        triggerEvent: 'new_contact_created',
+      } as Parameters<typeof executeAutomationStep>[1]
+    )
+  ).rejects.toMatchObject({
+    code: 'runtime_resolution_failure',
+    retryable: false,
+    diagnostics: {
+      runtimeFailures: [
+        expect.objectContaining({
+          code: 'reservation_context_required',
+          source: 'context',
+        }),
+      ],
+    },
+  });
+  expect(bulk).not.toHaveBeenCalled();
+  expect(reads.some((t) => t.startsWith('pms_'))).toBe(false);
+  expect(h.send).not.toHaveBeenCalled();
+  expect(writes).toEqual([]);
+});

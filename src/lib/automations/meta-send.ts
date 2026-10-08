@@ -11,16 +11,11 @@ import {
 } from '@/lib/whatsapp/phone-utils';
 import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity';
 import { assertConversationInAccount } from '@/lib/whatsapp/conversation-scope';
-import {
-  resolveTemplateRow,
-  templateContentText,
-} from '@/lib/whatsapp/template-body';
 import { AutomationTemplateSendError } from './template-send-error';
 import { supabaseAdmin } from './admin-client';
 import type { PreparedTemplateMessage } from '@/lib/message-preparation/types';
 import type { SendTemplateMessageArgs } from '@/lib/whatsapp/meta-api';
 import { renderTemplateBody } from '@/lib/whatsapp/template-body';
-import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -53,12 +48,10 @@ interface SendTemplateArgs {
   conversationId: string;
   contactId: string;
   templateName: string;
-  connectionId?: string;
-  preparedTemplate?: PreparedTemplateMessage;
-  templatePayload?: SendTemplateMessageArgs['templatePayload'];
+  connectionId: string;
+  preparedTemplate: PreparedTemplateMessage;
+  templatePayload: NonNullable<SendTemplateMessageArgs['templatePayload']>;
   language?: string;
-  params?: string[];
-  messageParams?: SendTimeParams;
 }
 
 export async function engineSendText(
@@ -139,7 +132,7 @@ async function sendViaMeta(
     .eq('account_id', input.accountId)
     .maybeSingle();
   if (contactErr || !contact) {
-    if (input.kind === 'template' && input.preparedTemplate)
+    if (input.kind === 'template')
       throw new AutomationTemplateSendError(
         contactErr
           ? 'template_recipient_lookup_failed'
@@ -157,7 +150,7 @@ async function sendViaMeta(
   // given us a number for this customer (issue #519).
   const sendTarget = resolveContactSendTarget(contact);
   if (!sendTarget) {
-    if (input.kind === 'template' && input.preparedTemplate)
+    if (input.kind === 'template')
       throw new AutomationTemplateSendError(
         'template_recipient_unaddressable',
         false
@@ -171,37 +164,14 @@ async function sendViaMeta(
   const config = await resolveWhatsAppConnection(db, {
     accountId: input.accountId,
     conversationId: input.conversationId,
-    ...(input.kind === 'template' && input.connectionId
-      ? { connectionId: input.connectionId }
-      : {}),
+    ...(input.kind === 'template' ? { connectionId: input.connectionId } : {}),
   });
-  if (
-    input.kind === 'template' &&
-    input.preparedTemplate &&
-    config.status !== 'connected'
-  )
+  if (input.kind === 'template' && config.status !== 'connected')
     throw new AutomationTemplateSendError(
       'template_connection_not_connected',
       false
     );
   const accessToken = config.accessToken;
-
-  // Local template row — read for the body we persist below, not for
-  // the Meta payload (the wire shape is deliberately unchanged here).
-  // A missing row is fine: the send still goes out, we just can't
-  // reconstruct the text the customer saw.
-  const templateRow =
-    input.kind === 'template' && !input.preparedTemplate
-      ? (
-          await resolveTemplateRow(
-            db,
-            input.accountId,
-            input.templateName,
-            input.language,
-            config.id
-          )
-        ).row
-      : null;
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {
@@ -212,13 +182,9 @@ async function sendViaMeta(
           to: phone,
           templateName: input.templateName,
           language: input.language,
-          params: input.params,
           templatePayload: input.templatePayload,
-          ...(input.messageParams && templateRow
-            ? { template: templateRow, messageParams: input.messageParams }
-            : {}),
         });
-    
+
         return r.messageId;
       } catch (error) {
         const metaError = error as {
@@ -231,7 +197,7 @@ async function sendViaMeta(
           fbtraceId?: string;
           httpStatus?: number;
         };
-      
+
         console.error('Meta template send failed', {
           error: {
             name: metaError.name,
@@ -243,20 +209,22 @@ async function sendViaMeta(
             fbtraceId: metaError.fbtraceId,
             httpStatus: metaError.httpStatus,
           },
-      
+
           templateName: input.templateName,
           connectionId: input.connectionId,
           phoneNumberId: config.phoneNumberId,
-      
-          componentShape: input.templatePayload?.components?.map((component) => ({
-            type: component.type,
-            parameterCount:
-              'parameters' in component && Array.isArray(component.parameters)
-                ? component.parameters.length
-                : 0,
-          })),
+
+          componentShape: input.templatePayload?.components?.map(
+            (component) => ({
+              type: component.type,
+              parameterCount:
+                'parameters' in component && Array.isArray(component.parameters)
+                  ? component.parameters.length
+                  : 0,
+            })
+          ),
         });
-      
+
         throw error;
       }
     }
@@ -307,20 +275,15 @@ async function sendViaMeta(
   const content_text =
     input.kind === 'text'
       ? input.text
-      : input.preparedTemplate
-        ? renderTemplateBody(
-            input.preparedTemplate.template.body_text,
-            input.preparedTemplate.mapping
-              .filter((m) => m.component === 'BODY')
-              .sort((a, b) => a.position - b.position)
-              .map(
-                (m) => input.preparedTemplate!.resolvedVariables[m.variable_key]
-              )
-          )
-        : templateContentText(
-            templateRow,
-            input.messageParams?.body ?? input.params ?? []
-          );
+      : renderTemplateBody(
+          input.preparedTemplate.template.body_text,
+          input.preparedTemplate.mapping
+            .filter((m) => m.component === 'BODY')
+            .sort((a, b) => a.position - b.position)
+            .map(
+              (m) => input.preparedTemplate!.resolvedVariables[m.variable_key]
+            )
+        );
   const template_name = input.kind === 'template' ? input.templateName : null;
 
   const { error: msgErr } = await db.from('messages').insert({
@@ -335,7 +298,7 @@ async function sendViaMeta(
   if (msgErr) {
     // Meta already has the message; record the DB error but don't pretend
     // the send failed. The engine wraps this in a log line.
-    if (input.kind === 'template' && input.preparedTemplate)
+    if (input.kind === 'template')
       throw new AutomationTemplateSendError(
         'meta_sent_message_persistence_failed',
         false

@@ -39,8 +39,7 @@ import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { resolveConversationForContact } from '@/lib/whatsapp/resolve-conversation';
 import type { ReservationAutomationContext } from './pms-context';
 import { matchesReservationTriggerConfig } from './pms-scheduler';
-import { buildAndResolveMessageVariables } from '@/lib/message-variables';
-import { groupResolvedTemplateParameters } from './template-variable-mapping';
+import { validateTemplateActions } from './validate';
 import { AutomationTemplateSendError } from './template-send-error';
 import { WhatsAppConnectionError } from '@/lib/whatsapp/connection-resolver';
 import { SendMessageError } from '@/lib/whatsapp/send-message';
@@ -695,144 +694,62 @@ export async function executeAutomationStep(
 
     case 'send_template': {
       const cfg = step.step_config as SendTemplateStepConfig;
-      if (!args.contactId) {
-        if (cfg.template_id !== undefined)
-          throw new TemplatePreparationError('invalid_input');
-        throw new Error('send_template needs a contact');
+      if (
+        !args.contactId ||
+        validateTemplateActions([
+          { step_type: step.step_type, step_config: { ...cfg } },
+        ]).length
+      ) {
+        throw new TemplatePreparationError('invalid_input');
       }
-      // Identity, never a cached name or action-level mapping, selects this path.
-      if (cfg.template_id !== undefined) {
-        const reservationId = args.context.reservation?.reservation_id;
-        // Load server-only preparation only for semantic actions.
-        const { prepareTemplateMessage } =
-          await import('@/lib/message-preparation/prepare-template-message');
-        const { buildMetaTemplateMessagePayload } =
-          await import('@/lib/whatsapp/meta-template-payload');
-        const prepared = await prepareTemplateMessage({
-          accountId: args.automation.account_id,
-          templateId: cfg.template_id,
-          context: { contactId: args.contactId, reservationId },
-        });
-        const templatePayload = buildMetaTemplateMessagePayload(prepared);
-        try {
-          const conversationId = await resolveConversationId(
-            args,
-            prepared.template.connectionId
-          );
-          const { whatsapp_message_id } = await engineSendTemplate({
-            accountId: args.automation.account_id,
-            userId: args.automation.user_id,
-            conversationId,
-            contactId: args.contactId,
-            templateName: prepared.template.name,
-            language: prepared.template.language,
-            connectionId: prepared.template.connectionId,
-            preparedTemplate: prepared,
-            templatePayload,
-          });
-          return `template sent via Meta (${whatsapp_message_id})`;
-        } catch (error) {
-          if (error instanceof AutomationTemplateSendError) throw error;
-          if (error instanceof WhatsAppConnectionError)
-            throw new AutomationTemplateSendError(
-              `template_connection_${error.code}`,
-              error.status >= 500 && error.code !== 'invalid_credentials'
-            );
-          if (error instanceof SendMessageError)
-            throw new AutomationTemplateSendError(
-              `template_target_${error.code}`,
-              error.status >= 500
-            );
-          if (error instanceof MetaApiError)
-            throw new AutomationTemplateSendError(
-              `meta_send_failed_http_${error.httpStatus}_code_${error.code ?? 'unknown'}`,
-              error.httpStatus >= 500 || error.httpStatus === 429
-            );
-          throw new AutomationTemplateSendError('template_send_failed', true);
-        }
-      }
-      if (!cfg.template_name)
-        throw new Error('send_template needs template_name');
-      if (Array.isArray(cfg.variable_mappings)) {
-        const resolved = await buildAndResolveMessageVariables({
-          accountId: args.automation.account_id,
-          contactId: args.contactId,
-          reservationId: args.context.reservation?.reservation_id,
-          propertyId: args.context.reservation?.property_id,
-          mappings: cfg.variable_mappings,
-          db,
-        });
-        if (!resolved.success) {
-          const diagnostics = [
-            ...resolved.missing.map((item) =>
-              [
-                `${item.component}/${item.position}`,
-                item.variable_key ?? item.custom_field_id,
-                item.label,
-                item.reason,
-              ]
-                .filter(Boolean)
-                .join(' ')
-            ),
-            ...resolved.errors.map((item) =>
-              [
-                item.component && item.position
-                  ? `${item.component}/${item.position}`
-                  : null,
-                item.variable_key ?? item.custom_field_id,
-                item.code,
-              ]
-                .filter(Boolean)
-                .join(' ')
-            ),
-          ];
-          throw new Error(
-            `template variable resolution failed: ${diagnostics.join('; ')}`
-          );
-        }
-        const messageParams = groupResolvedTemplateParameters(resolved.values);
-        const conversationId = await resolveConversationId(args);
+      const reservationId = args.context.reservation?.reservation_id;
+      // Use the shared semantic preparation for every template action.
+      const { prepareTemplateMessage } =
+        await import('@/lib/message-preparation/prepare-template-message');
+      const { buildMetaTemplateMessagePayload } =
+        await import('@/lib/whatsapp/meta-template-payload');
+      const prepared = await prepareTemplateMessage({
+        accountId: args.automation.account_id,
+        templateId: cfg.template_id,
+        context: { contactId: args.contactId, reservationId },
+      });
+      const templatePayload = buildMetaTemplateMessagePayload(prepared);
+      try {
+        const conversationId = await resolveConversationId(
+          args,
+          prepared.template.connectionId
+        );
         const { whatsapp_message_id } = await engineSendTemplate({
           accountId: args.automation.account_id,
           userId: args.automation.user_id,
           conversationId,
           contactId: args.contactId,
-          templateName: cfg.template_name,
-          language: cfg.language,
-          messageParams,
+          templateName: prepared.template.name,
+          language: prepared.template.language,
+          connectionId: prepared.template.connectionId,
+          preparedTemplate: prepared,
+          templatePayload,
         });
         return `template sent via Meta (${whatsapp_message_id})`;
+      } catch (error) {
+        if (error instanceof AutomationTemplateSendError) throw error;
+        if (error instanceof WhatsAppConnectionError)
+          throw new AutomationTemplateSendError(
+            `template_connection_${error.code}`,
+            error.status >= 500 && error.code !== 'invalid_credentials'
+          );
+        if (error instanceof SendMessageError)
+          throw new AutomationTemplateSendError(
+            `template_target_${error.code}`,
+            error.status >= 500
+          );
+        if (error instanceof MetaApiError)
+          throw new AutomationTemplateSendError(
+            `meta_send_failed_http_${error.httpStatus}_code_${error.code ?? 'unknown'}`,
+            error.httpStatus >= 500 || error.httpStatus === 429
+          );
+        throw new AutomationTemplateSendError('template_send_failed', true);
       }
-
-      const conversationId = await resolveConversationId(args);
-      // Meta templates use positional {{1}}, {{2}}, … placeholders, so
-      // we MUST emit params in strict numeric order. Lexicographic sort
-      // of "1", "2", …, "10" yields "1", "10", "2", … which silently
-      // scrambles every template with ≥10 variables.
-      const params = cfg.variables
-        ? Object.keys(cfg.variables)
-            .sort((a, b) => {
-              const na = Number(a);
-              const nb = Number(b);
-              const aNum = Number.isFinite(na);
-              const bNum = Number.isFinite(nb);
-              if (aNum && bNum) return na - nb;
-              if (aNum) return -1;
-              if (bNum) return 1;
-              return a.localeCompare(b);
-            })
-            .map((k) => interpolate(String(cfg.variables![k]), args))
-        : [];
-      const { whatsapp_message_id } = await engineSendTemplate({
-        accountId: args.automation.account_id,
-        userId: args.automation.user_id,
-        conversationId,
-        contactId: args.contactId,
-        templateName: cfg.template_name,
-        language: cfg.language,
-        params,
-      });
-      return `template sent via Meta (${whatsapp_message_id})`;
     }
 
     case 'add_tag': {

@@ -1,4 +1,5 @@
 import type { MessageTemplate } from '@/types';
+import { validateTemplateActions } from './validate';
 
 /** Current template identity, never a second occurrence/variable mapping. */
 export function selectSemanticTemplateAction(
@@ -20,11 +21,10 @@ export function selectSemanticTemplateAction(
   };
 }
 
-/** Untouched legacy records keep read compatibility; selected semantic actions never serialize old values. */
+/** Only a selected semantic action can be saved. */
 export function serializeTemplateAction(
   config: Record<string, unknown>
 ): Record<string, unknown> {
-  if (!config.template_id) return config;
   const {
     variable_mappings: _mapping,
     variables: _variables,
@@ -32,6 +32,10 @@ export function serializeTemplateAction(
   } = config;
   void _mapping;
   void _variables;
+  const issues = validateTemplateActions([
+    { step_type: 'send_template', step_config: rest },
+  ]);
+  if (issues.length) throw new Error(issues[0].message);
   return rest;
 }
 

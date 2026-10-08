@@ -51,6 +51,7 @@ beforeEach(async () => {
   ).IS_REACT_ACT_ENVIRONMENT = true;
   reservationAvailable = true;
   config = {
+    template_id: '11111111-1111-1111-1111-111111111111',
     template_name: 'booking_confirmat',
     language: 'en_US',
     variable_mappings: [
@@ -61,7 +62,7 @@ beforeEach(async () => {
   };
   templates = [
     {
-      id: 'template',
+      id: '11111111-1111-1111-1111-111111111111',
       account_id: 'account',
       user_id: 'user',
       name: 'booking_confirmat',
@@ -140,11 +141,11 @@ it('follows catalog label changes without modifying canonical identity', async (
 it('selection stores template ID, preserves unrelated fields and drops duplicate mapping/value state', async () => {
   await act(() => {
     const select = host.querySelector('select')!;
-    select.value = 'template';
+    select.value = '11111111-1111-1111-1111-111111111111';
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
   expect(config).toEqual({
-    template_id: 'template',
+    template_id: '11111111-1111-1111-1111-111111111111',
     template_name: 'booking_confirmat',
     language: 'en_US',
     unrelated: 'keep',
@@ -180,7 +181,9 @@ it('needs_mapping is disabled and directs configuration to template settings', a
   templates[0].variable_configuration_status = 'needs_mapping';
   await act(render);
   expect(
-    host.querySelector('option[value="template"]')!.hasAttribute('disabled')
+    host
+      .querySelector('option[value="11111111-1111-1111-1111-111111111111"]')!
+      .hasAttribute('disabled')
   ).toBe(true);
   expect(host.textContent).toContain('variables need to be configured');
   expect(host.querySelector('a')!.getAttribute('href')).toBe(
@@ -195,10 +198,12 @@ it.each([
   { language: undefined },
 ])('disables unusable template %j', async (patch) => {
   Object.assign(templates[0], patch);
-  config = { template_id: 'template' };
+  config = { template_id: '11111111-1111-1111-1111-111111111111' };
   await act(render);
   expect(
-    host.querySelector('option[value="template"]')!.hasAttribute('disabled')
+    host
+      .querySelector('option[value="11111111-1111-1111-1111-111111111111"]')!
+      .hasAttribute('disabled')
   ).toBe(true);
 });
 it('keeps trigger property filtering out of template variable configuration', () => {
@@ -208,12 +213,17 @@ it('keeps trigger property filtering out of template variable configuration', ()
   expect(selected).not.toHaveProperty('property_id');
   expect(JSON.stringify(trigger)).toBe(before);
 });
-it('retains untouched legacy serialization but never serializes mappings for semantic actions', () => {
-  expect(serializeTemplateAction(config)).toEqual(config);
+it('refuses name-only serialization and drops obsolete state for selected actions', () => {
+  expect(() =>
+    serializeTemplateAction({ template_name: 'booking_confirmat' })
+  ).toThrow('valid template id is required');
   expect(
-    serializeTemplateAction({ ...config, template_id: 'template' })
+    serializeTemplateAction({
+      ...config,
+      template_id: '11111111-1111-1111-1111-111111111111',
+    })
   ).toEqual({
-    template_id: 'template',
+    template_id: '11111111-1111-1111-1111-111111111111',
     template_name: 'booking_confirmat',
     language: 'en_US',
     unrelated: 'keep',
@@ -239,7 +249,9 @@ it('disables provider templates and warns about saved selections on CRM triggers
   });
   await act(render);
   expect(
-    host.querySelector('option[value="template"]')!.hasAttribute('disabled')
+    host
+      .querySelector('option[value="11111111-1111-1111-1111-111111111111"]')!
+      .hasAttribute('disabled')
   ).toBe(true);
   expect(host.querySelector('[role="alert"]')?.textContent).toContain(
     'needs a reservation'
@@ -262,7 +274,16 @@ it('allows CRM contact/workspace templates for non-PMS triggers', async () => {
   catalog[0].resolutionSource = 'context';
   await act(render);
   expect(
-    host.querySelector('option[value="template"]')!.hasAttribute('disabled')
+    host
+      .querySelector('option[value="11111111-1111-1111-1111-111111111111"]')!
+      .hasAttribute('disabled')
   ).toBe(false);
   expect(host.querySelector('[role="alert"]')).toBeNull();
+});
+
+it('does not match name/language as fallback identity', async () => {
+  config = { template_name: 'booking_confirmat', language: 'en_US' };
+  await act(render);
+  expect(host.querySelector('select')!.value).toBe('');
+  expect(host.textContent).not.toContain('Hi {{Live catalog name}}');
 });

@@ -52,7 +52,7 @@ describe('validateStepsForActivation', () => {
     ]);
     expect(issues.map((i) => i.path)).toEqual([
       'steps[0].text',
-      'steps[1].template_name',
+      'steps[1].template_id',
       'steps[2].tag_id',
     ]);
   });
@@ -222,46 +222,33 @@ describe('validateStepsForActivation', () => {
   });
 });
 
-describe('send_template semantic mapping validation', () => {
-  it('rejects malformed semantic variable mappings at the server boundary', () => {
-    const issues = validateStepsForActivation([
-      {
-        step_type: 'send_template',
-        step_config: {
-          template_name: 'welcome',
-          variable_mappings: [
-            {
-              component: 'body',
-              position: 0,
-              source_type: 'catalog_variable',
-              variable_key: 'contact.first_name',
-            },
-          ],
-        },
-      },
-    ]);
-
-    expect(issues).toEqual([
-      {
-        path: 'steps[0].variable_mappings[0]',
-        message: 'invalid template variable mapping: INVALID_POSITION',
-      },
-    ]);
-  });
-
-  it('keeps legacy template variables valid', () => {
+describe('semantic-only template validation', () => {
+  it('accepts identity without cached metadata', () => {
     expect(
       validateStepsForActivation([
         {
           step_type: 'send_template',
-          step_config: {
-            template_name: 'welcome',
-            variables: { '1': '{{contact.name}}' },
-          },
+          step_config: { template_id: '11111111-1111-1111-1111-111111111111' },
         },
       ])
     ).toEqual([]);
   });
+  it.each(['variable_mappings', 'variables'])(
+    'rejects %s even with a valid identity',
+    (field) => {
+      expect(
+        validateStepsForActivation([
+          {
+            step_type: 'send_template',
+            step_config: {
+              template_id: '11111111-1111-1111-1111-111111111111',
+              [field]: null,
+            },
+          },
+        ])
+      ).toEqual([expect.objectContaining({ path: `steps[0].${field}` })]);
+    }
+  );
 });
 
 describe('WhatsApp connection activation dependency', () => {

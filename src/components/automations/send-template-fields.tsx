@@ -36,13 +36,7 @@ export function SendTemplateFields({
   onChange: (config: Record<string, unknown>) => void;
   labels: { template: string; select: string };
 }) {
-  const selected = config.template_id
-    ? templates.find((t) => t.id === config.template_id)
-    : templates.find(
-        (t) =>
-          t.name === config.template_name &&
-          (t.language ?? 'en_US') === (config.language ?? 'en_US')
-      );
+  const selected = templates.find((t) => t.id === config.template_id);
   const needsReservation = (template: MessageTemplate) =>
     template.semantic_variable_mapping?.some((entry) =>
       variableRequiresReservation(
@@ -83,7 +77,7 @@ export function SendTemplateFields({
               {template.name} ({template.language ?? ''})
             </option>
           ))}
-          {!selected && (config.template_id || config.template_name) ? (
+          {!selected && config.template_id ? (
             <option value="" disabled>
               Selected template is unavailable
             </option>

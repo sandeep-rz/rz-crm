@@ -272,7 +272,7 @@ describe('semantic automation execution', () => {
       'wrong-connection',
     ]);
   });
-  it.each(['template_name', 'language', 'variables', 'variable_mappings'])(
+  it.each(['template_name', 'language'])(
     'ignores stale action %s',
     async (field) => {
       await executeAutomationStep(
@@ -492,20 +492,16 @@ describe('semantic automation execution', () => {
       }),
     ]);
   });
-  it('legacy numeric variables retain existing sender arguments', async () => {
-    await executeAutomationStep(
-      action({
-        template_name: 'legacy',
-        variables: { '2': 'two', '1': 'one' },
-      }),
-      args()
-    );
+  it.each([
+    { template_name: 'legacy' },
+    { template_id: templateId, variables: { '1': 'one' } },
+    { template_id: templateId, variable_mappings: [] },
+  ])('rejects unsupported automation template config %j', async (config) => {
+    await expect(
+      executeAutomationStep(action(config), args())
+    ).rejects.toMatchObject({ code: 'invalid_input' });
     expect(h.prepare).not.toHaveBeenCalled();
-    expect(h.send.mock.calls[0][0]).toMatchObject({
-      templateName: 'legacy',
-      params: ['one', 'two'],
-    });
-    expect(h.send.mock.calls[0][0].templatePayload).toBeUndefined();
+    expect(h.send).not.toHaveBeenCalled();
   });
   it.each(['reservation_created', 'before_checkin', 'after_checkout'])(
     'shared canonical context also supports %s',
@@ -519,7 +515,7 @@ describe('semantic automation execution', () => {
       validateStepsForActivation([
         {
           step_type: 'send_template',
-          step_config: { template_id: templateId, variable_mappings: 'stale' },
+          step_config: { template_id: templateId },
         },
       ])
     ).toEqual([]);

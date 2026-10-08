@@ -2,6 +2,7 @@ vi.mock('server-only', () => ({}));
 import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { BROADCAST_DELIVERY_UNCONFIRMED } from './broadcast-delivery';
 import { BroadcastError } from './broadcast-core';
 import {
   claimBroadcastDelivery,
@@ -123,8 +124,22 @@ interface PlanWrites {
 function planDb(fx: PlanFixture, writes: PlanWrites = {}): SupabaseClient {
   return {
     from(table: string) {
+      const predicates: Array<(row: Record<string, unknown>) => boolean> = [];
       const b: Record<string, unknown> = {
         select: () => b,
+        is: (key: string) => {
+          predicates.push((row) => row[key] == null);
+          return b;
+        },
+        or: (expression: string) => {
+          expect(expression).toBe(
+            `error_message.is.null,error_message.neq.${BROADCAST_DELIVERY_UNCONFIRMED}`
+          );
+          predicates.push(
+            (row) => row.error_message !== BROADCAST_DELIVERY_UNCONFIRMED
+          );
+          return b;
+        },
         eq: () => b,
         order: () => b,
         in: (col: string, vals: unknown) => {
@@ -164,7 +179,12 @@ function planDb(fx: PlanFixture, writes: PlanWrites = {}): SupabaseClient {
         }),
         then: (resolve: (r: { data: unknown[]; error: null }) => unknown) => {
           if (table === 'broadcast_recipients') {
-            return resolve({ data: fx.recipients ?? [], error: null });
+            return resolve({
+              data: (fx.recipients ?? []).filter((row) =>
+                predicates.every((test) => test(row))
+              ),
+              error: null,
+            });
           }
           if (table === 'message_templates') {
             return resolve({ data: fx.templates ?? [], error: null });
@@ -402,4 +422,36 @@ describe('planBroadcastResume', () => {
     );
     expect(plan.templateRow?.language).toBe('en');
   });
+});
+
+it('resume excludes accepted and unconfirmed recipients even when their phones are now missing', async () => {
+  const writes: PlanWrites = {};
+  await expect(
+    planBroadcastResume(
+      planDb(
+        {
+          broadcast: BROADCAST,
+          recipients: [
+            {
+              id: 'accepted',
+              contact_id: 'c',
+              whatsapp_message_id: 'wamid',
+              contact: null,
+            },
+            {
+              id: 'unknown',
+              contact_id: 'c',
+              error_message: BROADCAST_DELIVERY_UNCONFIRMED,
+              contact: null,
+            },
+          ],
+        },
+        writes
+      ),
+      'acct-1',
+      'bc-1',
+      'all'
+    )
+  ).rejects.toMatchObject({ code: 'nothing_to_resume' });
+  expect(writes.failedUpdate).toBeUndefined();
 });

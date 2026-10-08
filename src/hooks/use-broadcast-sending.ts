@@ -79,13 +79,6 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-interface BroadcastApiResult {
-  phone: string;
-  status: 'sent' | 'failed';
-  whatsapp_message_id?: string;
-  error?: string;
-}
-
 interface LegacyResolutionResult {
   contact_id: string;
   success: boolean;
@@ -616,30 +609,28 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       const pendingRecipients = recipients.filter(
         (recipient) => recipient.status === 'pending'
       );
-      let failedCount = recipients.length - pendingRecipients.length;
       const totalRecipients = recipients.length;
 
       for (let i = 0; i < pendingRecipients.length; i += SEND_BATCH_SIZE) {
         const batch = pendingRecipients.slice(i, i + SEND_BATCH_SIZE);
 
-        const apiRecipients = batch
-          .filter((r) => r.contact?.phone)
-          .map((r) => {
-            const frozen = frozenTemplateParams(r.template_params);
-            return {
-              phone: r.contact!.phone as string,
-              ...(semantic ? { contact_id: r.contact_id } : {}),
-              // Legacy sends replay frozen params; semantic sends carry only
-              // contact identity for server-side preparation.
-              ...(semantic ? {} : frozen),
-              ...(!semantic &&
-              !frozen.messageParams &&
-              isMediaHeader &&
-              headerMediaUrl
-                ? { messageParams: { headerMediaUrl } }
-                : {}),
-            };
-          });
+        const apiRecipients = batch.map((r) => {
+          const frozen = frozenTemplateParams(r.template_params);
+          return {
+            phone: r.contact?.phone ?? '',
+            contact_id: r.contact_id,
+            recipient_id: r.id,
+            // Legacy sends replay frozen params; semantic sends carry only
+            // contact identity for server-side preparation.
+            ...(semantic ? {} : frozen),
+            ...(!semantic &&
+            !frozen.messageParams &&
+            isMediaHeader &&
+            headerMediaUrl
+              ? { messageParams: { headerMediaUrl } }
+              : {}),
+          };
+        });
 
         if (apiRecipients.length === 0) continue;
 
@@ -647,13 +638,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
           // Send the batch, waiting out a 429 rather than writing the
           // whole batch off as failed. Only 429 is replayed — see
           // batchRetryDelayMs for why nothing else can be.
-          let data: { error?: string; results?: BroadcastApiResult[] } = {};
+          let data: { error?: string; results?: unknown[] } = {};
           for (let attempt = 1; ; attempt++) {
             const res = await fetch('/api/whatsapp/broadcast', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 recipients: apiRecipients,
+                broadcast_id: broadcast.id,
                 template_name: payload.template.name,
                 ...(semantic ? { template_id: payload.template.id } : {}),
                 template_language: payload.template.language ?? 'en_US',
@@ -673,61 +665,9 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             }
             await sleep(retryIn);
           }
-
-          const resultsByPhone = new Map<string, BroadcastApiResult>();
-          for (const r of (data.results ?? []) as BroadcastApiResult[]) {
-            resultsByPhone.set(r.phone, r);
-          }
-
-          for (const recipient of batch) {
-            const phone = recipient.contact?.phone;
-            const result = phone ? resultsByPhone.get(phone) : undefined;
-
-            if (!result) {
-              failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: 'No phone number on contact',
-                })
-                .eq('id', recipient.id);
-              continue;
-            }
-
-            if (result.status === 'sent') {
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'sent',
-                  sent_at: new Date().toISOString(),
-                  whatsapp_message_id: result.whatsapp_message_id ?? null,
-                  error_message: null,
-                })
-                .eq('id', recipient.id);
-            } else {
-              failedCount++;
-              await supabase
-                .from('broadcast_recipients')
-                .update({
-                  status: 'failed',
-                  error_message: result.error ?? 'Unknown error',
-                })
-                .eq('id', recipient.id);
-            }
-          }
-        } catch (err) {
-          for (const recipient of batch) {
-            failedCount++;
-            await supabase
-              .from('broadcast_recipients')
-              .update({
-                status: 'failed',
-                error_message:
-                  err instanceof Error ? err.message : 'Unknown error',
-              })
-              .eq('id', recipient.id);
-          }
+        } catch {
+          // A lost response does not prove delivery failed. The server owns
+          // durable recipient outcomes; never overwrite its acceptance/guard.
         }
 
         const progressPct =
@@ -741,14 +681,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       // ── Step 5: Finalize status ───────────────────────────────────
       // Aggregate counts are maintained by the DB trigger (migration
-      // 003); we only flip the final status here.
+      // 003); server batches finalize status from recipient rows.
       setProgress(95);
-      const finalStatus = failedCount === totalRecipients ? 'failed' : 'sent';
-      await supabase
-        .from('broadcasts')
-        .update({ status: finalStatus })
-        .eq('id', broadcast.id);
-
+      // The batch endpoint finalizes from durable recipient rows. Local
+      // request counters must not overwrite accepted or in-flight outcomes.
       setProgress(100);
       return broadcast.id;
     } finally {

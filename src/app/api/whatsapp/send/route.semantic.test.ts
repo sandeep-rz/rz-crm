@@ -128,13 +128,35 @@ it('does not return raw Meta errors', async () => {
     'WhatsApp could not send this template.'
   );
 });
-it('persistence failure avoids encouraging a duplicate send and hides raw SQL', async () => {
+it('accepted persistence failure returns wamid without suggesting a failed delivery', async () => {
+  const message =
+    'WhatsApp accepted this message, but it could not be saved. Check the conversation before sending again.';
+  h.send.mockRejectedValue(
+    new SendMessageError(
+      'meta_accepted_persistence_failed',
+      message,
+      500,
+      'wamid.accepted'
+    )
+  );
+  const response = await POST(request());
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual({
+    code: 'meta_accepted_persistence_failed',
+    error: message,
+    delivery_state: 'accepted',
+    whatsapp_message_id: 'wamid.accepted',
+  });
+  expect(h.send).toHaveBeenCalledOnce();
+});
+it('preparation DB failure does not fabricate Meta acceptance or expose SQL', async () => {
   h.send.mockRejectedValue(
     new SendMessageError('db_error', 'PRIVATE SQL', 500)
   );
   const response = await POST(request());
   expect(response.status).toBe(500);
-  expect((await response.json()).error).toBe(
-    'WhatsApp accepted this template, but it could not be saved. Check the conversation before sending again.'
-  );
+  expect(await response.json()).toEqual({
+    code: 'db_error',
+    error: 'This template could not be prepared. No message was sent.',
+  });
 });

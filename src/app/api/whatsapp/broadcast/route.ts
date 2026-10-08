@@ -7,12 +7,20 @@ import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog'
 import { semanticBroadcastTemplateIssue } from '@/lib/broadcast-message-variables';
 import { buildMetaTemplateMessagePayload } from '@/lib/whatsapp/meta-template-payload';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
+import { validateBroadcastRecipientPhone } from '@/lib/whatsapp/broadcast-recipient-phone';
 import {
-  sanitizePhoneForMeta,
-  isValidE164,
-  phoneVariants,
-  isRecipientNotAllowedError,
-} from '@/lib/whatsapp/phone-utils';
+  broadcastTemplateContent,
+  persistBroadcastMessage,
+} from '@/lib/whatsapp/broadcast-message';
+import { findOrCreateContact } from '@/lib/api/v1/contacts';
+import {
+  claimBroadcastRecipient,
+  broadcastSendFailure,
+  recordBroadcastRecipientFailure,
+  BROADCAST_DELIVERY_UNCONFIRMED,
+} from '@/lib/whatsapp/broadcast-delivery';
+import { finalizeBroadcastStatus } from '@/lib/whatsapp/broadcast-core';
+import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 import {
   checkRateLimit,
   rateLimitResponse,
@@ -51,6 +59,7 @@ interface BroadcastResult {
 interface NewRecipient {
   phone: string;
   contact_id?: string;
+  recipient_id?: string;
   /** Body variable values, one per {{N}}. Legacy field. */
   params?: string[];
   /**
@@ -67,15 +76,6 @@ export async function POST(request: Request) {
     // Requires the 'agent' role — `canSendMessages` in lib/auth/roles is
     // explicit that running broadcasts is a write operation and that
     // viewers are read-only.
-    //
-    // This endpoint writes NOTHING to the database: it reads the config
-    // and template, then calls Meta directly. So unlike the rest of the
-    // app there was no RLS policy backstopping a missing role check —
-    // resolving `account_id` straight off the profile (which only needs
-    // 'viewer') was the ONLY gate, and it let a viewer blast a template
-    // to arbitrary phone numbers from the account's WhatsApp number.
-    // Nothing about that is recoverable after the fact, so the check has
-    // to happen here.
     const { supabase, accountId, userId } = await requireRole('agent');
 
     // Per-user broadcast budget. Note: this limits how often a user
@@ -95,6 +95,7 @@ export async function POST(request: Request) {
       template_language,
       template_params,
       whatsapp_config_id,
+      broadcast_id,
     } = body;
 
     // Normalize to a list of {phone, params} regardless of shape.
@@ -143,6 +144,20 @@ export async function POST(request: Request) {
     }
 
     const accessToken = config.accessToken;
+    if (broadcast_id !== undefined) {
+      const { data: broadcast, error } = await supabase
+        .from('broadcasts')
+        .select('id')
+        .eq('id', broadcast_id)
+        .eq('account_id', accountId)
+        .eq('whatsapp_config_id', config.id)
+        .maybeSingle();
+      if (error || !broadcast)
+        return NextResponse.json(
+          { error: 'Broadcast not found.' },
+          { status: 404 }
+        );
+    }
 
     // Load the template row once so sendTemplateMessage can build
     // header + button components on each iteration. Loading inside
@@ -194,7 +209,60 @@ export async function POST(request: Request) {
     let failedCount = 0;
 
     for (const recipient of recipients) {
-      const sanitized = sanitizePhoneForMeta(recipient.phone);
+      if (broadcast_id !== undefined) {
+        const { data: saved, error } = await supabase
+          .from('broadcast_recipients')
+          .select('id, whatsapp_message_id')
+          .eq('id', recipient.recipient_id)
+          .eq('broadcast_id', broadcast_id)
+          .eq('contact_id', recipient.contact_id)
+          .maybeSingle();
+        if (error || !saved) {
+          results.push({
+            phone: recipient.phone,
+            status: 'failed',
+            error: 'Broadcast recipient is unavailable.',
+          });
+          failedCount++;
+          continue;
+        }
+        if (saved.whatsapp_message_id) {
+          await supabase
+            .from('broadcast_recipients')
+            .update({ status: 'sent' })
+            .eq('id', recipient.recipient_id)
+            .eq('broadcast_id', broadcast_id)
+            .eq('contact_id', recipient.contact_id)
+            .in('status', ['pending', 'failed']);
+          results.push({
+            phone: recipient.phone,
+            status: 'sent',
+            whatsapp_message_id: saved.whatsapp_message_id,
+          });
+          sentCount++;
+          continue;
+        }
+      }
+      const contactLinked = semantic || recipient.contact_id !== undefined;
+      const destination = contactLinked
+        ? await validateBroadcastRecipientPhone(
+            supabase,
+            accountId,
+            recipient.contact_id,
+            recipient.phone
+          )
+        : null;
+      if (destination?.error) {
+        results.push({
+          phone: recipient.phone,
+          status: 'failed',
+          error: destination.error,
+        });
+        failedCount++;
+        continue;
+      }
+      const sanitized =
+        destination?.phone ?? sanitizePhoneForMeta(recipient.phone);
 
       if (!isValidE164(sanitized)) {
         results.push({
@@ -205,10 +273,38 @@ export async function POST(request: Request) {
         failedCount++;
         continue;
       }
+      // Phone-only legacy API sends still need a normal, validated contact
+      // for Inbox persistence. Never accept a fuzzy match to another phone.
+      let contactId = recipient.contact_id;
+      if (!contactLinked) {
+        try {
+          const contact = await findOrCreateContact(
+            supabase,
+            accountId,
+            userId,
+            { phone: `+${sanitized}` }
+          );
+          const checked = await validateBroadcastRecipientPhone(
+            supabase,
+            accountId,
+            contact.id,
+            sanitized
+          );
+          if (checked.error) throw new Error(checked.error);
+          contactId = contact.id;
+        } catch {
+          results.push({
+            phone: recipient.phone,
+            status: 'failed',
+            error: 'Recipient contact is unavailable.',
+          });
+          failedCount++;
+          continue;
+        }
+      }
 
-      // Retry with phone variants on "not in allowed list" so numbers
-      // that differ only in a trunk-prefix 0 still reach recipients.
-      const variants = phoneVariants(sanitized);
+      // Every persisted send now belongs to a validated contact. Never send
+      // its content to a guessed alternate destination.
       let sentMessageId: string | null = null;
       let lastError: string | null = null;
 
@@ -239,51 +335,110 @@ export async function POST(request: Request) {
           continue;
         }
       }
-      for (const variant of variants) {
+      const identity =
+        broadcast_id !== undefined
+          ? {
+              broadcastId: broadcast_id,
+              recipientId: recipient.recipient_id!,
+              contactId: contactId!,
+            }
+          : null;
+      if (identity) {
         try {
-          const result = await sendTemplateMessage({
-            phoneNumberId: config.phoneNumberId,
-            accessToken,
-            to: variant,
-            templateName: template_name,
-            language: resolvedTemplate.language,
-            templatePayload,
-            template: semantic ? undefined : (templateRow ?? undefined),
-            messageParams: semantic ? undefined : recipient.messageParams,
-            params: semantic ? undefined : (recipient.params ?? []),
-          });
-          sentMessageId = result.messageId;
-          lastError = null;
-          break;
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : 'Unknown error';
-          if (!isRecipientNotAllowedError(errorMessage)) {
-            lastError = semantic
-              ? 'WhatsApp could not send this template.'
-              : errorMessage;
-            break;
+          if (!(await claimBroadcastRecipient(supabase, identity))) {
+            results.push({
+              phone: recipient.phone,
+              status: 'failed',
+              error: BROADCAST_DELIVERY_UNCONFIRMED,
+            });
+            failedCount++;
+            continue;
           }
-          lastError = semantic
-            ? 'WhatsApp could not send this template.'
-            : errorMessage;
-          // retry with next variant
+        } catch {
+          results.push({
+            phone: recipient.phone,
+            status: 'failed',
+            error: 'Recipient could not be claimed. No message was sent.',
+          });
+          failedCount++;
+          continue;
         }
+      }
+      try {
+        const result = await sendTemplateMessage({
+          phoneNumberId: config.phoneNumberId,
+          accessToken,
+          to: sanitized,
+          templateName: template_name,
+          language: resolvedTemplate.language,
+          templatePayload,
+          template: semantic ? undefined : (templateRow ?? undefined),
+          messageParams: semantic ? undefined : recipient.messageParams,
+          params: semantic ? undefined : (recipient.params ?? []),
+        });
+        sentMessageId = result.messageId;
+      } catch (error) {
+        lastError = broadcastSendFailure(error);
+        if (identity)
+          await recordBroadcastRecipientFailure(
+            supabase,
+            identity,
+            lastError,
+            true
+          );
       }
 
       if (sentMessageId) {
+        let persistenceError: string | undefined;
+        try {
+          if (broadcast_id !== undefined) {
+            const { error } = await supabase
+              .from('broadcast_recipients')
+              .update({
+                status: 'sent',
+                whatsapp_message_id: sentMessageId,
+                sent_at: new Date().toISOString(),
+                error_message: null,
+              })
+              .eq('id', recipient.recipient_id)
+              .eq('broadcast_id', broadcast_id)
+              .eq('contact_id', contactId)
+              .eq('error_message', BROADCAST_DELIVERY_UNCONFIRMED)
+              .is('whatsapp_message_id', null);
+            if (error) throw new Error('Acceptance could not be saved.');
+          }
+          await persistBroadcastMessage(supabase, {
+            accountId,
+            connectionId: config.id,
+            contactId: contactId!,
+            messageId: sentMessageId,
+            templateName: template_name,
+            contentText: broadcastTemplateContent(
+              templateRow,
+              recipient.params ?? [],
+              recipient.messageParams,
+              templatePayload
+            ),
+          });
+        } catch {
+          persistenceError = 'Sent to WhatsApp, but could not save to Inbox.';
+          console.error(
+            '[broadcast] Accepted message could not be saved to Inbox.',
+            {
+              broadcastId: broadcast_id,
+              recipientId: recipient.recipient_id,
+              messageId: sentMessageId,
+            }
+          );
+        }
         results.push({
           phone: recipient.phone,
           status: 'sent',
           whatsapp_message_id: sentMessageId,
+          ...(persistenceError ? { error: persistenceError } : {}),
         });
         sentCount++;
       } else {
-        if (!semantic)
-          console.error(
-            `Failed to send broadcast to ${recipient.phone}:`,
-            lastError
-          );
         results.push({
           phone: recipient.phone,
           status: 'failed',
@@ -291,6 +446,23 @@ export async function POST(request: Request) {
         });
         failedCount++;
       }
+    }
+
+    if (broadcast_id !== undefined) {
+      for (const [index, result] of results.entries()) {
+        if (result.status !== 'failed') continue;
+        const recipient = recipients[index];
+        await recordBroadcastRecipientFailure(
+          supabase,
+          {
+            broadcastId: broadcast_id,
+            recipientId: recipient.recipient_id!,
+            contactId: recipient.contact_id!,
+          },
+          result.error ?? 'Required recipient information is unavailable.'
+        );
+      }
+      await finalizeBroadcastStatus(supabase, broadcast_id);
     }
 
     return NextResponse.json({
@@ -303,7 +475,9 @@ export async function POST(request: Request) {
   } catch (error) {
     // requireRole throws Unauthorized/Forbidden; toErrorResponse maps
     // those to 401/403 and collapses anything else to a generic 500.
-    console.error('Error in WhatsApp broadcast POST:', error);
+    console.error('Error in WhatsApp broadcast POST.', {
+      name: error instanceof Error ? error.name : 'unknown',
+    });
     return toErrorResponse(error);
   }
 }

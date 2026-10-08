@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   updates: [] as Record<string, unknown>[],
   lookup: vi.fn(),
   insertError: null as unknown,
+  previewError: null as unknown,
   contact: {
     id: 'contact',
     phone: '+919876543210',
@@ -49,7 +50,12 @@ vi.mock('./admin-client', () => ({
         then: (resolve: (value: unknown) => unknown) =>
           Promise.resolve({
             data: table === 'contacts' ? h.contact : null,
-            error: table === 'messages' ? h.insertError : null,
+            error:
+              table === 'messages'
+                ? h.insertError
+                : table === 'conversations'
+                  ? h.previewError
+                  : null,
           }).then(resolve),
       };
       return q;
@@ -90,6 +96,7 @@ beforeEach(() => {
   h.inserts = [];
   h.updates = [];
   h.insertError = null;
+  h.previewError = null;
   h.contact = { id: 'contact', phone: '+919876543210', wa_user_id: null };
   h.connection.mockResolvedValue({
     id: 'selected',
@@ -236,4 +243,27 @@ it('never calls Meta when the durable before-request guard fails', async () => {
   ).rejects.toThrow('guard unavailable');
   expect(h.send).not.toHaveBeenCalled();
   expect(h.inserts).toEqual([]);
+});
+
+it('persists the normalized BODY parameters sent to Meta instead of raw semantic values', async () => {
+  const value = structuredClone(prepared);
+  value.resolvedVariables['contact.first_name'] = 'Sandeep\nSharma\t';
+  const templatePayload = buildMetaTemplateMessagePayload(value);
+  await engineSendTemplate({
+    ...args(),
+    preparedTemplate: value,
+    templatePayload,
+  });
+  expect(h.inserts[0].content_text).toBe('Hi Sandeep Sharma , total 0');
+  expect(h.send).toHaveBeenCalledOnce();
+});
+
+it('preview failure after Meta acceptance is non-retryable and sends only once', async () => {
+  h.previewError = { message: 'PRIVATE DB DETAIL' };
+  await expect(engineSendTemplate(args())).rejects.toMatchObject({
+    code: 'meta_sent_conversation_persistence_failed',
+    retryable: false,
+  });
+  expect(h.send).toHaveBeenCalledOnce();
+  expect(h.inserts[0].message_id).toBe('provider-id');
 });

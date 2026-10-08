@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageTemplate } from '@/types';
-import { compileSemanticTemplate } from './semantic-template';
+import { compileSemanticTemplate, importedMetadata } from './semantic-template';
 import { sendMessageToConversation } from './send-message';
 import { executeAutomationStep } from '@/lib/automations/engine';
 const h = vi.hoisted(() => ({ resolver: vi.fn(), send: vi.fn() }));
@@ -47,6 +47,7 @@ const catalog = [...Object.keys(actual), 'workspace.name'].map(
 let template: MessageTemplate;
 let writes: Record<string, unknown>[];
 let reads: string[];
+let failMessageInsert = false;
 let providerTables: Record<string, Record<string, unknown>>;
 const config = {
   id: configId,
@@ -114,7 +115,10 @@ const db = {
       maybeSingle: async () => ({ data: matched(), error: null }),
       single: async () => ({
         data: inserted ? { ...inserted, id: id(9) } : matched(),
-        error: null,
+        error:
+          table === 'messages' && failMessageInsert
+            ? { code: '08006', message: 'PRIVATE INSERT DETAIL' }
+            : null,
       }),
       limit: async () => ({ data: matched() ? [matched()] : [], error: null }),
       then: (resolve: (v: unknown) => unknown) =>
@@ -188,6 +192,8 @@ beforeEach(() => {
   writes = [];
   reads = [];
   providerTables = {};
+  failMessageInsert = false;
+  conversation.contact.account_id = account;
   author(
     'Hi {{contact.first_name}}, your booking {{reservation.reference}} at {{listing.name}} is confirmed. Your team: {{property.staff_details}}. Your booking phone is {{contact.phone}}.'
   );
@@ -292,12 +298,16 @@ it('needs_mapping retains legacy positional sending and never enters semantic pr
   expect(h.send.mock.calls[0][0].templatePayload).toBeUndefined();
   expect(h.send.mock.calls[0][0].params).toEqual(['FORGED CLIENT VALUE']);
 });
-it('a static configured template does not require reservation context', async () => {
-  author('Thank you for your message. We will get back to you shortly.');
-  await send();
-  expect(h.resolver.mock.calls[0][0].variableKeys).toEqual([]);
-  expect(h.send).toHaveBeenCalledTimes(1);
-});
+it.each(['rgcrm', 'meta'])(
+  'a static configured %s template does not require reservation context',
+  async (origin) => {
+    author('Thank you for your message. We will get back to you shortly.');
+    if (origin === 'meta') Object.assign(template, importedMetadata(template));
+    await send();
+    expect(h.resolver.mock.calls[0][0].variableKeys).toEqual([]);
+    expect(h.send).toHaveBeenCalledTimes(1);
+  }
+);
 it('rejects a template from a different workspace/connection before resolution', async () => {
   template.account_id = id(99);
   await expect(send(reservation)).rejects.toMatchObject({
@@ -451,7 +461,7 @@ it('keeps reservation-confirmation sends on one provider bulk call with booking 
   expect(
     h.send.mock.calls[0][0].templatePayload.components[0].parameters[3]
   ).toEqual({ type: 'text', text: 'Reception: Ana Night team: Ben' });
-  expect(writes[0].content_text).toContain('Reception: Ana\nNight team: Ben');
+  expect(writes[0].content_text).toContain('Reception: Ana Night team: Ben');
   expect(writes[0].content_text).toContain('+19999999999');
 });
 
@@ -501,4 +511,54 @@ it('automation reservation templates fail without explicit booking context and n
   expect(reads.some((t) => t.startsWith('pms_'))).toBe(false);
   expect(h.send).not.toHaveBeenCalled();
   expect(writes).toEqual([]);
+});
+
+it('sends a synchronized static Meta template through the real automation pipeline without reservation context', async () => {
+  await crmOnlyPipeline();
+  author('Thank you for contacting our team.');
+  Object.assign(template, importedMetadata(template));
+  await executeAutomationStep(
+    {
+      id: id(44),
+      step_type: 'send_template',
+      step_config: { template_id: templateId },
+    } as Parameters<typeof executeAutomationStep>[0],
+    {
+      automation: {
+        id: id(45),
+        account_id: account,
+        user_id: id(7),
+        whatsapp_config_id: configId,
+      },
+      contactId: id(8),
+      context: { conversation_id: conversationId },
+      triggerEvent: 'new_contact_created',
+    } as Parameters<typeof executeAutomationStep>[1]
+  );
+  expect(h.send).toHaveBeenCalledOnce();
+  expect(h.send.mock.calls[0][0].templatePayload.components).toBeUndefined();
+  expect(writes[0].content_text).toBe('Thank you for contacting our team.');
+  expect(reads.some((table) => table.startsWith('pms_'))).toBe(false);
+});
+
+it('reports manual Meta acceptance with wamid when the subsequent local insert fails, without an internal resend', async () => {
+  await crmOnlyPipeline();
+  failMessageInsert = true;
+  await expect(send()).rejects.toMatchObject({
+    code: 'meta_accepted_persistence_failed',
+    acceptedMessageId: 'wamid-test',
+  });
+  expect(h.send).toHaveBeenCalledOnce();
+});
+it('reports an unknown semantic manual send separately from a definite Meta rejection', async () => {
+  await crmOnlyPipeline();
+  h.send.mockRejectedValue(new Error('transport timeout'));
+  await expect(send()).rejects.toMatchObject({ code: 'meta_outcome_unknown' });
+  expect(h.send).toHaveBeenCalledOnce();
+});
+it('rejects a semantic manual conversation referencing a foreign account contact even for a static template', async () => {
+  author('Thank you for contacting us.');
+  conversation.contact.account_id = id(99);
+  await expect(send()).rejects.toMatchObject({ code: 'not_found' });
+  expect(h.send).not.toHaveBeenCalled();
 });

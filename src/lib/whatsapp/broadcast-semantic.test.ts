@@ -1,9 +1,12 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageTemplate } from '@/types';
-import { compileSemanticTemplate } from './semantic-template';
+import { compileSemanticTemplate, importedMetadata } from './semantic-template';
 import { createBroadcast, deliverBroadcast } from './broadcast-core';
 import { planBroadcastResume } from './broadcast-resume';
+import { BROADCAST_DELIVERY_UNCONFIRMED } from './broadcast-delivery';
+import { MetaApiError } from './meta-api';
+import { persistBroadcastMessage } from './broadcast-message';
 import { POST as sendBatch } from '@/app/api/whatsapp/broadcast/route';
 import { POST as validate } from '@/app/api/whatsapp/broadcast/resolve-variables/route';
 const h = vi.hoisted(() => ({
@@ -26,7 +29,10 @@ vi.mock('@/lib/whatsapp/connection-resolver', () => ({
     accessToken: 'token',
   }),
 }));
-vi.mock('@/lib/api/v1/contacts', () => ({ findOrCreateContact: h.contact }));
+vi.mock('@/lib/api/v1/contacts', () => ({
+  findOrCreateContact: h.contact,
+  resolveAuditUserId: async () => id(9),
+}));
 vi.mock('@/lib/auth/account', () => ({
   requireRole: async () => ({ supabase: db, accountId: id(1), userId: id(9) }),
   toErrorResponse: () =>
@@ -42,6 +48,9 @@ const id = (n: number) =>
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
 let reads: string[];
+let failMessagePersistence = false;
+let failClaim = false;
+let failAcceptance = false;
 const catalog = [
   'contact.first_name',
   'workspace.name',
@@ -81,6 +90,24 @@ const db = {
     let inserted: Row | undefined;
     const filters: Array<(row: Row) => boolean> = [];
     const response = () => {
+      if (
+        table === 'broadcast_recipients' &&
+        ((failClaim &&
+          patch?.error_message === BROADCAST_DELIVERY_UNCONFIRMED) ||
+          (failAcceptance && patch?.whatsapp_message_id))
+      )
+        return {
+          data: null,
+          error: { message: 'database unavailable' },
+          count: 0,
+        };
+
+      if (table === 'messages' && failMessagePersistence)
+        return {
+          data: null,
+          error: { message: 'private database detail' },
+          count: 0,
+        };
       const rows = (tables[table] ?? []).filter((row) =>
         filters.every((f) => f(row))
       );
@@ -102,6 +129,19 @@ const db = {
         filters.push((row) => row[key] === value);
         return q;
       },
+      is: (key: string, value: unknown) => {
+        filters.push((row) =>
+          value === null ? row[key] == null : row[key] === value
+        );
+        return q;
+      },
+      or: (expression: string) => {
+        const marker = expression.split('error_message.neq.')[1];
+        filters.push(
+          (row) => row.error_message == null || row.error_message !== marker
+        );
+        return q;
+      },
       in: (key: string, values: unknown[]) => {
         filters.push((row) => values.includes(row[key]));
         return q;
@@ -111,15 +151,30 @@ const db = {
         return q;
       },
       insert: (value: Row) => {
-        inserted = value;
-        (tables[table] ??= []).push(value);
+        inserted = { id: id(100 + (tables[table]?.length ?? 0)), ...value };
+        (tables[table] ??= []).push(inserted);
+        return q;
+      },
+      upsert: (value: Row) => {
+        if (
+          !failMessagePersistence &&
+          !(tables[table] ?? []).some(
+            (row) =>
+              row.conversation_id === value.conversation_id &&
+              row.message_id === value.message_id
+          )
+        )
+          (tables[table] ??= []).push(value);
         return q;
       },
       maybeSingle: async () => ({
         ...response(),
-        data: response().data[0] ?? null,
+        data: response().data?.[0] ?? null,
       }),
-      single: async () => ({ ...response(), data: response().data[0] ?? null }),
+      single: async () => ({
+        ...response(),
+        data: response().data?.[0] ?? null,
+      }),
       then: (resolve: (v: unknown) => unknown) =>
         Promise.resolve(response()).then(resolve),
     };
@@ -181,6 +236,9 @@ const sendTexts = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   reads = [];
+  failMessagePersistence = false;
+  failClaim = false;
+  failAcceptance = false;
   tables = {
     message_templates: [
       author(
@@ -222,7 +280,9 @@ beforeEach(() => {
     broadcasts: [],
     broadcast_recipients: [],
   };
-  h.send.mockResolvedValue({ messageId: 'wamid' });
+  h.send.mockImplementation(async () => ({
+    messageId: `wamid-${h.send.mock.calls.length}`,
+  }));
   h.adapter.mockImplementation(() => {
     throw new Error('Provider calls are forbidden');
   });
@@ -270,12 +330,11 @@ it('isolates a missing contact value between two successful dashboard recipients
   ]);
   expect(sendTexts().map((v) => v[0])).toEqual(['Sandeep', 'Ana']);
 });
-it('keeps the supplied broadcast destination separate from resolved contact.phone', async () => {
+it('blocks a supplied destination that differs from the semantic contact phone', async () => {
   await sendBatch(
     request({ recipients: [{ phone: '+14155550999', contact_id: id(4) }] })
   );
-  expect(h.send.mock.calls[0][0].to).toBe('14155550999');
-  expect(sendTexts()[0][2]).toBe('+14155550123');
+  expect(h.send).not.toHaveBeenCalled();
 });
 it('rejects foreign/missing contact contexts without sending or falling back', async () => {
   tables.contacts[0].account_id = id(99);
@@ -330,7 +389,7 @@ it('uses real shared preparation for public API broadcasts and persists each rec
     'failed',
     'sent',
   ]);
-  expect(tables.broadcast_recipients[0].whatsapp_message_id).toBe('wamid');
+  expect(tables.broadcast_recipients[0].whatsapp_message_id).toBe('wamid-1');
   expect(tables.broadcasts[0].status).toBe('sent');
   expect(h.adapter).not.toHaveBeenCalled();
 });
@@ -422,3 +481,446 @@ it('inherits header/body/button assembly from the shared Meta payload builder', 
     ])
   );
 });
+
+for (const path of ['dashboard', 'worker'] as const) {
+  async function deliverOne(phone = '+14155550123') {
+    if (path === 'dashboard') {
+      const response = await sendBatch(
+        request({
+          recipients: [{ contact_id: id(4), phone, params: ['Frozen'] }],
+        })
+      );
+      return (await response.json()).results[0];
+    }
+    const plan = await createBroadcast(db, id(1), id(9), {
+      templateName: 'news',
+      whatsappConfigId: id(2),
+      recipients: [{ to: '+14155550123', params: ['Frozen'] }],
+    });
+    plan.planned[0].phone = phone;
+    await deliverBroadcast(db, plan);
+    return tables.broadcast_recipients[0];
+  }
+
+  it(`${path}: allows formatting-equivalent contact phones and resolves the same contact`, async () => {
+    const result = await deliverOne('1 (415) 555-0123');
+    expect(result.status).toBe('sent');
+    expect(h.send.mock.calls[0][0].to).toBe('14155550123');
+    expect(sendTexts()[0]).toEqual([
+      'Sandeep',
+      'CRM Team',
+      '+14155550123',
+      'Sandeep',
+    ]);
+  });
+
+  it.each(['foreign', 'missing', 'empty', 'invalid', 'lookup failure'])(
+    `${path}: blocks %s contact before sending`,
+    async (failure) => {
+      // Build first to isolate send-time validation from contact creation.
+      const plan = await createBroadcast(db, id(1), id(9), {
+        templateName: 'news',
+        recipients: [{ to: '+14155550123' }],
+      });
+      if (failure === 'foreign') tables.contacts[0].account_id = id(99);
+      if (failure === 'missing') tables.contacts.shift();
+      if (failure === 'empty') tables.contacts[0].phone = null;
+      if (failure === 'invalid') tables.contacts[0].phone = '123';
+      if (failure === 'lookup failure') {
+        const original = db.from.bind(db);
+        vi.spyOn(db, 'from').mockImplementation((table: string) => {
+          if (table === 'contacts') throw new Error('private database error');
+          return original(table);
+        });
+      }
+      try {
+        let result;
+        if (path === 'worker') {
+          await deliverBroadcast(db, plan);
+          result = tables.broadcast_recipients[0];
+        } else {
+          const response = await sendBatch(
+            request({
+              recipients: [{ contact_id: id(4), phone: '+14155550123' }],
+            })
+          );
+          result = (await response.json()).results[0];
+        }
+        expect(result.status).toBe('failed');
+        expect(JSON.stringify(result)).not.toContain('private database error');
+        expect(h.send).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    }
+  );
+
+  it(`${path}: blocks tampered destination without resolving personalized values`, async () => {
+    const result = await deliverOne('+14155550124');
+    expect(result.status).toBe('failed');
+    expect(h.send).not.toHaveBeenCalled();
+    expect(reads).not.toContain('accounts');
+  });
+
+  it(`${path}: blocks phone edits between recipient planning and delivery`, async () => {
+    const plan = await createBroadcast(db, id(1), id(9), {
+      templateName: 'news',
+      recipients: [{ to: '+14155550123' }],
+    });
+    tables.contacts[0].phone = '+14155550999';
+    if (path === 'worker') await deliverBroadcast(db, plan);
+    else
+      await sendBatch(
+        request({ recipients: [{ contact_id: id(4), phone: '+14155550123' }] })
+      );
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it(`${path}: preserves matching legacy frozen params but blocks a conflicting contact destination`, async () => {
+    tables.message_templates[0].variable_configuration_status = 'needs_mapping';
+    expect((await deliverOne()).status).toBe('sent');
+    expect(h.send.mock.calls[0][0]).toMatchObject({
+      to: '14155550123',
+      params: ['Frozen'],
+    });
+    expect(h.send.mock.calls[0][0].templatePayload).toBeUndefined();
+    h.send.mockClear();
+    expect((await deliverOne('+14155550124')).status).toBe('failed');
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it(`${path}: does not try alternate phone numbers for contact-linked sends`, async () => {
+    h.send.mockRejectedValue(new Error('131030 not in allowed list'));
+    expect((await deliverOne()).status).toBe('failed');
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.send.mock.calls[0][0].to).toBe('14155550123');
+  });
+}
+
+it.each(['configured', 'needs_mapping'])(
+  'rejects a fuzzy phone match before persisting %s recipient values',
+  async (status) => {
+    tables.message_templates[0].variable_configuration_status = status;
+    h.contact.mockResolvedValue({ id: id(4) });
+    await expect(
+      createBroadcast(db, id(1), id(9), {
+        templateName: 'news',
+        recipients: [{ to: '+44155550123', params: ['Other contact'] }],
+      })
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    expect(tables.broadcast_recipients).toEqual([]);
+    expect(h.send).not.toHaveBeenCalled();
+  }
+);
+
+it('persists two semantic recipients in their own normal connection-scoped Inbox conversations', async () => {
+  const plan = await createBroadcast(db, id(1), id(9), {
+    templateName: 'news',
+    recipients: [{ to: '+14155550123' }, { to: '+14155550124' }],
+  });
+  await deliverBroadcast(db, plan);
+  expect(tables.conversations).toHaveLength(2);
+  for (const [index, contactId] of [id(4), id(5)].entries()) {
+    const conversation = tables.conversations.find(
+      (row) => row.contact_id === contactId
+    )!;
+    expect(conversation).toMatchObject({
+      account_id: id(1),
+      whatsapp_config_id: id(2),
+    });
+    const { data } = await db
+      .from('messages')
+      .select('*')
+      .eq('conversation_id', conversation.id);
+    expect(data).toHaveLength(1);
+    expect(data![0]).toMatchObject({
+      sender_type: 'agent',
+      content_type: 'template',
+      template_name: 'news',
+      message_id: `wamid-${index + 1}`,
+      status: 'sent',
+    });
+    expect(data![0].content_text).toContain(
+      index === 0 ? 'Hi Sandeep' : 'Hi Rahul'
+    );
+    expect(data![0].content_text).not.toMatch(/\{\{/);
+    expect(conversation.last_message_text).toBe(data![0].content_text);
+    expect(conversation.last_message_at).toBeTruthy();
+  }
+  await deliverBroadcast(db, plan);
+  expect(h.send).toHaveBeenCalledTimes(2);
+  expect(tables.messages).toHaveLength(2);
+  expect(tables.broadcast_recipients.map((row) => row.status)).toEqual([
+    'sent',
+    'sent',
+  ]);
+});
+
+it('dashboard persists accepted sends and does not resend an accepted recipient on reprocessing', async () => {
+  await createBroadcast(db, id(1), id(9), {
+    templateName: 'news',
+    recipients: [{ to: '+14155550123' }],
+  });
+  const body = {
+    broadcast_id: id(7),
+    recipients: [
+      { recipient_id: id(20), contact_id: id(4), phone: '+14155550123' },
+    ],
+  };
+  expect((await (await sendBatch(request(body))).json()).sent).toBe(1);
+  expect(tables.messages).toHaveLength(1);
+  expect(tables.messages[0].content_text).toContain('Hi Sandeep');
+  await sendBatch(request(body));
+  expect(h.send).toHaveBeenCalledTimes(1);
+  expect(tables.messages).toHaveLength(1);
+});
+
+it.each(['dashboard', 'worker'])(
+  '%s: local persistence failure preserves acceptance and blocks a retry send',
+  async (path) => {
+    const plan = await createBroadcast(db, id(1), id(9), {
+      templateName: 'news',
+      recipients: [{ to: '+14155550123' }],
+    });
+    const body = {
+      broadcast_id: id(7),
+      recipients: [
+        { recipient_id: id(20), contact_id: id(4), phone: '+14155550123' },
+      ],
+    };
+    failMessagePersistence = true;
+    if (path === 'worker') await deliverBroadcast(db, plan);
+    else {
+      const result = await (await sendBatch(request(body))).json();
+      expect(result).toMatchObject({
+        sent: 1,
+        failed: 0,
+        results: [
+          {
+            status: 'sent',
+            whatsapp_message_id: 'wamid-1',
+            error: 'Sent to WhatsApp, but could not save to Inbox.',
+          },
+        ],
+      });
+    }
+    expect(tables.broadcast_recipients[0]).toMatchObject({
+      status: 'sent',
+      whatsapp_message_id: 'wamid-1',
+    });
+    // Even an old browser incorrectly stamping failed must not authorize a resend.
+    tables.broadcast_recipients[0].status = 'failed';
+    failMessagePersistence = false;
+    if (path === 'worker') await deliverBroadcast(db, plan);
+    else await sendBatch(request(body));
+    expect(h.send).toHaveBeenCalledTimes(1);
+  }
+);
+
+it('dashboard cannot attach an accepted message to another account/broadcast recipient', async () => {
+  await createBroadcast(db, id(1), id(9), {
+    templateName: 'news',
+    recipients: [{ to: '+14155550123' }],
+  });
+  const recipients = [
+    { recipient_id: id(20), contact_id: id(5), phone: '+14155550124' },
+  ];
+  expect(
+    (
+      await (
+        await sendBatch(request({ broadcast_id: id(7), recipients }))
+      ).json()
+    ).failed
+  ).toBe(1);
+  tables.broadcasts[0].account_id = id(99);
+  expect(
+    (await sendBatch(request({ broadcast_id: id(7), recipients }))).status
+  ).toBe(404);
+  expect(h.send).not.toHaveBeenCalled();
+  expect(tables.messages ?? []).toEqual([]);
+});
+
+it('reuses the existing matching conversation and provider-id uniqueness without touching another connection', async () => {
+  tables.conversations = [
+    {
+      id: id(90),
+      account_id: id(1),
+      contact_id: id(4),
+      whatsapp_config_id: id(99),
+    },
+    {
+      id: id(91),
+      account_id: id(99),
+      contact_id: id(4),
+      whatsapp_config_id: id(2),
+    },
+    {
+      id: id(92),
+      account_id: id(1),
+      contact_id: id(4),
+      whatsapp_config_id: id(2),
+    },
+  ];
+  const input = {
+    accountId: id(1),
+    connectionId: id(2),
+    contactId: id(4),
+    messageId: 'wamid-existing',
+    templateName: 'news',
+    contentText: 'Hi Sandeep',
+  };
+  await persistBroadcastMessage(db, input);
+  await persistBroadcastMessage(db, input);
+  expect(tables.conversations).toHaveLength(3);
+  expect(tables.messages).toHaveLength(1);
+  expect(tables.messages[0].conversation_id).toBe(id(92));
+  expect(tables.conversations[0].last_message_text).toBeUndefined();
+  expect(tables.conversations[1].last_message_text).toBeUndefined();
+  expect(h.send).not.toHaveBeenCalled();
+});
+
+it('legacy frozen body values are rendered into the normal Inbox message', async () => {
+  Object.assign(tables.message_templates[0], {
+    variable_configuration_status: 'needs_mapping',
+    body_text: 'Hi {{1}}, your update is ready.',
+  });
+  await sendBatch(
+    request({
+      recipients: [
+        { contact_id: id(4), phone: '+14155550123', params: ['Sandeep'] },
+      ],
+    })
+  );
+  expect(tables.messages).toHaveLength(1);
+  expect(tables.messages[0].content_text).toBe(
+    'Hi Sandeep, your update is ready.'
+  );
+});
+
+it('sends a synchronized static Meta import through dashboard and worker preparation with no mapping', async () => {
+  const template = author('Thank you for contacting our team.');
+  tables.message_templates = [
+    { ...template, ...importedMetadata(template) } as unknown as Row,
+  ];
+  const response = await sendBatch(
+    request({ recipients: [{ contact_id: id(4), phone: '+14155550123' }] })
+  );
+  expect(await response.json()).toMatchObject({ sent: 1, failed: 0 });
+  const plan = await createBroadcast(db, id(1), id(9), {
+    templateName: 'news',
+    recipients: [{ to: '+14155550124' }],
+  });
+  await deliverBroadcast(db, plan);
+  expect(h.send).toHaveBeenCalledTimes(2);
+  expect(
+    h.send.mock.calls.map(([args]) => args.templatePayload.components)
+  ).toEqual([undefined, undefined]);
+  expect(tables.messages.map((row) => row.content_text)).toEqual([
+    'Thank you for contacting our team.',
+    'Thank you for contacting our team.',
+  ]);
+  expect(h.adapter).not.toHaveBeenCalled();
+});
+
+async function oneRecipientPlan() {
+  return createBroadcast(db, id(1), id(9), {
+    templateName: 'news',
+    recipients: [{ to: '+14155550123' }],
+  });
+}
+const durableBatch = () =>
+  request({
+    broadcast_id: id(7),
+    recipients: [
+      { recipient_id: id(20), contact_id: id(4), phone: '+14155550123' },
+    ],
+  });
+it.each(['worker', 'dashboard'])(
+  '%s atomically claims a recipient before the external boundary',
+  async (path) => {
+    const plan = await oneRecipientPlan();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.send.mockImplementation(async () => {
+      await gate;
+      return { messageId: 'wamid-concurrent' };
+    });
+    const first =
+      path === 'worker'
+        ? deliverBroadcast(db, plan)
+        : sendBatch(durableBatch());
+    await vi.waitFor(() => expect(h.send).toHaveBeenCalledOnce());
+    if (path === 'worker') await deliverBroadcast(db, plan);
+    else await sendBatch(durableBatch());
+    expect(h.send).toHaveBeenCalledOnce();
+    release();
+    await first;
+    expect(tables.broadcast_recipients[0]).toMatchObject({
+      status: 'sent',
+      whatsapp_message_id: 'wamid-concurrent',
+    });
+    expect(tables.messages).toHaveLength(1);
+  }
+);
+it.each(['worker', 'dashboard'])(
+  '%s never reclaims an unconfirmed send after a timeout or restart',
+  async (path) => {
+    const plan = await oneRecipientPlan();
+    h.send.mockRejectedValue(
+      new Error('transport timeout with private content')
+    );
+    if (path === 'worker') await deliverBroadcast(db, plan);
+    else await sendBatch(durableBatch());
+    expect(tables.broadcast_recipients[0]).toMatchObject({
+      status: 'failed',
+      error_message: BROADCAST_DELIVERY_UNCONFIRMED,
+    });
+    h.send.mockResolvedValue({ messageId: 'must-not-send' });
+    if (path === 'worker') await deliverBroadcast(db, plan);
+    else await sendBatch(durableBatch());
+    expect(h.send).toHaveBeenCalledOnce();
+  }
+);
+it('allows intentional retry after a definite typed Meta rejection', async () => {
+  const plan = await oneRecipientPlan();
+  h.send.mockRejectedValueOnce(
+    new MetaApiError('PRIVATE REJECTED CONTENT', { code: 100, httpStatus: 400 })
+  );
+  await deliverBroadcast(db, plan);
+  expect(tables.broadcast_recipients[0].error_message).not.toBe(
+    BROADCAST_DELIVERY_UNCONFIRMED
+  );
+  h.send.mockResolvedValue({ messageId: 'wamid-retry' });
+  await deliverBroadcast(db, plan);
+  expect(h.send).toHaveBeenCalledTimes(2);
+  expect(tables.broadcast_recipients[0].status).toBe('sent');
+});
+it('does not cross Meta when the durable recipient claim fails', async () => {
+  const plan = await oneRecipientPlan();
+  failClaim = true;
+  await deliverBroadcast(db, plan);
+  expect(h.send).not.toHaveBeenCalled();
+});
+it('keeps the durable unconfirmed guard if even the post-Meta acceptance write fails', async () => {
+  const plan = await oneRecipientPlan();
+  failAcceptance = true;
+  await deliverBroadcast(db, plan);
+  failAcceptance = false;
+  await deliverBroadcast(db, plan);
+  expect(h.send).toHaveBeenCalledOnce();
+  expect(tables.broadcast_recipients[0].error_message).toBe(
+    BROADCAST_DELIVERY_UNCONFIRMED
+  );
+});
+it.each(['sent', 'delivered', 'read', 'replied'])(
+  'never resends a terminal %s recipient even without a wamid',
+  async (status) => {
+    const plan = await oneRecipientPlan();
+    tables.broadcast_recipients[0].status = status;
+    await deliverBroadcast(db, plan);
+    expect(h.send).not.toHaveBeenCalled();
+    expect(tables.broadcast_recipients[0].status).toBe(status);
+  }
+);

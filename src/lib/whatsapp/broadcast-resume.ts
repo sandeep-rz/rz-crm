@@ -9,7 +9,7 @@
 // "reprocess pending" and "reprocess failed".
 //
 // It deliberately reuses `deliverBroadcast` rather than growing a
-// second fan-out loop: same phone-variant retry, same per-recipient
+// second fan-out loop: same recipient guard, same per-recipient
 // stamping, same trigger-owned counts.
 //
 // What it does NOT do is move the *initial* send server-side. The
@@ -22,6 +22,7 @@ import {
   BroadcastError,
   type BroadcastPlan,
 } from '@/lib/whatsapp/broadcast-core';
+import { BROADCAST_DELIVERY_UNCONFIRMED } from './broadcast-delivery';
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
@@ -89,7 +90,7 @@ export async function claimBroadcastDelivery(
     .select('id');
 
   if (error) {
-    console.error('[broadcast-resume] claim failed:', error.message);
+    console.error('[broadcast-resume] claim failed.', { code: error.code });
     return false;
   }
   return Array.isArray(data) && data.length > 0;
@@ -105,7 +106,7 @@ export async function releaseBroadcastDelivery(
     .update({ delivery_locked_at: null })
     .eq('id', broadcastId);
   if (error) {
-    console.error('[broadcast-resume] release failed:', error.message);
+    console.error('[broadcast-resume] release failed.', { code: error.code });
   }
 }
 
@@ -171,15 +172,18 @@ export async function planBroadcastResume(
     .select('id, contact_id, template_params, contact:contacts(phone)')
     .eq('broadcast_id', broadcastId)
     .in('status', statuses)
+    .is('whatsapp_message_id', null)
+    .or(
+      `error_message.is.null,error_message.neq.${BROADCAST_DELIVERY_UNCONFIRMED}`
+    )
     // Oldest first, so repeated capped passes chew through the backlog
     // in a stable order instead of re-picking the same slice.
     .order('created_at', { ascending: true });
 
   if (recError) {
-    console.error(
-      '[broadcast-resume] recipient load failed:',
-      recError.message
-    );
+    console.error('[broadcast-resume] recipient load failed.', {
+      code: recError.code,
+    });
     throw new BroadcastError('internal', 'Failed to load recipients', 500);
   }
 
@@ -202,7 +206,13 @@ export async function planBroadcastResume(
         status: 'failed',
         error_message: 'No valid phone number on contact',
       })
-      .in('id', unsendable);
+      .in('id', unsendable)
+      .eq('broadcast_id', broadcastId)
+      .in('status', statuses)
+      .is('whatsapp_message_id', null)
+      .or(
+        `error_message.is.null,error_message.neq.${BROADCAST_DELIVERY_UNCONFIRMED}`
+      );
   }
 
   const slice = sendable.slice(0, RESUME_MAX_PER_REQUEST);

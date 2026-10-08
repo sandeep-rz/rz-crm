@@ -168,9 +168,7 @@ async function sendViaMeta(
         'template_recipient_unaddressable',
         false
       );
-    throw new Error(
-      `contact has no usable WhatsApp address (phone: ${contact.phone || 'none'})`
-    );
+    throw new Error('contact has no usable WhatsApp address');
   }
   const sanitized = sendTarget.target;
 
@@ -215,11 +213,8 @@ async function sendViaMeta(
         console.error('Meta template send failed', {
           error: {
             name: metaError.name,
-            message: metaError.message,
             code: metaError.code,
             subcode: metaError.subcode,
-            details: metaError.details,
-            userMessage: metaError.userMessage,
             fbtraceId: metaError.fbtraceId,
             httpStatus: metaError.httpStatus,
           },
@@ -251,10 +246,12 @@ async function sendViaMeta(
     return r.messageId;
   };
 
-  // Same phone-variant retry as /api/whatsapp/send — Meta sandbox and
-  // numbers registered with/without a trunk 0 both require this to
-  // reliably land a message.
-  const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized];
+  // Semantic templates use the validated contact destination. Historical
+  // text sends retain their existing phone-variant behavior.
+  const variants =
+    sendTarget.isPhone && input.kind !== 'template'
+      ? phoneVariants(sanitized)
+      : [sanitized];
   let workingPhone = sanitized;
   let waMessageId = '';
   let lastError: unknown = null;
@@ -292,12 +289,13 @@ async function sendViaMeta(
       ? input.text
       : renderTemplateBody(
           input.preparedTemplate.template.body_text,
-          input.preparedTemplate.mapping
-            .filter((m) => m.component === 'BODY')
-            .sort((a, b) => a.position - b.position)
-            .map(
-              (m) => input.preparedTemplate!.resolvedVariables[m.variable_key]
-            )
+          (
+            input.templatePayload.components?.find(
+              (component) => component.type === 'body'
+            )?.parameters ?? []
+          ).map((parameter) =>
+            parameter.type === 'text' ? parameter.text : ''
+          )
         );
   const template_name = input.kind === 'template' ? input.templateName : null;
 
@@ -321,7 +319,7 @@ async function sendViaMeta(
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`);
   }
 
-  await db
+  const { error: previewError } = await db
     .from('conversations')
     .update({
       last_message_text:
@@ -333,6 +331,11 @@ async function sendViaMeta(
     })
     .eq('id', input.conversationId)
     .eq('account_id', input.accountId);
+  if (previewError && input.kind === 'template')
+    throw new AutomationTemplateSendError(
+      'meta_sent_conversation_persistence_failed',
+      false
+    );
 
   return { whatsapp_message_id: waMessageId };
 }

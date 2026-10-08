@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageTemplate } from '@/types';
 import type { TemplatePayload } from '@/lib/whatsapp/template-validators';
-import { compileSemanticTemplate } from '@/lib/whatsapp/semantic-template';
+import {
+  compileSemanticTemplate,
+  importedMetadata,
+} from '@/lib/whatsapp/semantic-template';
 import { resolveRuntimeVariables } from '@/lib/message-variables/runtime-resolver';
 import { prepareTemplateMessage } from './prepare-template-message';
 import {
@@ -139,6 +142,15 @@ describe('central preparation', () => {
     const prepared = await run();
     expect(prepared.resolvedVariables).toEqual({});
     expect(resolver).toHaveBeenCalledTimes(1);
+    expect(resolver.mock.calls[0][0].variableKeys).toEqual([]);
+    expect(buildMetaTemplateComponents(prepared)).toEqual([]);
+  });
+  it('prepares a synchronized static Meta import with an empty mapping', async () => {
+    author('Your booking is confirmed.');
+    Object.assign(template, importedMetadata(template));
+    const prepared = await run();
+    expect(prepared.mapping).toEqual([]);
+    expect(prepared.resolvedVariables).toEqual({});
     expect(resolver.mock.calls[0][0].variableKeys).toEqual([]);
     expect(buildMetaTemplateComponents(prepared)).toEqual([]);
   });

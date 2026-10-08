@@ -722,6 +722,17 @@ export function MessageThread({
 
         const payload = await res.json().catch(() => ({}));
 
+        if (
+          payload.delivery_state === 'accepted' &&
+          payload.whatsapp_message_id
+        ) {
+          toast.error(payload.error);
+          onUpdateMessage(tempId, {
+            status: 'sent',
+            message_id: payload.whatsapp_message_id,
+          });
+          return;
+        }
         if (!res.ok) {
           const reason = payload?.error || `HTTP ${res.status}`;
           console.error('Failed to send template:', reason);

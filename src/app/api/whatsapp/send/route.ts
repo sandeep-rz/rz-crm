@@ -233,11 +233,17 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             code: err.code,
+            ...(err.acceptedMessageId
+              ? {
+                  delivery_state: 'accepted',
+                  whatsapp_message_id: err.acceptedMessageId,
+                }
+              : {}),
             error:
               message_type === 'template' && err.code === 'meta_error'
                 ? 'WhatsApp could not send this template.'
                 : message_type === 'template' && err.code === 'db_error'
-                  ? 'WhatsApp accepted this template, but it could not be saved. Check the conversation before sending again.'
+                  ? 'This template could not be prepared. No message was sent.'
                   : err.message,
           },
           { status: err.status }

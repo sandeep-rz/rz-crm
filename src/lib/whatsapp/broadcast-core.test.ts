@@ -61,6 +61,17 @@ function makeDb(rpcResult: { data: unknown; error: unknown }) {
   };
   const database = {
     from(table: string) {
+      if (table === 'contacts') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: async () => ({
+            data: { id: 'c1', account_id: 'acc', phone: '+14155550123' },
+            error: null,
+          }),
+        };
+        return chain;
+      }
       if (table === 'whatsapp_config') {
         const chain: Record<string, unknown> = {};
         chain.select = () => chain;

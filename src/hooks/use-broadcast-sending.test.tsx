@@ -92,6 +92,16 @@ beforeEach(async () => {
     if (url.endsWith('/resolve-variables'))
       return Response.json({ success: true });
     const body = JSON.parse(init.body as string);
+    for (const recipient of body.recipients) {
+      const row = tables.broadcast_recipients.find(
+        (v) => v.id === recipient.recipient_id
+      )!;
+      Object.assign(row, {
+        status: recipient.contact_id === 'b' ? 'failed' : 'sent',
+        whatsapp_message_id: recipient.contact_id === 'b' ? null : 'wamid',
+      });
+    }
+    tables.broadcasts[0].status = 'sent';
     return Response.json({
       results: body.recipients.map((r: Row) => ({
         phone: r.phone,
@@ -163,4 +173,68 @@ it('persists semantic identity and sends recipient contacts rather than pre-reso
   expect(tables.broadcast_recipients[0].whatsapp_message_id).toBe('wamid');
   expect(reads).not.toContain('contact_custom_values');
   expect(reads.some((v) => v.startsWith('pms_'))).toBe(false);
+});
+
+it('does not overwrite accepted or unconfirmed recipients after a lost server response', async () => {
+  h.fetch.mockImplementation(async (url: string) => {
+    if (url.endsWith('/resolve-variables'))
+      return Response.json({ success: true });
+    Object.assign(tables.broadcast_recipients[0], {
+      status: 'sent',
+      whatsapp_message_id: 'wamid.accepted',
+    });
+    Object.assign(tables.broadcast_recipients[1], {
+      status: 'failed',
+      error_message:
+        'WhatsApp delivery is unconfirmed. Retry is blocked to prevent duplicates.',
+    });
+    throw new Error('response lost');
+  });
+  await act(async () => {
+    await hook.createAndSendBroadcast({
+      name: 'News',
+      template: {
+        id: 'template',
+        name: 'news',
+        variable_configuration_status: 'configured',
+      } as MessageTemplate,
+      audience: { type: 'all' },
+      variables: [],
+      whatsappConfigId: 'config',
+    });
+  });
+  expect(tables.broadcast_recipients[0]).toMatchObject({
+    status: 'sent',
+    whatsapp_message_id: 'wamid.accepted',
+  });
+  expect(tables.broadcast_recipients[1]).toMatchObject({
+    status: 'failed',
+    error_message:
+      'WhatsApp delivery is unconfirmed. Retry is blocked to prevent duplicates.',
+  });
+  expect(tables.broadcast_recipients[2].status).toBe('pending');
+  expect(h.fetch).toHaveBeenCalledTimes(2);
+});
+
+it('passes missing phones to server validation rather than silently stranding pending recipients', async () => {
+  tables.contacts[0].phone = null;
+  await act(async () => {
+    await hook.createAndSendBroadcast({
+      name: 'News',
+      template: {
+        id: 'template',
+        name: 'news',
+        variable_configuration_status: 'configured',
+      } as MessageTemplate,
+      audience: { type: 'all' },
+      variables: [],
+      whatsappConfigId: 'config',
+    });
+  });
+  const request = JSON.parse(h.fetch.mock.calls[1][1].body);
+  expect(request.recipients[0]).toMatchObject({
+    contact_id: 'a',
+    phone: '',
+    recipient_id: 'recipient-0',
+  });
 });

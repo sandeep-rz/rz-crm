@@ -292,10 +292,13 @@ export function mapImportedTemplate(
 }
 
 export function hasTemplateTokens(
-  template: Pick<MessageTemplate, 'header_content' | 'body_text' | 'buttons'>
+  template: Pick<
+    MessageTemplate,
+    'header_type' | 'header_content' | 'body_text' | 'buttons'
+  >
 ) {
   return [
-    template.header_content,
+    template.header_type === 'text' ? template.header_content : null,
     template.body_text,
     ...(template.buttons ?? [])
       .filter((b) => b.type === 'URL')
@@ -303,13 +306,29 @@ export function hasTemplateTokens(
   ].some((text) => text && /\{\{|\}\}/.test(text));
 }
 export function importedMetadata(
-  template: Pick<MessageTemplate, 'header_content' | 'body_text' | 'buttons'>
+  template: Pick<
+    MessageTemplate,
+    'header_type' | 'header_content' | 'body_text' | 'buttons'
+  >
 ): SemanticTemplateMetadata {
+  const requiresMapping = hasTemplateTokens(template);
   return {
     template_origin: 'meta',
-    semantic_content: null,
+    semantic_content: requiresMapping
+      ? null
+      : {
+          body_text: template.body_text,
+          ...(template.header_type === 'text'
+            ? { header_content: template.header_content ?? '' }
+            : {}),
+          button_urls: Object.fromEntries(
+            (template.buttons ?? []).flatMap((button, index) =>
+              button.type === 'URL' ? [[String(index), button.url]] : []
+            )
+          ),
+        },
     semantic_variable_mapping: [],
-    variable_configuration_status: hasTemplateTokens(template)
+    variable_configuration_status: requiresMapping
       ? 'needs_mapping'
       : 'configured',
   };
@@ -341,6 +360,9 @@ export function reconcileTemplateSemantics(
       variable_configuration_status: 'configured',
     };
   }
+  // Normalize static imports on every sync, including previously configured
+  // rows whose semantic content was null. There is nothing to map or preserve.
+  if (!hasTemplateTokens(incoming)) return importedMetadata(incoming);
   if (unchanged && existing?.variable_configuration_status === 'configured')
     return {
       template_origin: 'meta',

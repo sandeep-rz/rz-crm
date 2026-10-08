@@ -28,6 +28,7 @@ import {
   sendInteractiveButtons,
   sendInteractiveList,
   type MediaKind,
+  MetaApiError,
 } from '@/lib/whatsapp/meta-api';
 import {
   validateInteractivePayload,
@@ -68,7 +69,12 @@ export const VALID_MESSAGE_TYPES = [
 export class SendMessageError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(code: string, message: string, status: number) {
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    readonly acceptedMessageId?: string
+  ) {
     super(message);
     this.name = 'SendMessageError';
     this.code = code;
@@ -375,6 +381,15 @@ export async function sendMessageToConversation(
     manualTemplate &&
     templateRow?.variable_configuration_status === 'configured'
   ) {
+    if (
+      contact.account_id !== accountId ||
+      contact.id !== conversation.contact_id
+    )
+      throw new SendMessageError(
+        'not_found',
+        'Conversation contact is unavailable for this workspace.',
+        404
+      );
     const { prepareTemplateMessage } =
       await import('@/lib/message-preparation/prepare-template-message');
     const { buildMetaTemplateMessagePayload } =
@@ -475,9 +490,8 @@ export async function sendMessageToConversation(
   try {
     // Variants only make sense for a phone number — a BSUID is opaque
     // and has exactly one correct form, so it gets a single attempt.
-    const variants = hasValidPhone
-      ? phoneVariants(sanitizedPhone)
-      : [sendTarget];
+    const variants =
+      hasValidPhone && !prepared ? phoneVariants(sanitizedPhone) : [sendTarget];
     let lastError: unknown = null;
 
     for (const variant of variants) {
@@ -492,9 +506,7 @@ export async function sendMessageToConversation(
           throw err;
         }
         lastError = err;
-        console.warn(
-          `[send-message] variant "${variant}" rejected by Meta, trying next…`
-        );
+        console.warn('[send-message] Recipient variant rejected by Meta.');
       }
     }
 
@@ -502,14 +514,24 @@ export async function sendMessageToConversation(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : 'Unknown Meta API error';
-    console.error('[send-message] Meta send failed for all variants:', message);
+    if (
+      prepared &&
+      (!(err instanceof MetaApiError) ||
+        err.httpStatus >= 500 ||
+        err.httpStatus === 408)
+    )
+      throw new SendMessageError(
+        'meta_outcome_unknown',
+        'WhatsApp delivery could not be confirmed. Check the conversation before sending again.',
+        502
+      );
+    console.error('[send-message] Meta send failed.', {
+      code: err instanceof MetaApiError ? err.code : null,
+    });
     throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
   }
 
   if (hasValidPhone && workingPhone !== sanitizedPhone) {
-    console.log(
-      `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
-    );
     await db
       .from('contacts')
       .update({ phone: workingPhone })
@@ -548,31 +570,40 @@ export async function sendMessageToConversation(
             )
         : (contentText ?? null);
 
-  const { data: messageRecord, error: msgError } = await db
-    .from('messages')
-    .insert({
-      conversation_id: conversationId,
-      sender_type: 'agent',
-      content_type: messageType,
-      content_text: persistedText,
-      media_url: mediaUrl || null,
-      template_name: sendTemplateName || null,
-      interactive_payload:
-        messageType === 'interactive' ? interactivePayload : null,
-      message_id: waMessageId,
-      status: 'sent',
-      reply_to_message_id: replyToMessageId || null,
-    })
-    .select()
-    .single();
-
-  if (msgError) {
-    console.error('[send-message] error inserting sent message:', msgError);
-    throw new SendMessageError(
-      'db_error',
-      `Message sent to Meta but failed to save to DB: ${msgError.message}`,
-      500
+  const acceptedPersistenceFailure = () =>
+    new SendMessageError(
+      messageType === 'template'
+        ? 'meta_accepted_persistence_failed'
+        : 'db_error',
+      'WhatsApp accepted this message, but it could not be saved. Check the conversation before sending again.',
+      500,
+      waMessageId
     );
+  let messageRecord: { id: string };
+  try {
+    const { data: savedMessage, error: msgError } = await db
+      .from('messages')
+      .insert({
+        conversation_id: conversationId,
+        sender_type: 'agent',
+        content_type: messageType,
+        content_text: persistedText,
+        media_url: mediaUrl || null,
+        template_name: sendTemplateName || null,
+        interactive_payload:
+          messageType === 'interactive' ? interactivePayload : null,
+        message_id: waMessageId,
+        status: 'sent',
+        reply_to_message_id: replyToMessageId || null,
+      })
+      .select()
+      .single();
+
+    if (msgError || !savedMessage) throw acceptedPersistenceFailure();
+    messageRecord = savedMessage;
+  } catch {
+    console.error('[send-message] Could not save accepted message.');
+    throw acceptedPersistenceFailure();
   }
 
   const lastMessageText =
@@ -580,14 +611,19 @@ export async function sendMessageToConversation(
       ? interactivePayloadPreviewText(interactivePayload!)
       : persistedText || `[${messageType}]`;
 
-  await db
-    .from('conversations')
-    .update({
-      last_message_text: lastMessageText,
-      last_message_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', conversationId);
+  try {
+    const { error: previewError } = await db
+      .from('conversations')
+      .update({
+        last_message_text: lastMessageText,
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', conversationId);
+    if (previewError) throw acceptedPersistenceFailure();
+  } catch {
+    throw acceptedPersistenceFailure();
+  }
 
   // Pause any active Flow run for this contact — the agent stepping in
   // is the strongest "yield, human is here" signal. Best-effort.

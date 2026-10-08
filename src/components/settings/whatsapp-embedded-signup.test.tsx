@@ -3,10 +3,17 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { WhatsAppEmbeddedSignup } from './whatsapp-embedded-signup';
+import { signupDiagnostic } from '@/lib/whatsapp/embedded-signup-diagnostics';
 let root: Root, host: HTMLDivElement;
 const fetcher = vi.fn<typeof fetch>(),
   changed = vi.fn();
-let callback: (response: { authResponse?: { code?: string } }) => void;
+let callback: (
+  response?: {
+    authResponse?: { code?: string };
+    status?: string;
+    error?: { code?: number; message?: string };
+  } | null
+) => void;
 const login = vi.fn<(cb: typeof callback, options: object) => void>((cb) => {
   callback = cb;
 });
@@ -31,6 +38,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   await act(() => root.unmount());
   host.remove();
 });
@@ -121,10 +130,11 @@ it('handles Meta signup errors', async () => {
   expect(fetcher).toHaveBeenCalledOnce();
 });
 it('keeps interactive signup open beyond two minutes and completes normally', async () => {
-  await launch();
   vi.useFakeTimers();
+  await launch();
   await act(() => vi.advanceTimersByTime(5 * 60_000));
-  expect(host.textContent).toContain('Waiting for Facebook');
+  expect(host.textContent).toContain('Check Facebook popup');
+  expect(host.textContent).not.toContain('Waiting for Facebook');
   expect(host.textContent).not.toContain('timed out');
   vi.useRealTimers();
   await event();
@@ -264,13 +274,13 @@ it('disables recovery and discard while another worker holds the attempt lease',
   expect(actions.every((b) => b.disabled)).toBe(true);
 });
 
-it('uses the app dashboard v4 launch selector and retries a silent launch without another session', async () => {
+it('uses Meta’s current standard v4 launch options and retries a silent launch without another session', async () => {
   await launch();
   expect(login.mock.calls[0][1]).toEqual({
     config_id: '1392665409205658',
     response_type: 'code',
     override_default_response_type: true,
-    extras: { version: 'v4', sessionInfoVersion: '3' },
+    extras: { setup: {} },
   });
   const earlier = callback;
   await click('Popup didn’t open?');
@@ -284,4 +294,120 @@ it('uses the app dashboard v4 launch selector and retries a silent launch withou
   await act(() => callback({ authResponse: { code: 'current-code' } }));
   expect(fetcher).toHaveBeenCalledTimes(2);
   expect(host.textContent).toContain('WhatsApp connected');
+});
+
+it('calls FB.login before the actual click handler returns without any intervening request', async () => {
+  await click('Connect WhatsApp');
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(login).not.toHaveBeenCalled();
+  let returned = false;
+  login.mockImplementationOnce((cb) => {
+    expect(returned).toBe(false);
+    expect(fetcher).toHaveBeenCalledOnce();
+    callback = cb;
+  });
+  await act(() => {
+    [...host.querySelectorAll('button')]
+      .find((b) => b.textContent === 'Continue with Facebook')!
+      .click();
+    expect(login).toHaveBeenCalledOnce();
+    returned = true;
+  });
+});
+it('replaces a silent launch spinner without cancelling late completion', async () => {
+  vi.useFakeTimers();
+  await launch();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+  expect(host.textContent).not.toContain('Waiting for Facebook');
+  expect(host.textContent).toContain('Facebook has not confirmed the launch');
+  expect(host.querySelector('.animate-spin')).toBeNull();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+  });
+  await event();
+  await act(() => callback({ authResponse: { code: 'late-secret-code' } }));
+  expect(host.textContent).toContain('WhatsApp connected');
+});
+it('handles synchronous SDK login exceptions without logging error contents', async () => {
+  vi.stubEnv('NODE_ENV', 'development');
+  const log = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  login.mockImplementationOnce(() => {
+    throw new Error('private-oauth-secret');
+  });
+  await launch();
+  expect(host.textContent).toContain('Facebook popup could not open');
+  expect(host.textContent).not.toContain('Waiting for Facebook');
+  expect(JSON.stringify(log.mock.calls)).not.toContain('private-oauth-secret');
+  expect(log.mock.calls.some((c) => c[1] === 'fb_login_exception')).toBe(true);
+});
+it.each([undefined, null, { error: { code: 190, message: 'private-token' } }])(
+  'handles empty or error callbacks without a stuck spinner: %j',
+  async (response) => {
+    await launch();
+    await act(() => callback(response));
+    expect(host.textContent).not.toContain('Waiting for Facebook');
+    expect(host.textContent).not.toContain('private-token');
+    expect(fetcher).toHaveBeenCalledOnce();
+  }
+);
+it('logs only safe development milestones, not SDK payloads, OAuth codes or tokens', async () => {
+  vi.stubEnv('NODE_ENV', 'development');
+  const log = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  await launch();
+  await event();
+  await act(() =>
+    callback({
+      status: 'connected',
+      authResponse: { code: 'private-oauth-code' },
+    })
+  );
+  const entries = log.mock.calls.map((c) => c[1]);
+  expect(entries).toContain('fb_login_invoked');
+  expect(entries).toContain('fb_login_callback');
+  expect(entries).toContain('wa_embedded_signup_event');
+  expect(JSON.stringify(log.mock.calls)).not.toContain('private-oauth-code');
+  expect(JSON.stringify(log.mock.calls)).not.toContain('authResponse');
+});
+it('emits no diagnostic logs in production', () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  const log = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  signupDiagnostic('fb_login_invoked', { hasCode: false });
+  signupDiagnostic('signup_cancelled_or_error', { event: 'CANCEL' });
+  expect(log).not.toHaveBeenCalled();
+});
+it('cancelling clears the launch watchdog and preserves the durable session', async () => {
+  vi.useFakeTimers();
+  await launch();
+  await click('Cancel signup');
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(20_000);
+  });
+  expect(host.textContent).toContain('Signup cancelled');
+  expect(host.textContent).not.toContain('Facebook has not confirmed');
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it('reports enforced CSP directives in development without logging blocked URLs', async () => {
+  vi.stubEnv('NODE_ENV', 'development');
+  const log = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  await act(() =>
+    root.render(
+      <WhatsAppEmbeddedSignup key="diagnostics" onChanged={changed} />
+    )
+  );
+  const violation = Object.assign(new Event('securitypolicyviolation'), {
+    effectiveDirective: 'script-src-elem',
+    disposition: 'enforce',
+    blockedURI: 'https://example.test/oauth?code=private-code',
+  });
+  await act(() => window.dispatchEvent(violation));
+  expect(log).toHaveBeenCalledWith(
+    '[WhatsApp Embedded Signup]',
+    'csp_violation',
+    { directive: 'script-src-elem', enforced: true }
+  );
+  expect(JSON.stringify(log.mock.calls)).not.toContain('private-code');
+  expect(JSON.stringify(log.mock.calls)).not.toContain('blockedURI');
 });

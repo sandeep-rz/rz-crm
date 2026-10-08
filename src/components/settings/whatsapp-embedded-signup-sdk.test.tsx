@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
 import { WhatsAppEmbeddedSignup } from './whatsapp-embedded-signup';
 
-it('recovers from SDK init errors and load timeout, then initializes once through fbAsyncInit', async () => {
+it('rejects init/load failures and never treats Meta’s bootstrap stub onload as ready', async () => {
   (
     globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -54,24 +54,45 @@ it('recovers from SDK init errors and load timeout, then initializes once throug
     await click('Connect WhatsApp');
     const init = vi.fn(),
       login = vi.fn();
-    window.FB = { init, login };
+    const bufferedInit = vi.fn(),
+      bufferedLogin = vi.fn();
+    window.FB = {
+      __buffer: { calls: [], opts: null },
+      init: bufferedInit,
+      login: bufferedLogin,
+    };
     const script = document.querySelector(
       'script[src*="connect.facebook.net"]'
     )!;
+    await act(() => script.dispatchEvent(new Event('load')));
+    expect(bufferedInit).not.toHaveBeenCalled();
+    expect(bufferedLogin).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain('Continue with Facebook');
+    const preparing = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Preparing…'
+    )! as HTMLButtonElement;
+    expect(preparing.disabled).toBe(true);
+    await act(() => preparing.click());
+    expect(fetcher).not.toHaveBeenCalled();
+    // The full SDK replaces window.FB; preparation must capture this object,
+    // never the stale stub whose queue has already been replayed by Meta.
+    window.FB = { init, login };
     await act(async () => {
       window.fbAsyncInit!();
-      script.dispatchEvent(new Event('load'));
     });
     expect(init).toHaveBeenCalledExactlyOnceWith({
       appId: '1444327167651307',
       version: 'v26.0',
       autoLogAppEvents: false,
       xfbml: false,
+      fedCM: false,
     });
     expect(host.textContent).toContain('Continue with Facebook');
     expect(login).not.toHaveBeenCalled();
     await click('Continue with Facebook');
     expect(login).toHaveBeenCalledOnce();
+    expect(bufferedLogin).not.toHaveBeenCalled();
     expect(fetcher).toHaveBeenCalledOnce();
   } finally {
     vi.useRealTimers();

@@ -9,6 +9,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { signupDiagnostic } from '@/lib/whatsapp/embedded-signup-diagnostics';
 import {
   signupEvent,
   embeddedSignupConfig,
@@ -16,13 +17,17 @@ import {
   type SavedSignupAttempt,
 } from '@/lib/whatsapp/embedded-signup-context';
 
+type FacebookResponse = {
+  authResponse?: { code?: string };
+  status?: string;
+  error?: { code?: number };
+};
 type Facebook = {
+  /** Meta's bootstrap object queues calls until the full bundle replaces it. */
+  __buffer?: unknown;
   init: (options: object) => void;
   login: (
-    callback: (response: {
-      authResponse?: { code?: string };
-      status?: string;
-    }) => void,
+    callback: (response?: FacebookResponse | null) => void,
     options: object
   ) => void;
 };
@@ -48,17 +53,26 @@ function loadSdk() {
       settled = true;
       cleanup();
       script.remove();
+      signupDiagnostic('sdk_error');
       reject(error);
     };
     const loaded = () => {
       if (settled) return;
       try {
-        if (!window.FB) throw new Error('Facebook SDK unavailable.');
+        if (!window.FB || window.FB.__buffer)
+          throw new Error('Facebook SDK unavailable.');
         window.FB.init({
           appId: embeddedSignupConfig.appId,
           version: embeddedSignupConfig.sdkVersion,
           autoLogAppEvents: false,
           xfbml: false,
+          // Login for Business configurations are not supported by FedCM.
+          // Explicit false also prevents the SDK's cached app-config default
+          // from switching this integration away from the popup flow.
+          fedCM: false,
+        });
+        signupDiagnostic('fb_init_completed', {
+          sdkVersion: embeddedSignupConfig.sdkVersion,
         });
         settled = true;
         cleanup();
@@ -76,14 +90,20 @@ function loadSdk() {
         fail(new Error('Facebook SDK timed out. Reload the page and retry.')),
       15_000
     );
-    if (window.FB) return loaded();
-    // Meta's generated async loader initializes through this callback. onload
-    // is a fallback for an SDK that was already loaded by the browser cache.
+    if (window.FB && !window.FB.__buffer) return loaded();
+    // Meta's generated async loader initializes through this callback only.
     window.fbAsyncInit = loaded;
+    // A pre-existing bootstrap stub means Meta's full bundle is still loading.
+    // Do not initialize or capture that stub, and do not inject a second SDK.
+    if (window.FB?.__buffer) return;
     script.src = 'https://connect.facebook.net/en_US/sdk.js';
     script.async = true;
     script.onload = () => {
-      if (window.FB) loaded();
+      signupDiagnostic('sdk_script_loaded', {
+        buffered: Boolean(window.FB?.__buffer),
+      });
+      // sdk.js is only a bootstrap loader. Its onload is NOT SDK readiness.
+      // Only fbAsyncInit may initialize and resolve the full SDK here.
     };
     script.onerror = () =>
       fail(
@@ -122,7 +142,7 @@ export function WhatsAppEmbeddedSignup({
   onChanged: () => Promise<unknown>;
 }) {
   const [phase, setPhase] = useState<
-    'idle' | 'preparing' | 'ready' | 'signup' | 'saving'
+    'idle' | 'preparing' | 'ready' | 'signup' | 'unconfirmed' | 'saving'
   >('idle');
   const [message, setMessage] = useState('');
   const prepared = useRef<{ session: string; fb: Facebook } | null>(null);
@@ -130,7 +150,13 @@ export function WhatsAppEmbeddedSignup({
     code?: string;
     context?: SignupContext;
     submitted: boolean;
+    responded: boolean;
   } | null>(null);
+  const launchWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearLaunchWatchdog = () => {
+    if (launchWatchdog.current) clearTimeout(launchWatchdog.current);
+    launchWatchdog.current = null;
+  };
   const [recoverySession, setRecoverySession] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => {
@@ -138,9 +164,33 @@ export function WhatsAppEmbeddedSignup({
     return () => {
       alive.current = false;
       run.current = null;
+      clearLaunchWatchdog();
     };
   }, []);
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return;
+    const violation = (event: SecurityPolicyViolationEvent) => {
+      const directive = event.effectiveDirective;
+      if (
+        directive === 'script-src' ||
+        directive === 'script-src-elem' ||
+        directive === 'connect-src' ||
+        directive === 'frame-src' ||
+        directive === 'default-src' ||
+        directive === 'form-action'
+      )
+        signupDiagnostic('csp_violation', {
+          directive,
+          enforced: event.disposition === 'enforce',
+        });
+      // Never log blockedURI or source URLs: they can contain credentials.
+    };
+    window.addEventListener('securitypolicyviolation', violation);
+    return () =>
+      window.removeEventListener('securitypolicyviolation', violation);
+  }, []);
   const stop = (text: string) => {
+    clearLaunchWatchdog();
     run.current = null;
     prepared.current = null;
     setMessage(text);
@@ -185,13 +235,21 @@ export function WhatsAppEmbeddedSignup({
   };
   useEffect(() => {
     const listener = (event: MessageEvent) => {
-      if (!run.current || run.current.submitted) return;
       const result = signupEvent(event.origin, event.data);
       if (!result) return;
+      signupDiagnostic('wa_embedded_signup_event', { event: result.event });
+      if (!run.current || run.current.submitted) return;
+      clearLaunchWatchdog();
+      run.current.responded = true;
       if (result.event === 'FINISH') {
+        setPhase('unconfirmed');
+        setMessage(
+          'WhatsApp details received. Finish Facebook authorization in the popup. If the popup has already closed, retry or cancel signup.'
+        );
         run.current.context = result.context;
         void complete();
-      } else
+      } else {
+        signupDiagnostic('signup_cancelled_or_error', { event: result.event });
         stop(
           result.event === 'CANCEL'
             ? 'Signup cancelled. You can try again.'
@@ -199,6 +257,7 @@ export function WhatsAppEmbeddedSignup({
               ? 'Signup did not return both a WhatsApp account and number. Start again.'
               : 'Meta reported a signup error. Start again.'
         );
+      }
     };
     window.addEventListener('message', listener);
     return () => window.removeEventListener('message', listener);
@@ -214,6 +273,12 @@ export function WhatsAppEmbeddedSignup({
       });
       if (alive.current) {
         prepared.current = { fb, session: data.session_id };
+        signupDiagnostic('signup_ready', {
+          sdkVersion: embeddedSignupConfig.sdkVersion,
+          appId: embeddedSignupConfig.appId,
+          configId: embeddedSignupConfig.configId,
+          buffered: Boolean(fb.__buffer),
+        });
         setPhase('ready');
       }
     } catch (error) {
@@ -279,38 +344,101 @@ export function WhatsAppEmbeddedSignup({
       a.connection_id === reconnectId ||
       a.reconnect_id === reconnectId
   );
-  function launch() {
-    if (!prepared.current) return;
+  function launch(event?: { isTrusted?: boolean }) {
+    if (!prepared.current || prepared.current.fb.__buffer) {
+      signupDiagnostic('sdk_not_ready');
+      stop('Facebook SDK is not ready. Reload the page and retry.');
+      return;
+    }
+    clearLaunchWatchdog();
     setPhase('signup');
     setMessage(
       'Complete signup in the Facebook popup. You can take your time or cancel here. If it does not open, allow popups and retry.'
     );
-    const current = { submitted: false };
+    const current = { submitted: false, responded: false };
     run.current = current;
     try {
       // Must run synchronously from the click to retain browser popup permission.
+      signupDiagnostic('fb_login_invoked', {
+        sdkVersion: embeddedSignupConfig.sdkVersion,
+        appId: embeddedSignupConfig.appId,
+        configId: embeddedSignupConfig.configId,
+        userActivation: navigator.userActivation?.isActive ?? null,
+        trustedClick: event?.isTrusted ?? false,
+        secureContext: window.isSecureContext,
+        topLevel: window.top === window.self,
+      });
       prepared.current.fb.login(
         (response) => {
+          const status = response?.status;
+          const errorCode = response?.error?.code;
+          signupDiagnostic('fb_login_callback', {
+            hasCode: Boolean(response?.authResponse?.code),
+            ...(status === 'connected' ||
+            status === 'not_authorized' ||
+            status === 'unknown'
+              ? { status }
+              : {}),
+            ...(typeof errorCode === 'number' && Number.isFinite(errorCode)
+              ? { errorCode }
+              : {}),
+          });
           if (run.current !== current || current.submitted) return;
-          if (!response.authResponse?.code) {
+          clearLaunchWatchdog();
+          current.responded = true;
+          if (response?.error) {
+            signupDiagnostic('fb_login_error');
+            stop(
+              'Facebook could not start signup. Check the app’s Login for Business settings and allowed domain, then retry.'
+            );
+            return;
+          }
+          if (!response?.authResponse?.code) {
+            signupDiagnostic('fb_login_cancelled');
             stop(
               'Facebook authorization was cancelled or incomplete. Start again.'
             );
             return;
           }
           run.current.code = response.authResponse.code;
+          setPhase('unconfirmed');
+          setMessage(
+            'Facebook authorization received. Finish selecting your WhatsApp account and number in the popup. If the popup has already closed, retry or cancel signup.'
+          );
           void complete();
         },
         {
           config_id: embeddedSignupConfig.configId,
           response_type: 'code',
           override_default_response_type: true,
-          // Match the launch selector generated for this exact Meta v4 config.
-          extras: { version: 'v4', sessionInfoVersion: '3' },
+          // Standard Cloud API v4 launch from Meta's current implementation page.
+          // Products and version are selected by the Login for Business config.
+          extras: { setup: {} },
         }
       );
+      // This only changes the silent-launch UI. It does not cancel an open,
+      // long-running interaction, discard the session, or reject late callbacks.
+      if (run.current === current && !current.responded && !current.submitted) {
+        launchWatchdog.current = setTimeout(() => {
+          if (
+            !alive.current ||
+            run.current !== current ||
+            current.responded ||
+            current.submitted
+          )
+            return;
+          signupDiagnostic('popup_launch_unconfirmed');
+          setPhase('unconfirmed');
+          setMessage(
+            'Facebook has not confirmed the launch. If its popup is open, continue there. Otherwise use Popup didn’t open? to retry, or cancel. Check browser blockers and Meta’s allowed SDK domains if it persists.'
+          );
+        }, 10_000);
+      }
     } catch {
-      stop('Facebook popup could not open. Allow popups and retry.');
+      signupDiagnostic('fb_login_exception');
+      stop(
+        'Facebook popup could not open. Check browser blockers and Meta’s Login for Business settings, then retry.'
+      );
     }
   }
   return (
@@ -357,7 +485,9 @@ export function WhatsAppEmbeddedSignup({
         >
           <Button
             className="h-12 gap-3 rounded-xl bg-emerald-600 px-6 text-sm font-semibold text-white shadow-md shadow-emerald-600/15 transition-all hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-600/20 motion-safe:hover:-translate-y-0.5 dark:bg-emerald-600 dark:hover:bg-emerald-500"
-            disabled={['preparing', 'signup', 'saving'].includes(phase)}
+            disabled={['preparing', 'signup', 'unconfirmed', 'saving'].includes(
+              phase
+            )}
             onClick={phase === 'ready' ? launch : () => void prepare()}
           >
             {['preparing', 'signup', 'saving'].includes(phase) ? (
@@ -365,35 +495,42 @@ export function WhatsAppEmbeddedSignup({
             ) : (
               <MessageCircle aria-hidden="true" className="size-5" />
             )}
-            {phase === 'ready'
-              ? 'Continue with Facebook'
-              : phase === 'preparing'
-                ? 'Preparing…'
-                : phase === 'signup'
-                  ? 'Waiting for Facebook…'
-                  : phase === 'saving'
-                    ? 'Connecting…'
-                    : reconnectId
-                      ? 'Reconnect WhatsApp'
-                      : 'Connect WhatsApp'}
-            {!['preparing', 'signup', 'saving'].includes(phase) && (
-              <ArrowRight aria-hidden="true" className="size-4" />
-            )}
+            {phase === 'unconfirmed'
+              ? 'Check Facebook popup'
+              : phase === 'ready'
+                ? 'Continue with Facebook'
+                : phase === 'preparing'
+                  ? 'Preparing…'
+                  : phase === 'signup'
+                    ? 'Waiting for Facebook…'
+                    : phase === 'saving'
+                      ? 'Connecting…'
+                      : reconnectId
+                        ? 'Reconnect WhatsApp'
+                        : 'Connect WhatsApp'}
+            {!['preparing', 'signup', 'unconfirmed', 'saving'].includes(
+              phase
+            ) && <ArrowRight aria-hidden="true" className="size-4" />}
           </Button>
-          {phase === 'signup' && (
+          {(phase === 'signup' || phase === 'unconfirmed') && (
             <Button
               variant="outline"
-              onClick={() => stop('Signup cancelled. You can try again.')}
+              onClick={() => {
+                signupDiagnostic('ui_cancelled');
+                stop('Signup cancelled. You can try again.');
+              }}
             >
               Cancel signup
             </Button>
           )}
-          {phase === 'signup' && (
+          {(phase === 'signup' || phase === 'unconfirmed') && (
             <Button
               variant="outline"
               onClick={() => {
                 // Invalidate this callback pair before retrying. Keep the durable
                 // session; retry must be another direct click, without network work.
+                clearLaunchWatchdog();
+                signupDiagnostic('popup_retry_requested');
                 run.current = null;
                 setPhase('ready');
                 setMessage(

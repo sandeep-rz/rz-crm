@@ -231,3 +231,19 @@ it('changing inbound media retention invalidates local configuration', async () 
   });
   expect(h.invalidate).toHaveBeenCalledOnce();
 });
+
+it('renders a single signup entry point when no numbers are connected', async () => {
+  h.connections = [];
+  await act(() => root.render(<WhatsAppConfig />));
+  const connectButtons = [...host.querySelectorAll('button')].filter(
+    (button) => button.textContent === 'Connect WhatsApp'
+  );
+  expect(connectButtons).toHaveLength(1);
+  // The old empty-state component exposes a separate Connect button in this mock.
+  expect(
+    [...host.querySelectorAll('button')].some(
+      (button) => button.textContent === 'Connect'
+    )
+  ).toBe(false);
+  expect(host.textContent).toContain('Advanced: manual connection');
+});

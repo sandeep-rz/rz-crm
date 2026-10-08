@@ -665,14 +665,12 @@ export function WhatsAppConfig() {
         </Alert>
       )}
       {shared.status === 'error' ? null : connections.length === 0 ? (
-        <WhatsAppEmptyState
-          canConnect={canEditSettings}
-          onConnect={() =>
-            document
-              .getElementById('embedded-whatsapp-connect')
-              ?.scrollIntoView({ behavior: 'smooth' })
-          }
-        />
+        canEditSettings ? null : (
+          <WhatsAppEmptyState
+            canConnect={false}
+            onConnect={handleAddConnection}
+          />
+        )
       ) : (
         <div className="mb-8 space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -715,11 +713,10 @@ export function WhatsAppConfig() {
           <WhatsAppEmbeddedSignup
             key={`${user?.id}:${accountId}`}
             attempts={savedSignups.attempts}
+            prominent={connections.length === 0}
+            onManualSetup={handleAddConnection}
             onChanged={signupChanged}
           />
-          <Button variant="outline" onClick={handleAddConnection}>
-            Advanced: manual connection
-          </Button>
         </div>
       )}
 

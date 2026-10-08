@@ -2,6 +2,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
+  ArrowRight,
+  ExternalLink,
+  Loader2,
+  MessageCircle,
+  ShieldCheck,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
+import {
   signupEvent,
   embeddedSignupConfig,
   type SignupContext,
@@ -77,10 +85,14 @@ async function api(body: object) {
 export function WhatsAppEmbeddedSignup({
   reconnectId,
   attempts = [],
+  prominent = false,
+  onManualSetup,
   onChanged,
 }: {
   reconnectId?: string;
   attempts?: SavedSignupAttempt[];
+  prominent?: boolean;
+  onManualSetup?: () => void;
   onChanged: () => Promise<unknown>;
 }) {
   const [phase, setPhase] = useState<
@@ -275,106 +287,170 @@ export function WhatsAppEmbeddedSignup({
     }
   }
   return (
-    <div className="space-y-3 rounded-lg border p-4">
-      <p className="font-medium">
-        {reconnectId ? 'Reconnect WhatsApp' : 'Connect WhatsApp'}
-      </p>
-      <p className="text-muted-foreground text-sm">
-        Connect your WhatsApp Business account securely with Facebook.
-        {reconnectId
-          ? ' This explicitly replaces credentials for this same number.'
-          : ''}
-      </p>
-      <Button
-        disabled={['preparing', 'signup', 'saving'].includes(phase)}
-        onClick={phase === 'ready' ? launch : () => void prepare()}
-      >
-        {phase === 'ready'
-          ? 'Continue with Facebook'
-          : phase === 'preparing'
-            ? 'Preparing…'
-            : phase === 'signup'
-              ? 'Waiting for Facebook…'
-              : phase === 'saving'
-                ? 'Connecting…'
-                : reconnectId
-                  ? 'Reconnect WhatsApp'
-                  : 'Connect WhatsApp'}
-      </Button>
-      {phase === 'signup' && (
-        <Button
-          variant="outline"
-          onClick={() => stop('Signup cancelled. You can try again.')}
-        >
-          Cancel signup
-        </Button>
+    <div
+      className={cn(
+        'bg-card text-card-foreground overflow-hidden rounded-2xl border shadow-sm',
+        prominent && 'mx-auto max-w-2xl'
       )}
-      {recoverySession &&
-        !visibleAttempts.some((a) => a.id === recoverySession) &&
-        phase === 'idle' && (
-          <Button variant="outline" onClick={() => void recover()}>
-            Recover saved setup
-          </Button>
+    >
+      <div
+        className={cn(
+          'space-y-5 p-6 sm:p-8',
+          prominent && 'flex flex-col items-center py-8 text-center sm:py-10'
         )}
-      {phase === 'idle' &&
-        visibleAttempts.map((attempt) => (
-          <div key={attempt.id} className="space-y-2 rounded border p-3">
-            <p className="text-sm">
-              Saved setup ·{' '}
-              {attempt.context
-                ? `Number ID ${attempt.context.phone_number_id}`
-                : 'Facebook signup not completed'}{' '}
-              · {new Date(attempt.created_at).toLocaleString()}
+      >
+        <div
+          className={cn(
+            'flex items-start gap-4',
+            prominent && 'flex-col items-center gap-5'
+          )}
+        >
+          <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-700 ring-1 ring-emerald-500/15 dark:text-emerald-400">
+            <MessageCircle aria-hidden="true" className="size-7" />
+          </div>
+          <div className="space-y-2">
+            <p className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
+              WhatsApp Business
             </p>
-            {!attempt.recoverable && !attempt.busy && (
-              <p className="text-sm">
-                Saved authorization is unavailable or expired. Discard this
-                setup before starting again.
-              </p>
+            <h2 className="text-foreground text-2xl font-semibold tracking-tight">
+              {reconnectId ? 'Reconnect WhatsApp' : 'Connect WhatsApp'}
+            </h2>
+            <p className="text-muted-foreground max-w-md text-sm leading-relaxed">
+              {reconnectId
+                ? 'Securely refresh access to this number with Facebook.'
+                : 'Bring customer conversations, replies and templates together in your shared inbox.'}
+            </p>
+          </div>
+        </div>
+        <div
+          className={cn(
+            'flex flex-wrap items-center gap-3',
+            prominent && 'justify-center'
+          )}
+        >
+          <Button
+            className="h-12 gap-3 rounded-xl bg-emerald-600 px-6 text-sm font-semibold text-white shadow-md shadow-emerald-600/15 transition-all hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-600/20 motion-safe:hover:-translate-y-0.5 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+            disabled={['preparing', 'signup', 'saving'].includes(phase)}
+            onClick={phase === 'ready' ? launch : () => void prepare()}
+          >
+            {['preparing', 'signup', 'saving'].includes(phase) ? (
+              <Loader2 aria-hidden="true" className="size-5 animate-spin" />
+            ) : (
+              <MessageCircle aria-hidden="true" className="size-5" />
             )}
-            {attempt.busy && (
-              <p className="text-sm">
-                Setup is being processed. Wait three minutes after an
-                interruption, then refresh.
-              </p>
+            {phase === 'ready'
+              ? 'Continue with Facebook'
+              : phase === 'preparing'
+                ? 'Preparing…'
+                : phase === 'signup'
+                  ? 'Waiting for Facebook…'
+                  : phase === 'saving'
+                    ? 'Connecting…'
+                    : reconnectId
+                      ? 'Reconnect WhatsApp'
+                      : 'Connect WhatsApp'}
+            {!['preparing', 'signup', 'saving'].includes(phase) && (
+              <ArrowRight aria-hidden="true" className="size-4" />
             )}
-            {attempt.recoverable && (
+          </Button>
+          {phase === 'signup' && (
+            <Button
+              variant="outline"
+              onClick={() => stop('Signup cancelled. You can try again.')}
+            >
+              Cancel signup
+            </Button>
+          )}
+        </div>
+        <p className="text-muted-foreground flex items-center gap-2 text-xs">
+          <ShieldCheck
+            aria-hidden="true"
+            className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+          />
+          Secure setup through Facebook · Your business stays in control
+        </p>
+        {recoverySession &&
+          !visibleAttempts.some((a) => a.id === recoverySession) &&
+          phase === 'idle' && (
+            <Button variant="outline" onClick={() => void recover()}>
+              Recover saved setup
+            </Button>
+          )}
+        {phase === 'idle' &&
+          visibleAttempts.map((attempt) => (
+            <div
+              key={attempt.id}
+              className="bg-muted/30 w-full space-y-3 rounded-xl border p-4 text-left"
+            >
+              <p className="text-sm">
+                Saved setup ·{' '}
+                {attempt.context
+                  ? `Number ID ${attempt.context.phone_number_id}`
+                  : 'Facebook signup not completed'}{' '}
+                · {new Date(attempt.created_at).toLocaleString()}
+              </p>
+              {!attempt.recoverable && !attempt.busy && (
+                <p className="text-sm">
+                  Saved authorization is unavailable or expired. Discard this
+                  setup before starting again.
+                </p>
+              )}
+              {attempt.busy && (
+                <p className="text-sm">
+                  Setup is being processed. Wait three minutes after an
+                  interruption, then refresh.
+                </p>
+              )}
+              {attempt.recoverable && (
+                <Button
+                  variant="outline"
+                  disabled={attempt.busy}
+                  onClick={() => void recover(attempt.id)}
+                >
+                  Recover saved setup
+                </Button>
+              )}
               <Button
                 variant="outline"
                 disabled={attempt.busy}
-                onClick={() => void recover(attempt.id)}
+                onClick={() => void discard(attempt.id)}
               >
-                Recover saved setup
+                Discard saved setup
               </Button>
-            )}
-            <Button
-              variant="outline"
-              disabled={attempt.busy}
-              onClick={() => void discard(attempt.id)}
-            >
-              Discard saved setup
-            </Button>
-          </div>
-        ))}
-      {message && (
-        <p role="status" className="text-sm">
-          {message}
+            </div>
+          ))}
+        {message && (
+          <p role="status" className="text-sm">
+            {message}
+          </p>
+        )}
+        {onManualSetup && (
+          <Button
+            variant="ghost"
+            className="text-muted-foreground hover:text-foreground h-auto px-0 py-1 text-xs hover:bg-transparent"
+            onClick={onManualSetup}
+          >
+            Advanced: manual connection
+          </Button>
+        )}
+      </div>
+      <div className="bg-muted/30 border-t px-6 py-4 sm:px-8">
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          You pay Meta directly for WhatsApp usage. RGCRM SaaS charges are
+          separate. Signup does not confirm payment readiness. Configure your
+          payment method in{' '}
+          <a
+            className="text-foreground decoration-border inline-flex items-center gap-1 font-medium underline underline-offset-4 hover:decoration-current"
+            href="https://business.facebook.com/wa/manage/home/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            WhatsApp Manager{' '}
+            <ExternalLink aria-hidden="true" className="size-3" />
+          </a>{' '}
+          under Payment settings for your WhatsApp account.
         </p>
-      )}
-      <p className="text-muted-foreground text-sm">
-        You pay Meta directly for WhatsApp usage. RGCRM SaaS charges are
-        separate. Signup does not confirm payment readiness. In{' '}
-        <a
-          className="underline"
-          href="https://business.facebook.com/wa/manage/home/"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          WhatsApp Manager
-        </a>
-        , select this WhatsApp account and configure its payment method under
-        Payment settings.
-      </p>
+      </div>
     </div>
   );
 }

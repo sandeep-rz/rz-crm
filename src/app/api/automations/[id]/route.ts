@@ -1,3 +1,4 @@
+import { validateAutomationTemplateCompatibility } from '@/lib/automations/validate-template-compatibility';
 import { NextResponse } from 'next/server';
 import {
   getCurrentAccount,
@@ -176,17 +177,29 @@ export async function PATCH(
     typeof update.is_active === 'boolean'
       ? update.is_active
       : existing.is_active;
+  const mergedTriggerType = (update.trigger_type ??
+    existing.trigger_type) as string;
+  const mergedSteps = Array.isArray(body.steps)
+    ? (body.steps as BuilderStepInput[])
+    : await loadStepsTree(id);
+  const compatibilityIssues = await validateAutomationTemplateCompatibility(
+    admin,
+    existing.account_id,
+    mergedTriggerType,
+    mergedSteps
+  );
+  if (compatibilityIssues.length)
+    return NextResponse.json(
+      {
+        error: 'Invalid automation template action',
+        issues: compatibilityIssues,
+      },
+      { status: 400 }
+    );
+
   if (willBeActive) {
-    const mergedTriggerType = (update.trigger_type ??
-      existing.trigger_type) as string;
     const mergedTriggerConfig =
       update.trigger_config ?? existing.trigger_config;
-    const mergedSteps = Array.isArray(body.steps)
-      ? (body.steps as {
-          step_type: string;
-          step_config: Record<string, unknown>;
-        }[])
-      : await loadStepsTree(id);
     const mergedWhatsappConfigId =
       'whatsapp_config_id' in update
         ? (update.whatsapp_config_id as string | null)

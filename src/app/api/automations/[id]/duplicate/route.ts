@@ -1,7 +1,9 @@
+import { validateAutomationTemplateCompatibility } from '@/lib/automations/validate-template-compatibility';
 import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { validateTemplateActions } from '@/lib/automations/validate';
 import { supabaseAdmin } from '@/lib/automations/admin-client';
+import { loadStepsTree } from '@/lib/automations/steps-tree';
 
 export async function POST(
   _request: Request,
@@ -43,6 +45,30 @@ export async function POST(
   if (templateIssues.length)
     return NextResponse.json(
       { error: 'Invalid automation template action', issues: templateIssues },
+      { status: 400 }
+    );
+
+  let stepsTree;
+  try {
+    stepsTree = await loadStepsTree(id);
+  } catch {
+    return NextResponse.json(
+      { error: 'Unable to load automation steps.' },
+      { status: 500 }
+    );
+  }
+  const compatibilityIssues = await validateAutomationTemplateCompatibility(
+    admin,
+    account.accountId,
+    original.trigger_type,
+    stepsTree
+  );
+  if (compatibilityIssues.length)
+    return NextResponse.json(
+      {
+        error: 'Invalid automation template action',
+        issues: compatibilityIssues,
+      },
       { status: 400 }
     );
 

@@ -2,9 +2,13 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { POST } from './route';
 
 const h = vi.hoisted(() => ({
+  compatibility: vi.fn(async () => [] as { path: string; message: string }[]),
   steps: [] as Record<string, unknown>[],
   writes: [] as { table: string; value: unknown }[],
   error: null as { message: string } | null,
+}));
+vi.mock('@/lib/automations/validate-template-compatibility', () => ({
+  validateAutomationTemplateCompatibility: h.compatibility,
 }));
 vi.mock('@/lib/auth/account', () => ({
   requireRole: async () => ({ accountId: 'account', userId: 'author' }),
@@ -23,7 +27,12 @@ vi.mock('@/lib/automations/admin-client', () => ({
           return q;
         },
         maybeSingle: async () => ({
-          data: { id: 'original', account_id: 'account', name: 'Original' },
+          data: {
+            id: 'original',
+            account_id: 'account',
+            name: 'Original',
+            trigger_type: 'tag_added',
+          },
           error: null,
         }),
         single: async () => ({ data: { id: 'copy' }, error: null }),
@@ -45,6 +54,7 @@ const request = new Request(
 );
 const params = { params: Promise.resolve({ id: 'original' }) };
 beforeEach(() => {
+  h.compatibility.mockReset().mockResolvedValue([]);
   h.steps = [];
   h.writes = [];
   h.error = null;
@@ -95,5 +105,57 @@ it('clones semantic actions and remaps nested parents', async () => {
 it('does not create an empty copy when reading source steps fails', async () => {
   h.error = { message: 'read failed' };
   expect((await POST(request, params)).status).toBe(500);
+  expect(h.writes).toEqual([]);
+});
+
+it('duplicate validates the stored trigger and reconstructed nested tree before creating a copy', async () => {
+  h.steps = [
+    {
+      id: 'parent',
+      parent_step_id: null,
+      branch: null,
+      step_type: 'condition',
+      step_config: {},
+      position: 0,
+    },
+    {
+      id: 'child',
+      parent_step_id: 'parent',
+      branch: 'no',
+      step_type: 'send_template',
+      step_config: { template_id: templateId },
+      position: 0,
+    },
+  ];
+  const issues = [
+    {
+      path: 'steps[0].no.steps[0].template_id',
+      message:
+        'This template requires reservation context and cannot be used with this automation trigger.',
+    },
+  ];
+  h.compatibility.mockResolvedValueOnce(issues);
+  const response = await POST(request, params);
+  expect(response.status).toBe(400);
+  expect((await response.json()).issues).toEqual(issues);
+  expect(h.compatibility).toHaveBeenCalledWith(
+    expect.anything(),
+    'account',
+    'tag_added',
+    [
+      expect.objectContaining({
+        id: 'parent',
+        branches: {
+          yes: [],
+          no: [
+            expect.objectContaining({
+              id: 'child',
+              step_type: 'send_template',
+            }),
+          ],
+        },
+      }),
+    ]
+  );
   expect(h.writes).toEqual([]);
 });

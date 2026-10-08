@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  compatibility: vi.fn(async () => [] as { path: string; message: string }[]),
   requireRole: vi.fn(),
   resolveConnection: vi.fn(),
   insertSteps: vi.fn(),
@@ -12,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   updateError: null as Error | null,
 }));
 
+vi.mock('@/lib/automations/validate-template-compatibility', () => ({
+  validateAutomationTemplateCompatibility: mocks.compatibility,
+}));
 vi.mock('@/lib/auth/account', () => ({
   requireRole: mocks.requireRole,
   getCurrentAccount: vi.fn(),
@@ -124,6 +128,7 @@ function addTagBody(triggerType: string) {
 
 describe('POST /api/automations WhatsApp dependency', () => {
   beforeEach(() => {
+    mocks.compatibility.mockReset().mockResolvedValue([]);
     mocks.requireRole.mockReset().mockResolvedValue(account);
     mocks.resolveConnection
       .mockReset()
@@ -345,4 +350,44 @@ describe('POST /api/automations WhatsApp dependency', () => {
     expect(mocks.insertedAutomation?.is_active).toBe(false);
     expect(mocks.updatePayloads).toContainEqual({ is_active: false });
   });
+  it.each([false, true])(
+    'create enforces compatibility before writes, active=%s',
+    async (is_active) => {
+      const issues = [
+        {
+          path: 'steps[0].template_id',
+          message:
+            'This template requires reservation context and cannot be used with this automation trigger.',
+        },
+      ];
+      mocks.compatibility.mockResolvedValueOnce(issues);
+      const steps = [
+        {
+          step_type: 'send_template',
+          step_config: {
+            template_id: '11111111-1111-1111-1111-111111111111',
+            requires_reservation: false,
+          },
+        },
+      ];
+      const response = await POST(
+        request({
+          name: 'Incompatible',
+          trigger_type: 'new_contact_created',
+          steps,
+          is_active,
+        })
+      );
+      expect(response.status).toBe(400);
+      expect((await response.json()).issues).toEqual(issues);
+      expect(mocks.compatibility).toHaveBeenCalledWith(
+        expect.anything(),
+        account.accountId,
+        'new_contact_created',
+        steps
+      );
+      expect(mocks.insertPayloads).toEqual([]);
+      expect(mocks.insertSteps).not.toHaveBeenCalled();
+    }
+  );
 });

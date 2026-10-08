@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  compatibility: vi.fn(async () => [] as { path: string; message: string }[]),
   requireRole: vi.fn(),
   resolveConnection: vi.fn(),
   loadStepsTree: vi.fn(),
@@ -12,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   updateError: null as Error | null,
 }));
 
+vi.mock('@/lib/automations/validate-template-compatibility', () => ({
+  validateAutomationTemplateCompatibility: mocks.compatibility,
+}));
 vi.mock('@/lib/auth/account', () => ({
   requireRole: mocks.requireRole,
   getCurrentAccount: vi.fn(),
@@ -94,6 +98,7 @@ function request(body: Record<string, unknown>) {
 
 describe('PATCH /api/automations/[id] WhatsApp dependency', () => {
   beforeEach(() => {
+    mocks.compatibility.mockReset().mockResolvedValue([]);
     mocks.requireRole.mockReset().mockResolvedValue(account);
     mocks.resolveConnection
       .mockReset()
@@ -321,4 +326,56 @@ describe('PATCH /api/automations/[id] WhatsApp dependency', () => {
     expect(mocks.existing?.is_active).toBe(false);
     expect(mocks.backfill).not.toHaveBeenCalled();
   });
+  it.each([false, true])(
+    'PATCH validates effective trigger and nested stored/replacement steps, replacement=%s',
+    async (replacement) => {
+      mocks.existing = {
+        ...mocks.existing,
+        trigger_type: 'reservation_confirmed',
+        is_active: false,
+      };
+      const steps = [
+        {
+          step_type: 'condition',
+          step_config: {},
+          branches: {
+            no: [
+              {
+                step_type: 'send_template',
+                step_config: {
+                  template_id: '11111111-1111-1111-1111-111111111111',
+                },
+              },
+            ],
+          },
+        },
+      ];
+      mocks.loadStepsTree.mockResolvedValueOnce(steps);
+      const issues = [
+        {
+          path: 'steps[0].no.steps[0].template_id',
+          message:
+            'This template requires reservation context and cannot be used with this automation trigger.',
+        },
+      ];
+      mocks.compatibility.mockResolvedValueOnce(issues);
+      const response = await PATCH(
+        request({
+          trigger_type: 'tag_added',
+          ...(replacement ? { steps } : {}),
+        }),
+        params
+      );
+      expect(response.status).toBe(400);
+      expect((await response.json()).issues).toEqual(issues);
+      expect(mocks.compatibility).toHaveBeenCalledWith(
+        expect.anything(),
+        account.accountId,
+        'tag_added',
+        steps
+      );
+      expect(mocks.updatePayloads).toEqual([]);
+      expect(mocks.replaceSteps).not.toHaveBeenCalled();
+    }
+  );
 });

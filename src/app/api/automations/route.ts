@@ -1,3 +1,4 @@
+import { validateAutomationTemplateCompatibility } from '@/lib/automations/validate-template-compatibility';
 import { NextResponse } from 'next/server';
 import {
   getCurrentAccount,
@@ -159,6 +160,21 @@ export async function POST(request: Request) {
       throw error;
     }
   }
+
+  const compatibilityIssues = await validateAutomationTemplateCompatibility(
+    admin,
+    accountId,
+    effectiveTriggerType,
+    effectiveSteps ?? []
+  );
+  if (compatibilityIssues.length)
+    return NextResponse.json(
+      {
+        error: 'Invalid automation template action',
+        issues: compatibilityIssues,
+      },
+      { status: 400 }
+    );
 
   // Block activation of a clearly broken automation up-front instead of
   // letting every trigger silently produce a failed log row. Drafts

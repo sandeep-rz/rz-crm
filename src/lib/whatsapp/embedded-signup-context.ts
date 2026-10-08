@@ -36,7 +36,9 @@ export function signupEvent(origin: string, value: unknown) {
 export const embeddedSignupConfig = {
   appId: '1444327167651307',
   configId: '1392665409205658',
-  sdkVersion: 'v21.0',
+  // Matches this app's Meta Embedded Signup Builder SDK initialization snippet.
+  // This is independent of the existing server-side Graph API version.
+  sdkVersion: 'v26.0',
 };
 
 /** Safe browser summary; credentials, code hashes and PINs stay server-side. */

@@ -58,7 +58,7 @@ Migration 73 is preserved. Apply 74 after 73 and deploy the corrected handler to
 
 This checkout is the customized WACRM/RGCRM Next.js 16 application, despite the supplied generic Rukiye Zara monorepo instructions. Settings is implemented in `src/components/settings/whatsapp-config.tsx`, with manual wizard/cards in `whatsapp-setup-ui.tsx`. Connections are one-to-many workspace children in `whatsapp_config`; `phone_number_id` is globally unique. Existing RLS permits settings writes to account admins/owners.
 
-`requireRole('admin')` resolves the authenticated user, active profile account and role. Token encryption reuses the existing AES-256-GCM implementation. WABA number listing, subscription and subscribed-app discovery reuse `meta-api.ts`; optional abort signals were added without changing existing callers. The existing Graph API version remains v21.0; Embedded Signup v4 is selected by the Meta configuration, independently of Graph API version.
+`requireRole('admin')` resolves the authenticated user, active profile account and role. Token encryption reuses the existing AES-256-GCM implementation. WABA number listing, subscription and subscribed-app discovery reuse `meta-api.ts`; optional abort signals were added without changing existing callers. The existing Graph API version remains v21.0; Embedded Signup v4 is selected by the Meta configuration and `extras.version: "v4"`, independently of Graph API version.
 
 The dashboard-owned `WhatsAppCapabilityProvider` remains the shared state source. Signup refreshes it on success and on partial failure. Explicit reconnect also reloads the managed connection. Normal Settings reads use stored metadata, with no Meta verification call.
 
@@ -118,14 +118,14 @@ Existing variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 
 Optional new server-only variable: `META_EMBEDDED_SIGNUP_APP_SECRET`. Use it if the existing webhook secret setting contains multiple comma-separated app secrets. It must be the **single secret for app 1444327167651307**, and must also appear in `META_APP_SECRET` so incoming webhook signatures can be accepted. Without the dedicated setting, onboarding uses a single `META_APP_SECRET`. The server rejects ambiguous/missing secrets or an onboarding secret absent from the webhook secret list. Restart after environment changes.
 
-Public configuration is fixed to the supplied App ID `1444327167651307` and TechConfig ID `1392665409205658`. Launch uses `response_type: code`, `override_default_response_type: true` and `extras.sessionInfoVersion: 3`. The SDK initializes with the existing v21.0 Graph version. No app secret or business token is shipped to the browser.
+Public configuration is fixed to the supplied App ID `1444327167651307` and TechConfig ID `1392665409205658`. Launch uses `response_type: code`, `override_default_response_type: true`, `extras.version: "v4"` and `extras.sessionInfoVersion: "3"`. The browser SDK initializes with `v26.0`, matching the generated snippets in the supplied Meta app dashboard screenshot. Existing backend Graph calls remain on v21.0. No app secret or business token is shipped to the browser.
 
 Verify in the actual Meta dashboard before rollout:
 
 1. App is Live and belongs to the intended verified business; required Tech Provider enrollment/access verification and App Review/Advanced Access are approved for customer asset onboarding.
 2. TechConfig is genuinely a Facebook Login for Business **Embedded Signup v4** configuration for WhatsApp Cloud API, issuing a business integration system-user token with `whatsapp_business_management` and `whatsapp_business_messaging`, and the intended customer asset access/token lifetime.
 3. The exact production HTTPS host is configured in App Domains and the applicable Facebook Login for Business allowed SDK/login/OAuth settings. Privacy policy, terms and data-deletion settings satisfy Meta's app requirements.
-4. The supplied v4 configuration accepts the requested sessionInfoVersion 3 option and returns the FINISH session payload with WABA/phone IDs plus the SDK code callback. This combination has not been verified live. Supported completion is the standard Cloud API FINISH flow; coexistence/history-sync and WABA-only flows are not enabled by this implementation and must not be selected in TechConfig without separate support and testing.
+4. Verify the supplied v4 configuration accepts the requested sessionInfoVersion 3 option and returns the FINISH session payload with WABA/phone IDs plus the SDK code callback. This combination has not been verified live. Supported completion is the standard Cloud API FINISH flow; coexistence/history-sync and WABA-only flows are not enabled by this implementation and must not be selected in TechConfig without separate support and testing.
 5. The existing app webhook points to `https://<RGCRM-host>/api/whatsapp/webhook`, is verified, and subscribes to required messages/status fields. Its app secret matches the onboarding app.
 6. Customer-direct payment setup is enabled in the intended onboarding arrangement. Do not attach RGCRM credit or select a partner-funded billing configuration.
 7. Hosting permits up to 120 seconds for this route. Outbound Meta operations are bounded; interactive popup waiting has no client deadline; inspect platform timeout settings separately.
@@ -202,3 +202,9 @@ Files changed for the saved-setup review (earlier signup work remains intact):
 - `supabase/migrations/76_whatsapp_signup_abandonment.sql`
 - `supabase/tests/whatsapp_signup_abandonment.sql`
 - `docs/whatsapp-embedded-signup.md`
+
+## Popup launch correction
+
+The supplied Meta dashboard screenshot for app 1444327167651307/config 1392665409205658 explicitly generates browser SDK `v26.0` and launch `extras.version: "v4"`. The browser now matches these settings, retains session-info v3 for the existing paired completion handler, and initializes through `fbAsyncInit` with bounded SDK-load failure handling. No server Graph version, credentials, schema, billing or connection lifecycle changes are included. A successful `start` session response alone does not establish that Meta accepted the login launch.
+
+If no popup appears, use **Popup didn’t open?**, allow popups for the actual site, close any earlier signup popup, then click **Continue with Facebook** again. This reuses the current prepared session, ignores earlier callbacks, and makes `FB.login` synchronously from the new click. There is no timeout on the interactive signup. Check the browser console and Meta App Domains / Login with JavaScript SDK / Allowed Domains for the JavaScript SDK / OAuth settings if it persists. The app must be served on the intended HTTPS origin. No live browser console or Meta login success has been verified by these code changes.

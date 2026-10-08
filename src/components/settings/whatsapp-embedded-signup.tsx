@@ -29,40 +29,66 @@ type Facebook = {
 declare global {
   interface Window {
     FB?: Facebook;
+    fbAsyncInit?: () => void;
   }
 }
 let sdk: Promise<Facebook> | undefined;
 function loadSdk() {
   if (sdk) return sdk;
   sdk = new Promise<Facebook>((resolve, reject) => {
+    let settled = false;
+    const script = document.createElement('script');
+    const previousInit = window.fbAsyncInit;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      if (window.fbAsyncInit === loaded) window.fbAsyncInit = previousInit;
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      script.remove();
+      reject(error);
+    };
+    const loaded = () => {
+      if (settled) return;
+      try {
+        if (!window.FB) throw new Error('Facebook SDK unavailable.');
+        window.FB.init({
+          appId: embeddedSignupConfig.appId,
+          version: embeddedSignupConfig.sdkVersion,
+          autoLogAppEvents: false,
+          xfbml: false,
+        });
+        settled = true;
+        cleanup();
+        resolve(window.FB);
+      } catch {
+        fail(
+          new Error(
+            'Facebook SDK could not initialize. Reload the page and check browser blockers.'
+          )
+        );
+      }
+    };
     const timeout = setTimeout(
       () =>
-        reject(new Error('Facebook SDK timed out. Reload the page and retry.')),
+        fail(new Error('Facebook SDK timed out. Reload the page and retry.')),
       15_000
     );
-    const loaded = () => {
-      clearTimeout(timeout);
-      if (!window.FB) return reject(new Error('Facebook SDK unavailable.'));
-      window.FB.init({
-        appId: embeddedSignupConfig.appId,
-        version: embeddedSignupConfig.sdkVersion,
-        autoLogAppEvents: false,
-        xfbml: false,
-      });
-      resolve(window.FB);
-    };
     if (window.FB) return loaded();
-    const script = document.createElement('script');
+    // Meta's generated async loader initializes through this callback. onload
+    // is a fallback for an SDK that was already loaded by the browser cache.
+    window.fbAsyncInit = loaded;
     script.src = 'https://connect.facebook.net/en_US/sdk.js';
     script.async = true;
-    script.onload = loaded;
-    script.onerror = () => {
-      clearTimeout(timeout);
-      script.remove();
-      reject(
+    script.onload = () => {
+      if (window.FB) loaded();
+    };
+    script.onerror = () =>
+      fail(
         new Error('Facebook could not load. Check browser blockers and retry.')
       );
-    };
     document.head.appendChild(script);
   }).catch((error) => {
     sdk = undefined;
@@ -279,7 +305,8 @@ export function WhatsAppEmbeddedSignup({
           config_id: embeddedSignupConfig.configId,
           response_type: 'code',
           override_default_response_type: true,
-          extras: { sessionInfoVersion: 3 },
+          // Match the launch selector generated for this exact Meta v4 config.
+          extras: { version: 'v4', sessionInfoVersion: '3' },
         }
       );
     } catch {
@@ -359,6 +386,22 @@ export function WhatsAppEmbeddedSignup({
               onClick={() => stop('Signup cancelled. You can try again.')}
             >
               Cancel signup
+            </Button>
+          )}
+          {phase === 'signup' && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                // Invalidate this callback pair before retrying. Keep the durable
+                // session; retry must be another direct click, without network work.
+                run.current = null;
+                setPhase('ready');
+                setMessage(
+                  'Allow popups for this site, then click Continue with Facebook. If it still does not open, check the browser console and the app’s allowed SDK domains in Meta. Close any earlier signup popup before retrying.'
+                );
+              }}
+            >
+              Popup didn’t open?
             </Button>
           )}
         </div>

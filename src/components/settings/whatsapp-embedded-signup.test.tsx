@@ -7,7 +7,7 @@ let root: Root, host: HTMLDivElement;
 const fetcher = vi.fn<typeof fetch>(),
   changed = vi.fn();
 let callback: (response: { authResponse?: { code?: string } }) => void;
-const login = vi.fn((cb: typeof callback) => {
+const login = vi.fn<(cb: typeof callback, options: object) => void>((cb) => {
   callback = cb;
 });
 beforeEach(async () => {
@@ -262,4 +262,26 @@ it('disables recovery and discard while another worker holds the attempt lease',
   );
   expect(actions).toHaveLength(2);
   expect(actions.every((b) => b.disabled)).toBe(true);
+});
+
+it('uses the app dashboard v4 launch selector and retries a silent launch without another session', async () => {
+  await launch();
+  expect(login.mock.calls[0][1]).toEqual({
+    config_id: '1392665409205658',
+    response_type: 'code',
+    override_default_response_type: true,
+    extras: { version: 'v4', sessionInfoVersion: '3' },
+  });
+  const earlier = callback;
+  await click('Popup didn’t open?');
+  expect(host.textContent).toContain('Allow popups for this site');
+  await click('Continue with Facebook');
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(login).toHaveBeenCalledTimes(2);
+  await event();
+  await act(() => earlier({ authResponse: { code: 'stale-code' } }));
+  expect(fetcher).toHaveBeenCalledOnce();
+  await act(() => callback({ authResponse: { code: 'current-code' } }));
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(host.textContent).toContain('WhatsApp connected');
 });

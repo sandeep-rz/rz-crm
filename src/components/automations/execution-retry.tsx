@@ -38,13 +38,15 @@ export function ExecutionRetry({
       const body = await response.json();
       if (!response.ok) {
         const key =
-          body.code === 'already_completed'
-            ? 'retryCompleted'
-            : body.code === 'already_retried'
-              ? 'retryAlreadyQueued'
-              : body.code === 'retry_unavailable'
-                ? 'retryError'
-                : 'retryIneligible';
+          body.code === 'unsafe_to_retry'
+            ? 'retryUnsafe'
+            : body.code === 'already_completed'
+              ? 'retryCompleted'
+              : body.code === 'already_retried'
+                ? 'retryAlreadyQueued'
+                : body.code === 'retry_unavailable'
+                  ? 'retryError'
+                  : 'retryIneligible';
         toast.error(t(key));
         if (
           body.code !== 'already_retried' &&

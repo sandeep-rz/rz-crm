@@ -202,3 +202,31 @@ it('retains distinct historical attempts with advisory eligibility from the exis
   ]);
   expect(h.states).toHaveBeenCalledTimes(1);
 });
+
+it('exposes only a safe retry-block reason and hides accepted provider IDs', async () => {
+  h.logs = [
+    {
+      id: 'execution',
+      trigger_job_id: 'job',
+      status: 'failed',
+      retry_safety: {
+        reason: 'whatsapp_accepted',
+        provider_message_id: 'PRIVATE_WAMID',
+        step_id: 'PRIVATE_STEP',
+      },
+      steps_executed: [],
+    },
+  ];
+  h.states.mockResolvedValue({
+    data: [{ log_id: 'execution', retry_state: 'unsafe_to_retry' }],
+    error: null,
+  });
+  const body = await (await GET(request, params)).json();
+  expect(body.logs[0]).toMatchObject({
+    manual_retry_state: 'unsafe_to_retry',
+    retry_block_reason: 'whatsapp_accepted',
+  });
+  expect(JSON.stringify(body)).not.toMatch(
+    /PRIVATE|provider_message_id|retry_safety/
+  );
+});

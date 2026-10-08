@@ -40,7 +40,7 @@ describe.skipIf(process.env.RGCRM_MANUAL_RETRY_PG_TEST !== '1')(
           "SELECT to_regclass('public.test_worker_wakeups') IS NOT NULL;"
         )
       ).toBe('t');
-      await sql(`TRUNCATE public.test_worker_wakeups,public.automation_logs,public.automation_trigger_jobs,public.automations,public.pms_reservations,public.contacts;
+      await sql(`TRUNCATE public.automation_pending_executions,public.test_worker_wakeups,public.automation_logs,public.automation_trigger_jobs,public.automations,public.pms_reservations,public.contacts;
      INSERT INTO public.automations(id,account_id,user_id,trigger_type,is_active) VALUES('${auto}','${account}','${contact}','reservation_confirmed',true);
      INSERT INTO public.pms_reservations(id,account_id) VALUES('${reservation}','${account}');
      INSERT INTO public.contacts VALUES('${contact}','${account}');
@@ -215,15 +215,20 @@ describe.skipIf(process.env.RGCRM_MANUAL_RETRY_PG_TEST !== '1')(
       'meta_sent_message_persistence_failed',
       'sent to Meta but DB insert failed: x',
       'template_send_failed',
-    ])('does not infer delivery from error text: %s', async (error) => {
-      await sql(`UPDATE public.automation_logs SET error_message='${error}';`);
-      expect(await retry()).toBe('queued');
-    });
-    it('does not infer delivery from an earlier successful action', async () => {
+    ])(
+      'does not reconstruct historical safety from error text: %s',
+      async (error) => {
+        await sql(
+          `UPDATE public.automation_logs SET error_message='${error}';`
+        );
+        expect(await retry()).toBe('queued');
+      }
+    );
+    it('blocks replay after an earlier successful action', async () => {
       await sql(
         `UPDATE public.automation_logs SET steps_executed='[{"step_type":"send_template","status":"success","detail":"sent meta-id"},{"step_type":"send_template","status":"failed"}]';`
       );
-      expect(await retry()).toBe('queued');
+      expect(await retry()).toBe('unsafe_to_retry');
     });
     it('allows a successful condition followed by failed provider rejection', async () => {
       await sql(
@@ -288,13 +293,270 @@ describe.skipIf(process.env.RGCRM_MANUAL_RETRY_PG_TEST !== '1')(
         )
       ).rejects.toThrow();
     });
-    it('database retry functions are not executable by browser roles', async () => {
-      for (const role of ['anon', 'authenticated'])
+
+    it.each([
+      'send_template',
+      'send_message',
+      'send_buttons',
+      'send_list',
+      'send_webhook',
+      'create_deal',
+    ])(
+      'blocks manual retry and new execution acquisition after successful %s',
+      async (type) => {
+        await sql(
+          `UPDATE public.automation_logs SET steps_executed='[{"step_type":"${type}","status":"success"}]';`
+        );
+        expect(await retry()).toBe('unsafe_to_retry');
         expect(
           await sql(
-            `SELECT has_function_privilege('${role}','public.retry_pms_automation_execution(uuid,uuid)','EXECUTE');`
+            `SELECT retry_state FROM public.get_pms_automation_retry_states('${account}',ARRAY['${log}'::uuid]);`
+          )
+        ).toBe('unsafe_to_retry');
+        await sql(
+          `UPDATE public.automation_trigger_jobs SET status='processing',attempt_count=2;`
+        );
+        expect(
+          await sql(
+            `SELECT disposition FROM public.begin_pms_automation_execution('${job}',2,'${contact}','${version}');`
+          )
+        ).toBe('unsafe_to_retry');
+        expect(await sql('SELECT count(*) FROM public.automation_logs;')).toBe(
+          '1'
+        );
+      }
+    );
+    it.each(['external_action', 'whatsapp_unknown', 'whatsapp_accepted'])(
+      'blocks manual retry for durable %s evidence even without buffered step results',
+      async (reason) => {
+        await sql(
+          `UPDATE public.automation_logs SET retry_safety='{"reason":"${reason}","step_id":"${contact}","provider_message_id":"accepted-wamid"}';`
+        );
+        expect(await retry()).toBe('unsafe_to_retry');
+      }
+    );
+    it('records acceptance durably and never clears it as a pre-send failure', async () => {
+      await sql(
+        `UPDATE public.automation_trigger_jobs SET status='processing';`
+      );
+      const record = (value: string) =>
+        sql(
+          `SELECT public.record_automation_retry_safety('${log}','${account}','${contact}',${value});`
+        );
+      expect(
+        await record(
+          `'{"reason":"whatsapp_unknown","step_id":"${contact}"}'::jsonb`
+        )
+      ).toBe('t');
+      expect(
+        await record(
+          `'{"reason":"whatsapp_accepted","step_id":"${contact}","provider_message_id":"accepted-wamid"}'::jsonb`
+        )
+      ).toBe('t');
+      expect(await record('NULL')).toBe('t');
+      expect(
+        await sql(
+          `SELECT retry_safety->>'provider_message_id' FROM public.automation_logs;`
+        )
+      ).toBe('accepted-wamid');
+      await sql(`UPDATE public.automation_trigger_jobs SET status='failed';`);
+      expect(await retry()).toBe('unsafe_to_retry');
+    });
+    it('clears only the current pre-Meta guard and keeps preparation failures eligible', async () => {
+      await sql(
+        `UPDATE public.automation_trigger_jobs SET status='processing';`
+      );
+      await sql(
+        `SELECT public.record_automation_retry_safety('${log}','${account}','${contact}','{"reason":"whatsapp_unknown","step_id":"${contact}"}');`
+      );
+      await sql(
+        `SELECT public.record_automation_retry_safety('${log}','${account}','${contact}',NULL); UPDATE public.automation_trigger_jobs SET status='failed';`
+      );
+      expect(await retry()).toBe('queued');
+    });
+
+    it('does not block explicit assignment from step type alone', async () => {
+      await sql(
+        `UPDATE public.automation_logs SET steps_executed='[{"step_type":"assign_conversation","status":"success"}]';`
+      );
+      expect(await retry()).toBe('queued');
+    });
+    it.each(['external_action', 'whatsapp_accepted'])(
+      'preserves earlier %s across a different step clear/acceptance',
+      async (reason) => {
+        await sql(`UPDATE public.automation_trigger_jobs SET status='processing';
+          UPDATE public.automation_logs SET retry_safety='{"reason":"${reason}","step_id":"${contact}"}';`);
+        for (const safety of [
+          `'{"reason":"whatsapp_unknown","step_id":"${foreign}"}'::jsonb`,
+          'NULL',
+          `'{"reason":"whatsapp_accepted","step_id":"${foreign}","provider_message_id":"later"}'::jsonb`,
+        ])
+          await sql(
+            `SELECT public.record_automation_retry_safety('${log}','${account}','${foreign}',${safety});`
+          );
+        expect(
+          await sql(
+            `SELECT retry_safety->>'reason' || ':' || (retry_safety->>'step_id') FROM public.automation_logs;`
+          )
+        ).toBe(`${reason}:${contact}`);
+        await sql(`UPDATE public.automation_trigger_jobs SET status='failed';`);
+        expect(await retry()).toBe('unsafe_to_retry');
+      }
+    );
+
+    it('keeps continuation safety local while preserving the pre-Wait whole-execution guard', async () => {
+      await sql(`UPDATE public.automation_trigger_jobs SET status='completed';
+        UPDATE public.automation_logs SET retry_safety='{"reason":"whatsapp_accepted","step_id":"${contact}","provider_message_id":"before-wait"}';
+        INSERT INTO public.automation_pending_executions(id,automation_id,account_id,log_id,context,status,attempt_count)
+          VALUES('${reservation}','${auto}','${account}','${log}','{"vars":{"preserved":true}}','running',1);`);
+      // The pre-Wait send does not contaminate this new segment's state.
+      expect(
+        await sql(
+          `SELECT context ? '__retry_safety' FROM public.automation_pending_executions;`
+        )
+      ).toBe('f');
+      const record = (value: string, attempt = 1, who = account) =>
+        sql(
+          `SELECT public.record_automation_retry_safety('${log}','${who}','${foreign}',${value},'${reservation}',${attempt});`
+        );
+      expect(
+        await record(`'{"reason":"whatsapp_unknown","step_id":"${foreign}"}'`)
+      ).toBe('t');
+      expect(await record('NULL')).toBe('t');
+      expect(
+        await sql(
+          `SELECT context ? '__retry_safety' FROM public.automation_pending_executions;`
+        )
+      ).toBe('f');
+      expect(
+        await sql(
+          `SELECT retry_safety->>'provider_message_id' FROM public.automation_logs;`
+        )
+      ).toBe('before-wait');
+      expect(
+        await record(`'{"reason":"whatsapp_unknown","step_id":"${foreign}"}'`)
+      ).toBe('t');
+      expect(
+        await record(
+          `'{"reason":"whatsapp_accepted","step_id":"${foreign}","provider_message_id":"inside-wait"}'`
+        )
+      ).toBe('t');
+      expect(await record('NULL')).toBe('t');
+      expect(
+        await sql(
+          `SELECT context->'__retry_safety'->>'provider_message_id' FROM public.automation_pending_executions;`
+        )
+      ).toBe('inside-wait');
+      expect(
+        await sql(
+          `SELECT context->'vars'->>'preserved' FROM public.automation_pending_executions;`
+        )
+      ).toBe('true');
+      expect(await record('NULL', 2)).toBe('f');
+      expect(await record('NULL', 1, foreign)).toBe('f');
+      expect(
+        await sql(
+          `SELECT retry_safety->>'provider_message_id' FROM public.automation_logs;`
+        )
+      ).toBe('before-wait');
+    });
+    it('preserves an in-segment external action across a later step pre-Meta failure', async () => {
+      await sql(`UPDATE public.automation_trigger_jobs SET status='processing';
+        INSERT INTO public.automation_pending_executions(id,automation_id,account_id,log_id,context,status,attempt_count)
+          VALUES('${reservation}','${auto}','${account}','${log}','{}','running',1);
+        SELECT public.record_automation_retry_safety('${log}','${account}','${contact}','{"reason":"external_action","step_id":"${contact}"}','${reservation}',1);
+        SELECT public.record_automation_retry_safety('${log}','${account}','${foreign}','{"reason":"whatsapp_unknown","step_id":"${foreign}"}','${reservation}',1);
+        SELECT public.record_automation_retry_safety('${log}','${account}','${foreign}',NULL,'${reservation}',1);`);
+      expect(
+        await sql(
+          `SELECT context->'__retry_safety'->>'reason' FROM public.automation_pending_executions;`
+        )
+      ).toBe('external_action');
+      await sql(`UPDATE public.automation_trigger_jobs SET status='failed';`);
+      expect(await retry()).toBe('unsafe_to_retry');
+    });
+
+    it.each(['processing', 'completed'])(
+      'root guard permits processing but fences completed PMS jobs: %s',
+      async (status) => {
+        await sql(
+          `UPDATE public.automation_trigger_jobs SET status='${status}';`
+        );
+        expect(
+          await sql(
+            `SELECT public.record_automation_retry_safety('${log}','${account}','${contact}','{"reason":"external_action","step_id":"${contact}"}');`
+          )
+        ).toBe(status === 'processing' ? 't' : 'f');
+        expect(
+          await sql(
+            `SELECT retry_safety IS NOT NULL FROM public.automation_logs;`
+          )
+        ).toBe(status === 'processing' ? 't' : 'f');
+      }
+    );
+    it.each([
+      ['wrong attempt', reservation, account, log, auto, 'running', 2],
+      ['wrong pending id', foreign, account, log, auto, 'running', 1],
+      ['wrong account', reservation, foreign, log, auto, 'running', 1],
+      ['wrong log', reservation, account, foreign, auto, 'running', 1],
+      ['wrong automation', reservation, account, log, foreign, 'running', 1],
+      ['not running', reservation, account, log, auto, 'done', 1],
+    ] as const)(
+      'rejects %s continuation before recording safety',
+      async (
+        _label,
+        pendingId,
+        pendingAccount,
+        pendingLog,
+        pendingAuto,
+        status,
+        attempt
+      ) => {
+        await sql(`UPDATE public.automation_trigger_jobs SET status='completed';
+        INSERT INTO public.automation_pending_executions(id,automation_id,account_id,log_id,context,status,attempt_count)
+          VALUES('${reservation}','${pendingAuto}','${pendingAccount}','${pendingLog}','{}','${status}',1);`);
+        expect(
+          await sql(
+            `SELECT public.record_automation_retry_safety('${log}','${account}','${contact}','{"reason":"external_action","step_id":"${contact}"}','${pendingId}',${attempt});`
           )
         ).toBe('f');
+        expect(
+          await sql(`SELECT retry_safety IS NULL FROM public.automation_logs;`)
+        ).toBe('t');
+        expect(
+          await sql(
+            `SELECT context ? '__retry_safety' FROM public.automation_pending_executions;`
+          )
+        ).toBe('f');
+      }
+    );
+    it('fences stale claims and refuses foreign-account safety writes', async () => {
+      await sql(
+        `UPDATE public.automation_trigger_jobs SET status='processing',attempt_count=2;`
+      );
+      expect(
+        await sql(
+          `SELECT public.record_automation_retry_safety('${log}','${account}','${contact}','{"reason":"external_action","step_id":"${contact}"}');`
+        )
+      ).toBe('f');
+      expect(
+        await sql(
+          `SELECT public.record_automation_retry_safety('${log}','${foreign}','${contact}',NULL);`
+        )
+      ).toBe('f');
+    });
+    it('database retry functions are not executable by browser roles', async () => {
+      for (const role of ['anon', 'authenticated'])
+        for (const signature of [
+          'retry_pms_automation_execution(uuid,uuid)',
+          'automation_retry_block_reason(uuid,uuid)',
+          'record_automation_retry_safety(uuid,uuid,uuid,jsonb,uuid,integer)',
+        ])
+          expect(
+            await sql(
+              `SELECT has_function_privilege('${role}','public.${signature}','EXECUTE');`
+            )
+          ).toBe('f');
     });
   }
 );

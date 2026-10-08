@@ -107,7 +107,7 @@ it('maps server failures to safe toast copy without displaying raw errors', asyn
     )
   );
   await act(async () => host.querySelector('button')!.click());
-  expect(h.error).toHaveBeenCalledWith('retryIneligible');
+  expect(h.error).toHaveBeenCalledWith('retryUnsafe');
   expect(host.textContent).not.toContain('PRIVATE');
 });
 

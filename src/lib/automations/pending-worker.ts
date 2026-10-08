@@ -72,7 +72,36 @@ export async function runPendingExecutionWorker(
       result.completed++;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      const terminal = row.attempt_count >= PENDING_MAX_ATTEMPTS;
+      // Preserve the Wait cursor/queue, but never replay an uncertain segment.
+      let unsafe = true;
+      try {
+        if (row.log_id) {
+          const { data: log, error: safetyError } = await db
+            .from('automation_logs')
+            .select('completed_wait_continuation_ids')
+            .eq('id', row.log_id)
+            .eq('account_id', row.account_id)
+            .single();
+          if (safetyError || !log) unsafe = true;
+          else if ((log.completed_wait_continuation_ids ?? []).includes(row.id))
+            unsafe = false;
+          else {
+            const { data: pending, error: pendingError } = await db
+              .from('automation_pending_executions')
+              .select('context')
+              .eq('id', row.id)
+              .eq('account_id', row.account_id)
+              .eq('log_id', row.log_id)
+              .single();
+            unsafe = Boolean(
+              pendingError || !pending || pending.context?.__retry_safety
+            );
+          }
+        }
+      } catch {
+        unsafe = true;
+      }
+      const terminal = unsafe || row.attempt_count >= PENDING_MAX_ATTEMPTS;
       const update = terminal
         ? {
             status: 'failed',

@@ -36,7 +36,7 @@ export async function GET(
     const { data: logs, error } = await db
       .from('automation_logs')
       .select(
-        `id,status,trigger_event,created_at,trigger_job_id,trigger_job_attempt_count,trigger_job_execution_state,error_message,steps_executed,
+        `id,status,trigger_event,created_at,trigger_job_id,trigger_job_attempt_count,trigger_job_execution_state,error_message,steps_executed,retry_safety,
         contact:contacts(name,phone),
         trigger_job:automation_trigger_jobs!automation_logs_trigger_job_account_fkey(status,attempt_count,
           reservation:pms_reservations!automation_trigger_jobs_reservation_account_fkey(reservation_code))`
@@ -47,6 +47,9 @@ export async function GET(
       .limit(100);
     if (error) throw new Error('lookup_failed');
     const rows = (logs ?? []) as unknown as (AutomationLog & {
+      retry_safety?: {
+        reason?: 'external_action' | 'whatsapp_unknown' | 'whatsapp_accepted';
+      } | null;
       trigger_job?: {
         status: string;
         attempt_count: number;
@@ -67,9 +70,12 @@ export async function GET(
       for (const row of states ?? []) {
         eligibility.set(
           row.log_id,
-          ['eligible', 'already_completed', 'already_retried'].includes(
-            row.retry_state
-          )
+          [
+            'eligible',
+            'already_completed',
+            'already_retried',
+            'unsafe_to_retry',
+          ].includes(row.retry_state)
             ? row.retry_state
             : 'not_eligible'
         );
@@ -103,6 +109,14 @@ export async function GET(
             ),
           }
         : {}),
+      ...(log.retry_safety?.reason &&
+      ['external_action', 'whatsapp_unknown', 'whatsapp_accepted'].includes(
+        log.retry_safety.reason
+      )
+        ? { retry_block_reason: log.retry_safety.reason }
+        : eligibility.get(log.id) === 'unsafe_to_retry'
+          ? { retry_block_reason: 'external_action' as const }
+          : {}),
       steps_executed: (log.steps_executed ?? []).map((step) => ({
         step_type: step.step_type,
         status: step.status,

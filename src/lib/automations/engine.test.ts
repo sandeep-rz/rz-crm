@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
     ownedConversation: null as { id: string } | null,
     ownedTag: null as { id: string } | null,
     completedWaitIds: [] as string[],
+    retrySafety: null as Record<string, unknown> | null,
     completionRpcError: null as { message: string } | null,
     rpcCalls: [] as { name: string; args: unknown }[],
     metaSendCalls: [] as Record<string, unknown>[],
@@ -123,6 +124,7 @@ vi.mock('./admin-client', () => {
           steps_executed: [],
           status: 'success',
           completed_wait_continuation_ids: state.completedWaitIds,
+          retry_safety: state.retrySafety,
         },
         error: null,
       };
@@ -181,6 +183,8 @@ vi.mock('./admin-client', () => {
       },
       rpc: (name: string, args: unknown) => {
         state.rpcCalls.push({ name, args });
+        if (name === 'record_automation_retry_safety')
+          return { data: true, error: null };
         if (name === 'complete_automation_wait_continuation') {
           return Promise.resolve({
             data: state.completionRpcError ? null : true,
@@ -234,6 +238,7 @@ beforeEach(() => {
   h.state.ownedConversation = null;
   h.state.ownedTag = null;
   h.state.completedWaitIds = [];
+  h.state.retrySafety = null;
   h.state.completionRpcError = null;
   h.state.rpcCalls = [];
   h.state.metaSendCalls = [];
@@ -438,6 +443,46 @@ describe('Wait continuation replay safety', () => {
     h.state.steps = [step];
   }
 
+  it('does not replay an expired Wait segment with uncertain side-effect evidence', async () => {
+    configure(updateStep());
+    h.state.retrySafety = { reason: 'whatsapp_unknown' };
+    await expect(
+      resumePendingExecution({
+        ...pending(),
+        context: {
+          __retry_safety: { reason: 'whatsapp_unknown', step_id: 'inside' },
+        },
+        attempt_count: 2,
+      })
+    ).rejects.toMatchObject({ code: 'unsafe_to_retry', retryable: false });
+    expect(h.state.metaSendCalls).toEqual([]);
+    expect(h.state.updateCalls).toEqual([]);
+  });
+  it('allows safe scoped continuation after an earlier pre-Wait send', async () => {
+    configure(updateStep());
+    h.state.retrySafety = {
+      reason: 'whatsapp_accepted',
+      step_id: 'before-wait',
+    };
+    await resumePendingExecution({ ...pending(), attempt_count: 2 });
+    expect(h.state.updateCalls).toContainEqual(
+      expect.objectContaining({ table: 'contacts' })
+    );
+    expect(h.state.metaSendCalls).toEqual([]);
+  });
+  it('still finalizes a completed segment without replay after lease recovery', async () => {
+    configure(updateStep());
+    h.state.retrySafety = { reason: 'whatsapp_accepted' };
+    h.state.completedWaitIds = ['pending-1'];
+    await resumePendingExecution({ ...pending(), attempt_count: 2 });
+    expect(h.state.metaSendCalls).toEqual([]);
+    expect(
+      h.state.updateCalls.some(
+        (call) => call.table === 'automation_pending_executions'
+      )
+    ).toBe(true);
+  });
+
   it('executes a normal continuation once, records its stable identity, then marks it done', async () => {
     configure(updateStep());
 
@@ -520,6 +565,62 @@ describe('Wait continuation replay safety', () => {
         (call) => call.name === 'complete_automation_wait_continuation'
       )
     ).toBe(true);
+  });
+
+  it('records in-segment send evidence and refuses replay after completion persistence fails', async () => {
+    configure({
+      id: 'send-step',
+      automation_id: 'a1',
+      step_type: 'send_message',
+      position: 1,
+      parent_step_id: null,
+      step_config: { text: 'Hello after wait' },
+    });
+    h.state.ownedConversation = { id: 'conversation-1' };
+    h.state.completionRpcError = { message: 'database unavailable after send' };
+    const { engineSendText } = await import('./meta-send');
+    vi.mocked(engineSendText).mockImplementationOnce(async (input) => {
+      h.state.metaSendCalls.push(input as unknown as Record<string, unknown>);
+      await input.onBeforeMeta?.();
+      await input.onMetaAccepted?.('inside-wait-wamid');
+      return { whatsapp_message_id: 'inside-wait-wamid' };
+    });
+    await expect(
+      resumePendingExecution(
+        pending({ context: { conversation_id: 'conversation-1' } })
+      )
+    ).rejects.toThrow('wait continuation completion could not be recorded');
+    expect(h.state.rpcCalls).toContainEqual({
+      name: 'record_automation_retry_safety',
+      args: {
+        p_log_id: 'log1',
+        p_account_id: ACCOUNT,
+        p_step_id: 'send-step',
+        p_safety: {
+          reason: 'whatsapp_accepted',
+          step_id: 'send-step',
+          provider_message_id: 'inside-wait-wamid',
+        },
+        p_pending_execution_id: 'pending-1',
+        p_pending_attempt_count: 1,
+      },
+    });
+    await expect(
+      resumePendingExecution(
+        pending({
+          attempt_count: 2,
+          context: {
+            conversation_id: 'conversation-1',
+            __retry_safety: {
+              reason: 'whatsapp_accepted',
+              step_id: 'send-step',
+              provider_message_id: 'inside-wait-wamid',
+            },
+          },
+        })
+      )
+    ).rejects.toMatchObject({ code: 'unsafe_to_retry' });
+    expect(h.state.metaSendCalls).toHaveLength(1);
   });
 
   it('resumes Wait → WhatsApp using the existing send path', async () => {

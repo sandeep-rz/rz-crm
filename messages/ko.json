@@ -1084,6 +1084,31 @@
           "success": "대화 종료됨",
           "failed": "대화 종료 실패"
         }
+      },
+      "columns": {
+        "automation": "자동화",
+        "trigger": "트리거",
+        "contact": "연락처",
+        "reservation": "예약",
+        "time": "실행 시간",
+        "status": "상태",
+        "attempt": "시도",
+        "actions": "작업"
+      },
+      "filters": {
+        "search": "활동 검색",
+        "searchPlaceholder": "연락처 또는 예약…",
+        "all": "모든 상태",
+        "count": "전체 {total}개 중 {shown}개 실행",
+        "noMatches": "일치하는 실행이 없습니다",
+        "adjust": "다른 상태 또는 검색어를 사용해 보세요.",
+        "limit": "최근 실행 100개를 표시합니다. 완료는 자동화 종료를 의미하며 메시지 전달을 확인하는 것은 아닙니다."
+      },
+      "details": "{name} 실행 상세 보기",
+      "retryUnsafe": "이미 외부 작업이 수행되었을 수 있으므로 재시도할 수 없습니다.",
+      "retryBlocked": {
+        "external": "이미 외부 작업이 수행되었을 수 있습니다. 재시도하면 중복될 수 있어 재시도할 수 없습니다.",
+        "whatsapp": "WhatsApp에서 이미 메시지를 수락했을 수 있어 재시도할 수 없습니다."
       }
     },
     "relative": {

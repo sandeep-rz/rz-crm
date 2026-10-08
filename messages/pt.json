@@ -1084,6 +1084,31 @@
           "success": "Conversa encerrada",
           "failed": "Não foi possível encerrar a conversa"
         }
+      },
+      "columns": {
+        "automation": "Automação",
+        "trigger": "Gatilho",
+        "contact": "Contato",
+        "reservation": "Reserva",
+        "time": "Executado em",
+        "status": "Status",
+        "attempt": "Tentativa",
+        "actions": "Ações"
+      },
+      "filters": {
+        "search": "Pesquisar atividade",
+        "searchPlaceholder": "Contato ou reserva…",
+        "all": "Todos os status",
+        "count": "{shown} de {total} execuções",
+        "noMatches": "Nenhuma execução encontrada",
+        "adjust": "Tente outro status ou termo de pesquisa.",
+        "limit": "Mostrando as últimas 100 execuções. Concluído significa que a automação terminou, não que a mensagem foi entregue."
+      },
+      "details": "Ver detalhes da execução de {name}",
+      "retryUnsafe": "Não é possível tentar novamente porque esta execução pode ter realizado uma ação externa.",
+      "retryBlocked": {
+        "external": "Nova tentativa indisponível: esta execução pode ter realizado uma ação externa. Repetir pode duplicá-la.",
+        "whatsapp": "Nova tentativa indisponível: o WhatsApp pode já ter aceitado esta mensagem."
       }
     },
     "relative": {

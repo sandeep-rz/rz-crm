@@ -31,9 +31,11 @@ export async function POST(
       {
         code,
         error:
-          code === 'retry_unavailable'
-            ? 'Unable to queue this execution.'
-            : 'This execution cannot be retried.',
+          code === 'unsafe_to_retry'
+            ? 'Retry unavailable because this execution may already have performed an external action.'
+            : code === 'retry_unavailable'
+              ? 'Unable to queue this execution.'
+              : 'This execution cannot be retried.',
       },
       {
         status:

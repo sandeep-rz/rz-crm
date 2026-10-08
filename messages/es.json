@@ -1084,6 +1084,31 @@
           "success": "Conversación cerrada",
           "failed": "No se pudo cerrar la conversación"
         }
+      },
+      "columns": {
+        "automation": "Automatización",
+        "trigger": "Disparador",
+        "contact": "Contacto",
+        "reservation": "Reserva",
+        "time": "Fecha de ejecución",
+        "status": "Estado",
+        "attempt": "Intento",
+        "actions": "Acciones"
+      },
+      "filters": {
+        "search": "Buscar actividad",
+        "searchPlaceholder": "Contacto o reserva…",
+        "all": "Todos los estados",
+        "count": "{shown} de {total} ejecuciones",
+        "noMatches": "No hay ejecuciones coincidentes",
+        "adjust": "Prueba otro estado o término de búsqueda.",
+        "limit": "Se muestran las últimas 100 ejecuciones. Completado significa que terminó la automatización, no que se entregó el mensaje."
+      },
+      "details": "Ver detalles de ejecución de {name}",
+      "retryUnsafe": "No se puede reintentar porque esta ejecución podría haber realizado una acción externa.",
+      "retryBlocked": {
+        "external": "Reintento no disponible: esta ejecución pudo realizar una acción externa. Reintentar podría duplicarla.",
+        "whatsapp": "Reintento no disponible: WhatsApp podría haber aceptado este mensaje."
       }
     },
     "relative": {

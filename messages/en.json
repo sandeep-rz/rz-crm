@@ -1084,6 +1084,31 @@
           "success": "Conversation closed",
           "failed": "Conversation could not be closed"
         }
+      },
+      "columns": {
+        "automation": "Automation",
+        "trigger": "Trigger",
+        "contact": "Contact",
+        "reservation": "Reservation",
+        "time": "Executed at",
+        "status": "Status",
+        "attempt": "Attempt",
+        "actions": "Actions"
+      },
+      "filters": {
+        "search": "Search activity",
+        "searchPlaceholder": "Contact or reservation…",
+        "all": "All statuses",
+        "count": "{shown} of {total} executions",
+        "noMatches": "No matching executions",
+        "adjust": "Try another status or search term.",
+        "limit": "Showing the latest 100 executions. Completed means the automation finished; it does not confirm message delivery."
+      },
+      "details": "View execution details for {name}",
+      "retryUnsafe": "Retry unavailable because this execution may already have performed an external action.",
+      "retryBlocked": {
+        "external": "Retry unavailable because this execution already performed or may have performed an external action. Retrying could duplicate it.",
+        "whatsapp": "Retry unavailable because WhatsApp may already have accepted this message."
       }
     },
     "relative": {

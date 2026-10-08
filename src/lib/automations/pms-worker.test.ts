@@ -71,6 +71,10 @@ class MemoryStore implements PmsAutomationJobStore {
   async findCompletedExecution() {
     return this.completedExecution ? { logId: 'log1' } : null;
   }
+  blocked: string | null = null;
+  async retryBlockReason() {
+    return this.blocked;
+  }
   async loadAutomation() {
     return this.automation;
   }
@@ -357,4 +361,34 @@ describe('semantic preparation job retry classification', () => {
       expect(store.markCompletedCalls).toBe(0);
     }
   );
+});
+
+it('blocks automatic root restart when a previous attempt has durable side-effect evidence', async () => {
+  const store = new MemoryStore();
+  store.blocked = 'external_action';
+  const dispatch = vi.fn();
+  expect(await processPmsAutomationJob(job, { store, dispatch })).toBe(
+    'failed'
+  );
+  expect(dispatch).not.toHaveBeenCalled();
+  expect(store.failures[0]).toMatchObject({
+    retryable: false,
+    nextAttemptAt: null,
+  });
+});
+it('blocks automatic retry when an executor throws after durably recording acceptance', async () => {
+  const store = new MemoryStore();
+  const dispatch = vi.fn(async () => {
+    store.blocked = 'whatsapp_accepted';
+    throw new Error('local persistence unavailable');
+  });
+  await processPmsAutomationJob(job, {
+    store,
+    dispatch,
+    loadContext: async () => reservation,
+  });
+  expect(store.failures[0]).toMatchObject({
+    retryable: false,
+    nextAttemptAt: null,
+  });
 });

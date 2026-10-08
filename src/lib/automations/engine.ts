@@ -19,6 +19,11 @@ import type {
   CreateDealStepConfig,
   AssignConversationStepConfig,
 } from '@/types';
+import {
+  isDuplicateSensitiveAction,
+  isWhatsAppAction,
+  type RetrySafety,
+} from './retry-safety';
 import { supabaseAdmin } from './admin-client';
 import {
   addContactTagIfAbsent,
@@ -51,6 +56,8 @@ import { TemplatePreparationError } from '@/lib/message-preparation/errors';
 // ------------------------------------------------------------
 
 export interface AutomationContext {
+  /** Internal latch on the existing pending row; stripped before executing/scheduling. */
+  __retry_safety?: RetrySafety;
   /** Raw message text, for keyword_match + message_content conditions. */
   message_text?: string;
   /** Conversation the event belongs to, if any. */
@@ -77,7 +84,8 @@ export interface AutomationExecutionResult {
     | 'already_completed'
     | 'already_running'
     | 'ineligible'
-    | 'reservation_changed';
+    | 'reservation_changed'
+    | 'unsafe_to_retry';
 }
 
 export interface AutomationExecutionIdentity {
@@ -91,7 +99,8 @@ type PmsExecutionGateDisposition =
   | 'already_completed'
   | 'already_running'
   | 'ineligible'
-  | 'reservation_changed';
+  | 'reservation_changed'
+  | 'unsafe_to_retry';
 
 export interface DispatchInput {
   /** Account-level tenancy key. Drives the lookup of which active
@@ -255,6 +264,7 @@ export async function resumePendingExecution(pending: {
   parent_step_id: string | null;
   branch: 'yes' | 'no' | null;
   next_step_position: number;
+  attempt_count?: number;
   context: AutomationContext;
 }): Promise<void> {
   const db = supabaseAdmin();
@@ -300,10 +310,15 @@ export async function resumePendingExecution(pending: {
     return;
   }
 
+  const { __retry_safety: segmentSafety, ...context } = pending.context ?? {};
+  if (segmentSafety) {
+    throw new AutomationTemplateSendError('unsafe_to_retry', false);
+  }
+
   await executeStepsFrom({
     automation: automation as Automation,
     contactId: pending.contact_id,
-    context: pending.context ?? {},
+    context,
     parentStepId: pending.parent_step_id,
     branch: pending.branch,
     startPosition: pending.next_step_position,
@@ -311,6 +326,10 @@ export async function resumePendingExecution(pending: {
     triggerEvent: 'resumed_wait',
     triggerJobExecution: false,
     continuationId: pending.id,
+    retrySafetyContinuation: {
+      id: pending.id,
+      attemptCount: pending.attempt_count ?? 1,
+    },
   });
   await markPending(pending.id, 'done');
 }
@@ -356,6 +375,15 @@ async function executeAutomation(
         status: 'suppressed',
         errorMessage: null,
         disposition: gate.disposition,
+      };
+    }
+    if (gate.disposition === 'unsafe_to_retry') {
+      return {
+        logId: gate.automation_log_id,
+        status: 'failed',
+        errorMessage: 'unsafe_to_retry',
+        retryable: false,
+        disposition: 'unsafe_to_retry',
       };
     }
     if (!gate.automation_log_id) {
@@ -446,7 +474,7 @@ async function executeAutomation(
 
   const { data: finalLog, error: finalLogError } = await db
     .from('automation_logs')
-    .select('status, error_message')
+    .select('status, error_message, retry_safety')
     .eq('id', log.id)
     .single();
   if (finalLogError || !finalLog) {
@@ -457,9 +485,11 @@ async function executeAutomation(
     status: finalLog.status as AutomationExecutionResult['status'],
     errorMessage: finalLog.error_message as string | null,
     disposition: 'executed',
-    ...(failure.retryable !== undefined
-      ? { retryable: failure.retryable }
-      : {}),
+    ...(finalLog.retry_safety
+      ? { retryable: false }
+      : failure.retryable !== undefined
+        ? { retryable: failure.retryable }
+        : {}),
   };
 }
 
@@ -476,6 +506,10 @@ interface ExecuteArgs {
   triggerJobExecution: boolean;
   /** Stable automation_pending_executions.id for a resumed Wait segment. */
   continuationId?: string | null;
+  /** Kept across child scopes; completion identity has different scope rules. */
+  retrySafetyContinuation?: { id: string; attemptCount: number };
+  onBeforeMeta?: () => Promise<void>;
+  onMetaAccepted?: (messageId: string) => Promise<void>;
 }
 
 async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
@@ -652,6 +686,66 @@ export async function executeAutomationStep(
   step: AutomationStep,
   args: ExecuteArgs
 ): Promise<string> {
+  // Ordinary non-PMS roots have no restart path; all Wait segments can be reclaimed.
+  if (
+    !isDuplicateSensitiveAction(step) ||
+    (!args.triggerJobExecution && !args.retrySafetyContinuation)
+  )
+    return executeAction(step, args);
+  // A durable conservative guard, not a checkpoint: never replay an action
+  // whose remote outcome could be unknown after a crash or local failure.
+  const record = async (safety: RetrySafety | null) => {
+    const { data, error } = await supabaseAdmin().rpc(
+      'record_automation_retry_safety',
+      {
+        p_log_id: args.logId,
+        p_account_id: args.automation.account_id,
+        p_step_id: step.id,
+        p_safety: safety,
+        p_pending_execution_id: args.retrySafetyContinuation?.id ?? null,
+        p_pending_attempt_count:
+          args.retrySafetyContinuation?.attemptCount ?? null,
+      }
+    );
+    if (error || data !== true)
+      throw new AutomationTemplateSendError('retry_safety_unavailable', false);
+  };
+  const whatsapp = isWhatsAppAction(step);
+  if (!whatsapp) await record({ step_id: step.id, reason: 'external_action' });
+  let accepted = false;
+  try {
+    const detail = await executeAction(step, {
+      ...args,
+      onBeforeMeta: () =>
+        record({ step_id: step.id, reason: 'whatsapp_unknown' }),
+      onMetaAccepted: async (messageId) => {
+        accepted = true;
+        await record({
+          step_id: step.id,
+          reason: 'whatsapp_accepted',
+          provider_message_id: messageId,
+        });
+      },
+    });
+    // The real WhatsApp sender records acceptance before local persistence.
+    // Other actions remain guarded from before their non-idempotent operation.
+    return detail;
+  } catch (error) {
+    if (
+      !accepted &&
+      (error instanceof TemplatePreparationError ||
+        (error instanceof AutomationTemplateSendError &&
+          error.failedBeforeMetaRequest))
+    )
+      await record(null);
+    throw error;
+  }
+}
+
+async function executeAction(
+  step: AutomationStep,
+  args: ExecuteArgs
+): Promise<string> {
   const db = supabaseAdmin();
 
   switch (step.step_type) {
@@ -667,6 +761,8 @@ export async function executeAutomationStep(
         conversationId,
         contactId: args.contactId,
         text,
+        onBeforeMeta: args.onBeforeMeta,
+        onMetaAccepted: args.onMetaAccepted,
       });
       return `sent via Meta (${whatsapp_message_id})`;
     }
@@ -688,6 +784,8 @@ export async function executeAutomationStep(
         conversationId,
         contactId: args.contactId,
         payload,
+        onBeforeMeta: args.onBeforeMeta,
+        onMetaAccepted: args.onMetaAccepted,
       });
       return `interactive sent via Meta (${whatsapp_message_id})`;
     }
@@ -729,6 +827,8 @@ export async function executeAutomationStep(
           connectionId: prepared.template.connectionId,
           preparedTemplate: prepared,
           templatePayload,
+          onBeforeMeta: args.onBeforeMeta,
+          onMetaAccepted: args.onMetaAccepted,
         });
         return `template sent via Meta (${whatsapp_message_id})`;
       } catch (error) {

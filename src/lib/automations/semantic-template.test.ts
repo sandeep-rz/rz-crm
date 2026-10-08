@@ -12,6 +12,9 @@ const h = vi.hoisted(() => ({
   assemble: vi.fn(),
   prepare: vi.fn(),
   send: vi.fn(),
+  text: vi.fn(),
+  interactive: vi.fn(),
+  safetyError: false,
   legacy: vi.fn(),
   connection: vi.fn(),
   conversation: vi.fn(),
@@ -24,6 +27,7 @@ const h = vi.hoisted(() => ({
   automation: {} as Automation,
 }));
 vi.mock('server-only', () => ({}));
+vi.mock('@/lib/webhooks/ssrf', () => ({ isDeliverableUrl: async () => true }));
 vi.mock('@/lib/whatsapp/meta-template-payload', async (original) => {
   const real =
     await original<typeof import('@/lib/whatsapp/meta-template-payload')>();
@@ -40,8 +44,8 @@ vi.mock('@/lib/message-preparation/prepare-template-message', () => ({
 }));
 vi.mock('./meta-send', () => ({
   engineSendTemplate: h.send,
-  engineSendText: vi.fn(),
-  engineSendInteractive: vi.fn(),
+  engineSendText: h.text,
+  engineSendInteractive: h.interactive,
 }));
 vi.mock('@/lib/message-variables', () => ({
   buildAndResolveMessageVariables: h.legacy,
@@ -55,13 +59,37 @@ vi.mock('@/lib/whatsapp/resolve-conversation', () => ({
 }));
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
-    rpc: async (name: string) => ({
-      data:
-        name === 'begin_pms_automation_execution'
-          ? [{ automation_log_id: 'log', disposition: h.gate }]
-          : null,
-      error: null,
-    }),
+    rpc: async (name: string, params: Record<string, unknown>) => {
+      if (name === 'record_automation_retry_safety') {
+        if (h.safetyError)
+          return { data: false, error: { message: 'unavailable' } };
+        const safety = params.p_safety as Record<string, unknown> | null;
+        const existing = h.log.retry_safety as
+          Record<string, unknown> | undefined;
+        if (
+          safety &&
+          (!existing ||
+            (existing.reason === 'whatsapp_unknown' &&
+              existing.step_id === params.p_step_id &&
+              safety.reason === 'whatsapp_accepted'))
+        )
+          h.log.retry_safety = safety;
+        if (
+          !safety &&
+          existing?.step_id === params.p_step_id &&
+          existing?.reason === 'whatsapp_unknown'
+        )
+          h.log.retry_safety = null;
+        return { data: true, error: null };
+      }
+      return {
+        data:
+          name === 'begin_pms_automation_execution'
+            ? [{ automation_log_id: 'log', disposition: h.gate }]
+            : null,
+        error: null,
+      };
+    },
     from: (table: string) => {
       let update: Record<string, unknown> | undefined;
       let nested = false;
@@ -84,8 +112,11 @@ vi.mock('./admin-client', () => ({
         single: () => q,
         then: (resolve: (value: unknown) => unknown) => {
           if (update) Object.assign(h.log, update);
-          const data =
-            table === 'contacts'
+          const data = ['pipelines', 'pipeline_stages', 'accounts'].includes(
+            table
+          )
+            ? { id: 'owned' }
+            : table === 'contacts'
               ? { id: 'recipient' }
               : table === 'automations'
                 ? h.automation
@@ -158,6 +189,17 @@ const args = () =>
 beforeEach(() => {
   vi.resetAllMocks();
   h.filters = [];
+  h.safetyError = false;
+  h.text.mockImplementation(async (input) => {
+    await input.onBeforeMeta?.();
+    await input.onMetaAccepted?.('text-id');
+    return { whatsapp_message_id: 'text-id' };
+  });
+  h.interactive.mockImplementation(async (input) => {
+    await input.onBeforeMeta?.();
+    await input.onMetaAccepted?.('interactive-id');
+    return { whatsapp_message_id: 'interactive-id' };
+  });
   h.gate = 'started';
   h.conversationFound = true;
   h.log = { id: 'log', status: 'processing', steps_executed: [] };
@@ -173,7 +215,11 @@ beforeEach(() => {
   h.steps = [action()];
   h.nestedSteps = [];
   h.prepare.mockResolvedValue(structuredClone(prepared));
-  h.send.mockResolvedValue({ whatsapp_message_id: 'meta-id' });
+  h.send.mockImplementation(async (input) => {
+    await input.onBeforeMeta?.();
+    await input.onMetaAccepted?.('meta-id');
+    return { whatsapp_message_id: 'meta-id' };
+  });
   h.connection.mockResolvedValue({ id: 'template-connection' });
   h.conversation.mockResolvedValue({ conversationId: 'conversation-template' });
 });
@@ -397,16 +443,28 @@ describe('semantic automation execution', () => {
   it.each([400, 401, 403, 429, 500, 503])(
     'sanitizes Meta HTTP %s and classifies retries',
     async (httpStatus) => {
-      h.send.mockRejectedValue(
-        new MetaApiError('SENSITIVE PROVIDER TEXT', { httpStatus, code: 100 })
-      );
-      const result = await runAutomationForTrigger('automation', {
-        accountId: 'account',
-        triggerType: 'reservation_confirmed',
-        contactId: 'recipient',
-        context: args().context,
+      h.send.mockImplementation(async (input) => {
+        await input.onBeforeMeta();
+        throw new MetaApiError('SENSITIVE PROVIDER TEXT', {
+          httpStatus,
+          code: 100,
+        });
       });
-      expect(result?.retryable).toBe(httpStatus === 429 || httpStatus >= 500);
+      const result = await runAutomationForTrigger(
+        'automation',
+        {
+          accountId: 'account',
+          triggerType: 'reservation_confirmed',
+          contactId: 'recipient',
+          context: args().context,
+        },
+        {
+          triggerJobId: 'job',
+          attemptCount: 1,
+          expectedReservationUpdatedAt: 'version',
+        }
+      );
+      expect(result?.retryable).toBe(false);
       expect(result?.errorMessage).not.toContain('SENSITIVE');
     }
   );
@@ -533,4 +591,201 @@ describe('semantic automation execution', () => {
       ).toEqual([expect.objectContaining({ path: 'steps[0].template_id' })]);
     }
   );
+});
+
+describe('whole-execution duplicate retry containment', () => {
+  const run = () =>
+    runAutomationForTrigger(
+      'automation',
+      {
+        accountId: 'account',
+        triggerType: 'reservation_confirmed',
+        contactId: 'recipient',
+        context: args().context,
+      },
+      {
+        triggerJobId: 'job',
+        attemptCount: 1,
+        expectedReservationUpdatedAt: 'version',
+      }
+    );
+  it('keeps a clearly pre-Meta preparation failure retryable', async () => {
+    h.prepare.mockRejectedValue(
+      new TemplatePreparationError('runtime_provider_failure', {}, true)
+    );
+    expect(await run()).toMatchObject({ status: 'failed', retryable: true });
+    expect(h.log.retry_safety ?? null).toBeNull();
+    expect(h.send).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['send_template', { template_id: templateId }],
+    ['send_message', { text: 'Hello' }],
+    [
+      'send_buttons',
+      {
+        kind: 'buttons',
+        body: 'Hello',
+        buttons: [{ id: 'yes', title: 'Yes' }],
+      },
+    ],
+    [
+      'send_list',
+      {
+        kind: 'list',
+        body: 'Hello',
+        button_label: 'Choose',
+        sections: [{ rows: [{ id: 'yes', title: 'Yes' }] }],
+      },
+    ],
+    ['send_webhook', { url: 'https://example.com/hook' }],
+    [
+      'create_deal',
+      { pipeline_id: 'pipeline', stage_id: 'stage', title: 'Booking' },
+    ],
+    ['assign_conversation', { mode: 'round_robin' }],
+  ])(
+    'blocks replay after successful %s and a later failure',
+    async (type, config) => {
+      const first = {
+        ...action(),
+        id: 'first',
+        step_type: type,
+        step_config: config,
+      } as AutomationStep;
+      const later = { ...action(), id: 'later', position: 1 };
+      h.steps = [first, later];
+      h.prepare.mockReset();
+      if (type === 'send_template') h.prepare.mockResolvedValueOnce(prepared);
+      h.prepare.mockImplementationOnce(async () => {
+        expect(h.log.retry_safety).toBeTruthy(); // durable before later action begins
+        throw new TemplatePreparationError(
+          'runtime_provider_failure',
+          {},
+          true
+        );
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('', { status: 200 }))
+      );
+      try {
+        expect(await run()).toMatchObject({
+          status: 'failed',
+          retryable: false,
+        });
+        expect(h.log.steps_executed).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ step_id: 'first', status: 'success' }),
+            expect.objectContaining({ step_id: 'later', status: 'failed' }),
+          ])
+        );
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+  );
+  it('does not send if the durable safety write fails', async () => {
+    h.safetyError = true;
+    expect(await run()).toMatchObject({ status: 'failed', retryable: false });
+    expect(h.log.retry_safety).toBeUndefined();
+  });
+  it('keeps unknown Meta outcomes non-retryable', async () => {
+    h.send.mockImplementation(async (input) => {
+      await input.onBeforeMeta();
+      throw new Error('connection lost after request');
+    });
+    expect(await run()).toMatchObject({ status: 'failed', retryable: false });
+    expect(h.log.retry_safety).toMatchObject({ reason: 'whatsapp_unknown' });
+  });
+  it('preserves accepted wamid even when message persistence fails', async () => {
+    h.send.mockImplementation(async (input) => {
+      await input.onBeforeMeta();
+      await input.onMetaAccepted('accepted-wamid');
+      throw new AutomationTemplateSendError(
+        'meta_sent_message_persistence_failed',
+        false
+      );
+    });
+    expect(await run()).toMatchObject({ status: 'failed', retryable: false });
+    expect(h.log.retry_safety).toMatchObject({
+      reason: 'whatsapp_accepted',
+      provider_message_id: 'accepted-wamid',
+    });
+  });
+  it.each(['external_action', 'whatsapp_accepted'])(
+    'preserves earlier %s across later pre-request failure and acceptance',
+    async (reason) => {
+      const earlier = {
+        reason,
+        step_id: 'earlier',
+        provider_message_id: 'earlier-wamid',
+      };
+      h.log.retry_safety = earlier;
+      h.send.mockImplementationOnce(async (input) => {
+        await input.onBeforeMeta();
+        throw new AutomationTemplateSendError(
+          'pre_request_failure',
+          true,
+          true
+        );
+      });
+      expect(await run()).toMatchObject({ retryable: false });
+      expect(h.log.retry_safety).toEqual(earlier);
+      await executeAutomationStep(action(), args());
+      expect(h.log.retry_safety).toEqual(earlier);
+    }
+  );
+  it('clears the same-step unknown latch only with structured pre-request proof', async () => {
+    h.send.mockImplementationOnce(async (input) => {
+      await input.onBeforeMeta();
+      throw new AutomationTemplateSendError('pre_request_failure', true, true);
+    });
+    expect(await run()).toMatchObject({ status: 'failed', retryable: true });
+    expect(h.log.retry_safety).toBeNull();
+  });
+  it('ordinary non-PMS root sends without depending on the safety RPC', async () => {
+    h.safetyError = true;
+    const result = await runAutomationForTrigger('automation', {
+      accountId: 'account',
+      triggerType: 'reservation_confirmed',
+      contactId: 'recipient',
+      context: args().context,
+    });
+    expect(result?.status).toBe('success');
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.send.mock.calls[0][0].onBeforeMeta).toBeUndefined();
+    expect(h.log.retry_safety).toBeUndefined();
+  });
+  it.each([
+    ['stale completed PMS root', true, undefined],
+    ['stale Wait claim', false, { id: 'pending', attemptCount: 2 }],
+  ] as const)(
+    '%s cannot cross the external boundary after fencing rejects it',
+    async (_label, root, continuation) => {
+      h.safetyError = true;
+      const externalAction = vi.fn();
+      h.send.mockImplementationOnce(async (input) => {
+        await input.onBeforeMeta?.();
+        externalAction();
+        return { whatsapp_message_id: 'must-not-send' };
+      });
+      await expect(
+        executeAutomationStep(action(), {
+          ...args(),
+          triggerJobExecution: root,
+          retrySafetyContinuation: continuation,
+        })
+      ).rejects.toMatchObject({ code: 'retry_safety_unavailable' });
+      expect(externalAction).not.toHaveBeenCalled();
+    }
+  );
+  it('non-PMS Wait continuation still requires durable replay protection', async () => {
+    await executeAutomationStep(action(), {
+      ...args(),
+      triggerJobExecution: false,
+      retrySafetyContinuation: { id: 'pending', attemptCount: 1 },
+    });
+    expect(h.log.retry_safety).toMatchObject({ reason: 'whatsapp_accepted' });
+    expect(h.send.mock.calls[0][0].onBeforeMeta).toEqual(expect.any(Function));
+  });
 });

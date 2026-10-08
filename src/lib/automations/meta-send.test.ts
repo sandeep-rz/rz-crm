@@ -196,3 +196,44 @@ describe('existing automation sender with semantic payload', () => {
     expect(h.lookup).not.toHaveBeenCalled();
   });
 });
+
+it('records Meta acceptance before any local persistence and preserves wamid on insert failure', async () => {
+  h.insertError = { message: 'unavailable' };
+  const onMetaAccepted = vi.fn(async (id: string) => {
+    expect(id).toBe('provider-id');
+    expect(h.inserts).toEqual([]);
+    expect(h.updates).toEqual([]);
+  });
+  await expect(
+    engineSendTemplate({ ...args(), onMetaAccepted })
+  ).rejects.toMatchObject({
+    code: 'meta_sent_message_persistence_failed',
+    retryable: false,
+  });
+  expect(onMetaAccepted).toHaveBeenCalledOnce();
+});
+it('does not proceed with local persistence when acceptance evidence cannot be saved', async () => {
+  await expect(
+    engineSendTemplate({
+      ...args(),
+      onMetaAccepted: async () => {
+        throw new Error('safety write failed');
+      },
+    })
+  ).rejects.toThrow('safety write failed');
+  expect(h.send).toHaveBeenCalledOnce();
+  expect(h.inserts).toEqual([]);
+});
+
+it('never calls Meta when the durable before-request guard fails', async () => {
+  await expect(
+    engineSendTemplate({
+      ...args(),
+      onBeforeMeta: async () => {
+        throw new Error('guard unavailable');
+      },
+    })
+  ).rejects.toThrow('guard unavailable');
+  expect(h.send).not.toHaveBeenCalled();
+  expect(h.inserts).toEqual([]);
+});

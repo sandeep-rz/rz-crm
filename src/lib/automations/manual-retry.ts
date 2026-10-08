@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { RetryBlockReason } from './retry-safety';
 import type { AutomationLog } from '@/types';
 import { supabaseAdmin } from './admin-client';
 
@@ -10,7 +11,11 @@ export type ManualRetryState =
   | 'not_failed'
   | 'unsafe_to_retry';
 export type ActivityRetryState =
-  'eligible' | 'already_completed' | 'already_retried' | 'not_eligible';
+  | 'unsafe_to_retry'
+  | 'eligible'
+  | 'already_completed'
+  | 'already_retried'
+  | 'not_eligible';
 export type ActivityFailureReason =
   | 'connection'
   | 'template'
@@ -30,6 +35,7 @@ export interface RetryActivityLog extends Pick<
   | 'trigger_job_execution_state'
 > {
   manual_retry_state?: ActivityRetryState;
+  retry_block_reason?: RetryBlockReason;
   contact?: { name: string | null; phone: string | null } | null;
   reservation_reference?: string | null;
   job_status?: string;

@@ -153,7 +153,7 @@ it('shows host context and distinct failed/completed attempts without technical 
   expect(host.textContent).toContain('Booking welcome');
   expect(host.textContent).toContain('Reservation Confirmed');
   expect(host.textContent).toContain('Taylor');
-  expect(host.textContent).toContain('Reservation BOOK-102');
+  expect(host.textContent).toContain('BOOK-102');
   expect(host.querySelector('time')?.dateTime).toBe(base.created_at);
   expect(host.textContent).toContain('Oct 7, 2026, 10:30 AM');
   expect(
@@ -203,7 +203,7 @@ it('processing state takes precedence over the placeholder failed status', async
   ];
   await load();
   expect(host.textContent).toContain('Processing');
-  expect(host.textContent).not.toContain('Failed');
+  expect(host.querySelector('tbody')?.textContent).not.toContain('Failed');
   expect(host.textContent).not.toContain('could not be sent');
   expect(
     [...host.querySelectorAll('button')].some((b) => b.textContent === 'Retry')
@@ -221,7 +221,7 @@ it('queued retry preserves the failed attempt and does not label older attempts 
     },
   ];
   await load();
-  const rows = host.querySelectorAll('li');
+  const rows = host.querySelectorAll('tr[data-execution]');
   expect(rows[0].textContent).toContain('Failed');
   expect(rows[0].textContent).toContain('Queued');
   expect(rows[1].textContent).not.toContain('Queued');
@@ -334,4 +334,73 @@ it('polls queued retries into a new processing/completed attempt while preservin
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('uses a table with headers and filters executions by status and contact/reference', async () => {
+  logs = [
+    { ...base },
+    {
+      ...base,
+      id: 'success',
+      status: 'success',
+      contact: { name: 'Morgan' },
+      reservation_reference: 'BOOK-200',
+      manual_retry_state: 'already_completed',
+    },
+  ];
+  await load();
+  expect(
+    [...host.querySelectorAll('th')].map((cell) => cell.textContent)
+  ).toEqual([
+    'Trigger',
+    'Contact',
+    'Reservation',
+    'Executed at',
+    'Status',
+    'Attempt',
+    'Actions',
+  ]);
+  expect(host.querySelector('h1')?.textContent).toBe('Booking welcome');
+  for (const row of host.querySelectorAll('tr[data-execution]')) {
+    expect(row.textContent).not.toContain('Booking welcome');
+  }
+  expect(host.querySelector('input')?.placeholder).toBe('Contact or reservation…');
+  expect(host.querySelectorAll('tr[data-execution]')).toHaveLength(2);
+  const status = host.querySelector('select')!;
+  await act(async () => {
+    status.value = 'completed';
+    status.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  expect(host.querySelectorAll('tr[data-execution]')).toHaveLength(1);
+  expect(host.querySelector('tbody')?.textContent).toContain('Morgan');
+  const search = host.querySelector('input')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value'
+    )!.set!.call(search, 'BOOK-102');
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(host.querySelectorAll('tr[data-execution]')).toHaveLength(0);
+  expect(host.querySelector('tbody')?.textContent).toContain(
+    'No matching executions'
+  );
+});
+it('explains blocked WhatsApp retries without exposing provider IDs', async () => {
+  logs = [
+    {
+      ...base,
+      manual_retry_state: 'unsafe_to_retry',
+      retry_block_reason: 'whatsapp_accepted',
+    },
+  ];
+  await load();
+  expect(host.textContent).toContain(
+    'WhatsApp may already have accepted this message'
+  );
+  expect(
+    [...host.querySelectorAll('button')].some(
+      (button) => button.textContent === 'Retry'
+    )
+  ).toBe(false);
 });

@@ -44,6 +44,7 @@ export interface PmsAutomationJobStore {
   findCompletedExecution(
     job: AutomationTriggerJobClaim
   ): Promise<{ logId: string } | null>;
+  retryBlockReason(job: AutomationTriggerJobClaim): Promise<string | null>;
   loadAutomation(job: AutomationTriggerJobClaim): Promise<Automation | null>;
   markCompleted(
     job: AutomationTriggerJobClaim,
@@ -117,6 +118,9 @@ export async function processPmsAutomationJob(
       await store.markCompleted(job, now().toISOString());
       return 'completed';
     }
+
+    if (await store.retryBlockReason(job))
+      throw new PmsAutomationJobError('unsafe_to_retry', false);
 
     const automation = await store.loadAutomation(job);
     if (!automation) {
@@ -253,8 +257,14 @@ export async function processPmsAutomationJob(
     await store.markCompleted(job, now().toISOString());
     return 'completed';
   } catch (error) {
-    const retryable =
+    let retryable =
       error instanceof PmsAutomationJobError ? error.retryable : true;
+    // Re-read durable evidence even when the executor crashed/threw before returning a result.
+    try {
+      if (await store.retryBlockReason(job)) retryable = false;
+    } catch {
+      retryable = false; // Cannot prove that restarting is safe.
+    }
     const message =
       error instanceof Error ? error.message : 'PMS automation job failed.';
     const nextAttemptAt = retryable ? retryAt(job.attemptCount, now()) : null;
@@ -330,6 +340,16 @@ export class SupabasePmsAutomationJobStore implements PmsAutomationJobStore {
       processingStartedAt: row.processing_started_at as string,
       attemptCount: row.attempt_count as number,
     }));
+  }
+
+  async retryBlockReason(job: AutomationTriggerJobClaim) {
+    const { data, error } = await this.db.rpc('automation_retry_block_reason', {
+      p_job_id: job.id,
+      p_account_id: job.accountId,
+    });
+    if (error)
+      throw new PmsAutomationJobError('Retry safety lookup failed.', false);
+    return data as string | null;
   }
 
   async loadAutomation(job: AutomationTriggerJobClaim) {

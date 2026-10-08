@@ -29,6 +29,8 @@ import { renderTemplateBody } from '@/lib/whatsapp/template-body';
 // ------------------------------------------------------------
 
 interface SendTextArgs {
+  onBeforeMeta?: () => Promise<void>;
+  onMetaAccepted?: (messageId: string) => Promise<void>;
   /** Account-level tenancy key. Drives contact + whatsapp_config
    *  lookups so an automation authored by user A still sends through
    *  the WhatsApp number user B saved on the same account. */
@@ -43,6 +45,8 @@ interface SendTextArgs {
 }
 
 interface SendTemplateArgs {
+  onBeforeMeta?: () => Promise<void>;
+  onMetaAccepted?: (messageId: string) => Promise<void>;
   accountId: string;
   userId: string;
   conversationId: string;
@@ -67,6 +71,8 @@ export async function engineSendTemplate(
 }
 
 interface SendInteractiveArgs {
+  onBeforeMeta?: () => Promise<void>;
+  onMetaAccepted?: (messageId: string) => Promise<void>;
   accountId: string;
   userId: string;
   conversationId: string;
@@ -89,7 +95,14 @@ export async function engineSendInteractive(
   args: SendInteractiveArgs
 ): Promise<{ whatsapp_message_id: string }> {
   const { payload, accountId, userId, conversationId, contactId } = args;
-  const common = { accountId, userId, conversationId, contactId };
+  const common = {
+    accountId,
+    userId,
+    conversationId,
+    contactId,
+    onBeforeMeta: args.onBeforeMeta,
+    onMetaAccepted: args.onMetaAccepted,
+  };
   if (payload.kind === 'buttons') {
     return engineSendInteractiveButtons({
       ...common,
@@ -174,6 +187,7 @@ async function sendViaMeta(
   const accessToken = config.accessToken;
 
   const attempt = async (phone: string): Promise<string> => {
+    await input.onBeforeMeta?.();
     if (input.kind === 'template') {
       try {
         const r = await sendTemplateMessage({
@@ -257,6 +271,7 @@ async function sendViaMeta(
     }
   }
   if (lastError) throw lastError;
+  await input.onMetaAccepted?.(waMessageId);
 
   if (sendTarget.isPhone && workingPhone !== sanitized) {
     await db

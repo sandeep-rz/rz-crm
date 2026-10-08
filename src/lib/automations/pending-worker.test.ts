@@ -25,7 +25,14 @@ function row(id: string, attemptCount = 1): PendingExecutionRow {
   };
 }
 
-function fakeDb(rows: PendingExecutionRow[]) {
+function fakeDb(
+  rows: PendingExecutionRow[],
+  safety: Record<string, unknown> = {
+    context: {},
+    retry_safety: null,
+    completed_wait_continuation_ids: [],
+  }
+) {
   const rpc = vi.fn(async () => ({ data: rows, error: null }));
   const updates: { payload: Record<string, unknown>; filters: unknown[][] }[] =
     [];
@@ -38,6 +45,8 @@ function fakeDb(rows: PendingExecutionRow[]) {
           filters: [] as unknown[][],
         };
         const builder = {
+          select: () => builder,
+          single: async () => ({ data: safety, error: null }),
           update(payload: Record<string, unknown>) {
             operation.payload = payload;
             return builder;
@@ -148,4 +157,57 @@ describe('runPendingExecutionWorker', () => {
     expect(pendingRetryDelayMs(3)).toBe(240_000);
     expect(pendingRetryDelayMs(99)).toBe(3_600_000);
   });
+});
+
+it('does not schedule a continuation retry after uncertain external action evidence', async () => {
+  const harness = fakeDb([row('bad')], {
+    context: {
+      __retry_safety: { reason: 'whatsapp_unknown', step_id: 'inside' },
+    },
+    retry_safety: { reason: 'whatsapp_unknown' },
+    completed_wait_continuation_ids: [],
+  });
+  expect(
+    await runPendingExecutionWorker({
+      db: harness.db,
+      resume: async () => {
+        throw new Error('post-send crash');
+      },
+    })
+  ).toMatchObject({ failed: 1, retried: 0 });
+  expect(harness.updates[0].payload).toMatchObject({
+    status: 'failed',
+    next_attempt_at: null,
+  });
+});
+it('still retries completion bookkeeping when the continuation already has its completion marker', async () => {
+  const harness = fakeDb([row('done')], {
+    retry_safety: { reason: 'whatsapp_accepted' },
+    completed_wait_continuation_ids: ['done'],
+  });
+  expect(
+    await runPendingExecutionWorker({
+      db: harness.db,
+      resume: async () => {
+        throw new Error('mark done failed');
+      },
+    })
+  ).toMatchObject({ failed: 0, retried: 1 });
+});
+
+it('retries a harmless continuation despite a pre-Wait execution guard', async () => {
+  const harness = fakeDb([row('safe', 2)], {
+    retry_safety: { reason: 'whatsapp_accepted', step_id: 'before-wait' },
+    completed_wait_continuation_ids: [],
+    context: {},
+  });
+  expect(
+    await runPendingExecutionWorker({
+      db: harness.db,
+      resume: async () => {
+        throw new Error('safe continuation lookup failed');
+      },
+    })
+  ).toMatchObject({ failed: 0, retried: 1 });
+  expect(harness.updates[0].payload.status).toBe('pending');
 });

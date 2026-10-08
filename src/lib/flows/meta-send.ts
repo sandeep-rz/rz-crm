@@ -310,6 +310,9 @@ export async function engineSendMedia(
 }
 
 interface SendInteractiveButtonsEngineArgs {
+  /** Automation retry containment; unused by ordinary Flow sends. */
+  onBeforeMeta?: () => Promise<void>;
+  onMetaAccepted?: (messageId: string) => Promise<void>;
   accountId: string;
   userId: string;
   conversationId: string;
@@ -321,6 +324,9 @@ interface SendInteractiveButtonsEngineArgs {
 }
 
 interface SendInteractiveListEngineArgs {
+  /** Automation retry containment; unused by ordinary Flow sends. */
+  onBeforeMeta?: () => Promise<void>;
+  onMetaAccepted?: (messageId: string) => Promise<void>;
   accountId: string;
   userId: string;
   conversationId: string;
@@ -402,6 +408,7 @@ async function sendInteractiveViaMeta(
   );
 
   const attempt = async (phone: string): Promise<string> => {
+    await input.onBeforeMeta?.();
     if (input.kind === 'buttons') {
       const r = await sendInteractiveButtons({
         phoneNumberId,
@@ -447,6 +454,7 @@ async function sendInteractiveViaMeta(
     }
   }
   if (lastError) throw lastError;
+  await input.onMetaAccepted?.(waMessageId);
 
   if (sendTarget.isPhone && workingPhone !== sanitized) {
     await db

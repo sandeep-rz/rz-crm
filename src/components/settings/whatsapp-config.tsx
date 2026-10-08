@@ -13,6 +13,8 @@ import {
   AlertTriangle,
   RotateCcw,
 } from 'lucide-react';
+import { useSavedWhatsAppSignups } from '@/hooks/use-saved-whatsapp-signups';
+import { WhatsAppEmbeddedSignup } from './whatsapp-embedded-signup';
 import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
 import { useAuth } from '@/hooks/use-auth';
 import { useTranslations } from 'next-intl';
@@ -93,6 +95,14 @@ export function WhatsAppConfig() {
   const shared = useWhatsAppCapability();
   const connections = shared.connections;
   const invalidate = shared.invalidate;
+  const savedSignups = useSavedWhatsAppSignups(
+    user?.id,
+    accountId,
+    canEditSettings && !authLoading && !profileLoading
+  );
+  const signupChanged = async () => {
+    await Promise.all([invalidate(), savedSignups.refresh()]);
+  };
   const [displayName, setDisplayName] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
@@ -657,7 +667,11 @@ export function WhatsAppConfig() {
       {shared.status === 'error' ? null : connections.length === 0 ? (
         <WhatsAppEmptyState
           canConnect={canEditSettings}
-          onConnect={handleAddConnection}
+          onConnect={() =>
+            document
+              .getElementById('embedded-whatsapp-connect')
+              ?.scrollIntoView({ behavior: 'smooth' })
+          }
         />
       ) : (
         <div className="mb-8 space-y-4">
@@ -671,7 +685,13 @@ export function WhatsAppConfig() {
               </p>
             </div>
             {canEditSettings && (
-              <AddWhatsAppConnectionButton onClick={handleAddConnection} />
+              <AddWhatsAppConnectionButton
+                onClick={() =>
+                  document
+                    .getElementById('embedded-whatsapp-connect')
+                    ?.scrollIntoView({ behavior: 'smooth' })
+                }
+              />
             )}
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -686,6 +706,20 @@ export function WhatsAppConfig() {
               />
             ))}
           </div>
+        </div>
+      )}
+
+      {canEditSettings && (
+        <div id="embedded-whatsapp-connect" className="mb-6 space-y-3">
+          {savedSignups.error && <p role="status">{savedSignups.error}</p>}
+          <WhatsAppEmbeddedSignup
+            key={`${user?.id}:${accountId}`}
+            attempts={savedSignups.attempts}
+            onChanged={signupChanged}
+          />
+          <Button variant="outline" onClick={handleAddConnection}>
+            Advanced: manual connection
+          </Button>
         </div>
       )}
 
@@ -849,6 +883,28 @@ export function WhatsAppConfig() {
               statusMeta &&
               renderMetaDetails(statusMeta)}
           </Alert>
+
+          {canEditSettings && (
+            <WhatsAppEmbeddedSignup
+              key={`${user?.id}:${accountId}:${config?.id}`}
+              reconnectId={config?.id}
+              attempts={savedSignups.attempts}
+              onChanged={async () => {
+                await savedSignups.refresh();
+                await fetchConfig(accountId!, config?.id, true);
+              }}
+            />
+          )}
+          {config?.onboarding_metadata?.method === 'embedded_signup' && (
+            <p className="text-muted-foreground text-sm">
+              {config.onboarding_metadata.display_phone_number} ·{' '}
+              {config.onboarding_metadata.waba_name} · Webhook subscription last
+              verified:{' '}
+              {config.subscribed_apps_at
+                ? new Date(config.subscribed_apps_at).toLocaleString()
+                : 'Not verified'}
+            </p>
+          )}
 
           {/* Registration Status — the "is it actually live?" check.
             Credentials being valid is necessary but not sufficient;

@@ -127,7 +127,7 @@ export async function GET(request: Request) {
     const { data: configs, error } = await supabase
       .from('whatsapp_config')
       .select(
-        'id, display_name, is_primary, phone_number_id, waba_id, verify_token, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, mirror_inbound_media, created_at, updated_at'
+        'id, display_name, is_primary, phone_number_id, waba_id, verify_token, onboarding_metadata, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, mirror_inbound_media, created_at, updated_at'
       )
       .eq('account_id', accountId)
       .order('is_primary', { ascending: false })
@@ -144,6 +144,17 @@ export async function GET(request: Request) {
       phone_number_id: row.phone_number_id,
       waba_id: row.waba_id,
       has_verify_token: Boolean(row.verify_token),
+      onboarding_metadata:
+        row.onboarding_metadata?.method === 'embedded_signup'
+          ? {
+              method: 'embedded_signup',
+              display_phone_number:
+                row.onboarding_metadata.display_phone_number,
+              waba_name: row.onboarding_metadata.waba_name,
+              billing_status: 'not_verified',
+              token_expires_at: row.onboarding_metadata.token_expires_at,
+            }
+          : undefined,
       status: row.status,
       connected_at: row.connected_at,
       registered_at: row.registered_at,

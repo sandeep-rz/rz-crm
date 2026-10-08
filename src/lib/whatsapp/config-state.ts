@@ -14,7 +14,18 @@ export type WhatsAppConnectionSummary = Pick<
   | 'subscribed_apps_at'
   | 'last_registration_error'
   | 'mirror_inbound_media'
-> & { has_verify_token: boolean; created_at?: string; updated_at?: string };
+> & {
+  onboarding_metadata?: {
+    method?: string;
+    display_phone_number?: string;
+    waba_name?: string;
+    billing_status?: string;
+    token_expires_at?: string | null;
+  };
+  has_verify_token: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
 
 export interface WhatsAppLocalConfig {
   account_id: string;

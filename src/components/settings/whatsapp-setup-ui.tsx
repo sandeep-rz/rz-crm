@@ -66,7 +66,8 @@ export function WhatsAppEmptyState({
           </Button>
         )}
         <p className="text-muted-foreground mt-4 text-xs">
-          Already have your Meta API details? Setup takes only a few minutes.
+          Continue with Facebook to connect securely. Manual setup is available
+          under Advanced.
         </p>
       </CardContent>
     </Card>
@@ -86,7 +87,12 @@ export function WhatsAppConnectionCard({
   onManage: () => void;
   onSetPrimary: () => void;
 }) {
-  const connected = connection.status === 'connected';
+  const embedded = connection.onboarding_metadata?.method === 'embedded_signup';
+  const verified = Boolean(
+    connection.registered_at && connection.subscribed_apps_at
+  );
+  const connected =
+    connection.status === 'connected' && (!embedded || verified);
   return (
     <Card className="h-full">
       <CardContent className="flex h-full flex-col gap-4 p-5">
@@ -99,7 +105,13 @@ export function WhatsAppConnectionCard({
               <span
                 className={`size-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`}
               />
-              {connected ? 'Configured' : 'Needs attention'}
+              {connected
+                ? embedded
+                  ? 'Connected · verified during setup'
+                  : 'Configured'
+                : embedded
+                  ? 'Setup incomplete'
+                  : 'Needs attention'}
             </div>
           </div>
           {showPrimary && connection.is_primary && (
@@ -111,6 +123,21 @@ export function WhatsAppConnectionCard({
             </Badge>
           )}
         </div>
+        {connection.onboarding_metadata?.method === 'embedded_signup' && (
+          <div className="text-muted-foreground space-y-1 text-xs">
+            <p>
+              {connection.onboarding_metadata.display_phone_number} ·{' '}
+              {connection.onboarding_metadata.waba_name}
+            </p>
+            <p>
+              Webhook subscription:{' '}
+              {connection.subscribed_apps_at
+                ? 'Verified during setup'
+                : 'Not verified'}
+            </p>
+            <p>Payment readiness: check in WhatsApp Manager</p>
+          </div>
+        )}
         <div className="mt-auto flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" onClick={onManage}>
             Manage

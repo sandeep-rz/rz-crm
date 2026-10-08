@@ -89,7 +89,13 @@ beforeEach(() => {
     connections: h.connections,
   }));
   h.refresh.mockResolvedValue({ account_id: 'a', connections: h.connections });
-  vi.stubGlobal('fetch', fetcher);
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
+    input === '/api/whatsapp/embedded-signup' && !init?.method
+      ? Promise.resolve(
+          new Response(JSON.stringify({ account_id: 'a', attempts: [] }))
+        )
+      : fetcher(input, init)
+  );
   vi.stubGlobal('confirm', () => true);
   host = document.createElement('div');
   document.body.append(host);
@@ -123,7 +129,7 @@ it.each([true, false])(
   async (success) => {
     h.connections = [];
     await act(() => root.render(<WhatsAppConfig />));
-    await click('Connect');
+    await click('Advanced: manual connection');
     await act(() => {
       (h.wizard.setPhoneNumberId as (v: string) => void)('123');
       (h.wizard.setWabaId as (v: string) => void)('456');

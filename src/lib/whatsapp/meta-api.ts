@@ -246,6 +246,7 @@ export async function registerPhoneNumber(
 }
 
 export interface SubscribeWabaToAppArgs {
+  signal?: AbortSignal;
   wabaId: string;
   accessToken: string;
 }
@@ -262,6 +263,7 @@ export async function subscribeWabaToApp(
   const response = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: args.signal,
   });
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`);
@@ -269,6 +271,7 @@ export async function subscribeWabaToApp(
 }
 
 export interface ListWabaPhoneNumbersArgs {
+  signal?: AbortSignal;
   wabaId: string;
   accessToken: string;
 }
@@ -299,6 +302,7 @@ export async function listWabaPhoneNumbers(
   for (let page = 0; url && page < 5; page++) {
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: args.signal,
     });
     if (!response.ok) {
       await throwMetaError(response, `Meta API error: ${response.status}`);
@@ -314,6 +318,7 @@ export async function listWabaPhoneNumbers(
 }
 
 export interface GetSubscribedAppsArgs {
+  signal?: AbortSignal;
   wabaId: string;
   accessToken: string;
 }
@@ -338,6 +343,7 @@ export async function getSubscribedApps(
   const url = `${META_API_BASE}/${wabaId}/subscribed_apps`;
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: args.signal,
   });
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`);

@@ -8,25 +8,23 @@ afterEach(() => vi.unstubAllGlobals());
 it('preserves Meta user fields from the real transport response parser', async () => {
   vi.stubGlobal(
     'fetch',
-    vi
-      .fn()
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            error: {
-              message: 'Invalid parameter',
-              code: 100,
-              error_subcode: 2388299,
-              type: 'OAuthException',
-              error_user_title: 'Invalid body',
-              error_user_msg: 'Add text after the variable.',
-              fbtrace_id: 'trace',
-              error_data: { details: 'Body format is invalid.' },
-            },
-          }),
-          { status: 400 }
-        )
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: 'Invalid parameter',
+            code: 100,
+            error_subcode: 2388299,
+            type: 'OAuthException',
+            error_user_title: 'Invalid body',
+            error_user_msg: 'Add text after the variable.',
+            fbtrace_id: 'trace',
+            error_data: { details: 'Body format is invalid.' },
+          },
+        }),
+        { status: 400 }
       )
+    )
   );
   await expect(
     submitMessageTemplate({

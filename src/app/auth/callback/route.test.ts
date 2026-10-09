@@ -43,7 +43,7 @@ describe('GET /auth/callback', () => {
 
   it('verifies a token_hash link through verifyOtp', async () => {
     const res = await GET(
-      request('token_hash=th-1&type=recovery&next=%2Freset-password'),
+      request('token_hash=th-1&type=recovery&next=%2Freset-password')
     );
 
     expect(mocks.verifyOtp).toHaveBeenCalledWith({
@@ -63,7 +63,9 @@ describe('GET /auth/callback', () => {
   // minted a session and must not hand the browser to another origin.
   it('refuses an off-origin next and falls back to /dashboard', async () => {
     for (const next of ['//evil.example', 'https://evil.example', '/\\x']) {
-      const res = await GET(request(`code=abc&next=${encodeURIComponent(next)}`));
+      const res = await GET(
+        request(`code=abc&next=${encodeURIComponent(next)}`)
+      );
       expect(res.headers.get('location')).toBe('/dashboard');
     }
   });
@@ -83,8 +85,8 @@ describe('GET /auth/callback', () => {
   it('reports a link Supabase already rejected as expired, without touching the client', async () => {
     const res = await GET(
       request(
-        'error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired',
-      ),
+        'error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired'
+      )
     );
 
     expect(mocks.createClient).not.toHaveBeenCalled();

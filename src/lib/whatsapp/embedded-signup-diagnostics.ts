@@ -19,7 +19,12 @@ export type SignupDiagnostic = {
   hasCode?: boolean;
   status?: 'connected' | 'not_authorized' | 'unknown';
   errorCode?: number;
-  event?: 'FINISH' | 'CANCEL' | 'ERROR' | 'INCOMPLETE';
+  event?:
+    | 'FINISH'
+    | 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
+    | 'CANCEL'
+    | 'ERROR'
+    | 'INCOMPLETE';
 };
 export function signupDiagnostic(
   event: string,

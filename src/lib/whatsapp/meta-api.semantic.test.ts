@@ -2,13 +2,11 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { sendTemplateMessage } from './meta-api';
 afterEach(() => vi.unstubAllGlobals());
 it('existing Meta transport posts assembled semantic components without legacy/sample fallback', async () => {
-  const fetch = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(JSON.stringify({ messages: [{ id: 'meta-id' }] }), {
-        status: 200,
-      })
-    );
+  const fetch = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ messages: [{ id: 'meta-id' }] }), {
+      status: 200,
+    })
+  );
   vi.stubGlobal('fetch', fetch);
   const templatePayload = {
     name: 'authoritative',

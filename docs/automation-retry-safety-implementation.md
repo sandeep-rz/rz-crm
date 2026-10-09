@@ -65,14 +65,14 @@ It retains the first blocking action, rather than becoming an action history. `e
 
 ## 3. Allowed state transitions
 
-| Existing state | Incoming evidence | Result |
-| --- | --- | --- |
-| Empty | Any valid blocking evidence | Record evidence |
-| `whatsapp_unknown` | Same step, proven failure before a Meta request | Clear |
-| `whatsapp_unknown` | Same step, returned provider ID | Upgrade to `whatsapp_accepted` with ID |
-| Any guard | Another step tries to clear it | Preserve |
-| `external_action` or `whatsapp_accepted` | Later unknown, accepted, or clear operation | Preserve original evidence |
-| `whatsapp_unknown` | Evidence from a different step | Preserve original evidence |
+| Existing state                           | Incoming evidence                               | Result                                 |
+| ---------------------------------------- | ----------------------------------------------- | -------------------------------------- |
+| Empty                                    | Any valid blocking evidence                     | Record evidence                        |
+| `whatsapp_unknown`                       | Same step, proven failure before a Meta request | Clear                                  |
+| `whatsapp_unknown`                       | Same step, returned provider ID                 | Upgrade to `whatsapp_accepted` with ID |
+| Any guard                                | Another step tries to clear it                  | Preserve                               |
+| `external_action` or `whatsapp_accepted` | Later unknown, accepted, or clear operation     | Preserve original evidence             |
+| `whatsapp_unknown`                       | Evidence from a different step                  | Preserve original evidence             |
 
 SQL now permits acceptance upgrades only from the same step's unknown state. TypeScript uses structured preparation errors or `failedBeforeMetaRequest` proof for narrow clearing. It no longer infers pre-request failure from an HTTP response status.
 

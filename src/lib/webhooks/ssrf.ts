@@ -179,7 +179,10 @@ function isReservedIPv6(b: number[]): boolean {
  * Fails closed: an address this can't parse is reported as reserved.
  */
 export function isPrivateOrReservedIp(ip: string): boolean {
-  const bare = ip.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const bare = ip
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
 
   const v4 = parseIPv4(bare);
   if (v4) return isReservedIPv4(v4);

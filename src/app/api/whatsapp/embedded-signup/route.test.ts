@@ -5,6 +5,7 @@ import { POST } from './route';
 const h = vi.hoisted(() => ({
   role: vi.fn(),
   exchange: vi.fn(),
+  sync: vi.fn(),
   validate: vi.fn(),
   activate: vi.fn(),
   verifyActivation: vi.fn(),
@@ -14,6 +15,9 @@ const h = vi.hoisted(() => ({
   filters: [] as unknown[],
   conflict: '',
   failFinish: false,
+}));
+vi.mock('@/lib/whatsapp/coexistence-sync', () => ({
+  resumeCoexistenceSync: h.sync,
 }));
 vi.mock('@/lib/auth/account', () => ({
   requireRole: h.role,
@@ -116,6 +120,7 @@ beforeEach(() => {
       Object.assign(h.attempt, {
         state: 'processing',
         lease_id: args.p_lease,
+        completion_mode: args.p_mode || h.attempt.completion_mode,
         context: args.p_context || h.attempt.context,
         code_hash: args.p_hash || h.attempt.code_hash,
       });
@@ -133,6 +138,14 @@ beforeEach(() => {
         pending_registration_pin: args.p_encrypted_pin,
         registration_requested_at: new Date().toISOString(),
       });
+      return { error: null };
+    }
+    if (name === 'mark_whatsapp_signup_coexistence') {
+      h.attempt.onboarding_mode = h.attempt.completion_mode = 'coexistence';
+      h.attempt.pending_metadata = {
+        ...(h.attempt.pending_metadata as object),
+        onboarding_mode: 'coexistence',
+      };
       return { error: null };
     }
     if (name === 'release_whatsapp_signup') {
@@ -220,7 +233,11 @@ it('recovers Meta success followed by DB finalization failure without another ex
   ).toBe(200);
   expect(h.exchange).toHaveBeenCalledOnce();
   expect(h.validate).toHaveBeenCalledOnce();
-  expect(h.validate.mock.calls[0]).toEqual(['private-token', context]);
+  expect(h.validate.mock.calls[0]).toEqual([
+    'private-token',
+    context,
+    'cloud_api',
+  ]);
 });
 it('recovers an interrupted process from staged credentials and saved registration outcome', async () => {
   Object.assign(h.attempt, {
@@ -235,12 +252,13 @@ it('recovers an interrupted process from staged credentials and saved registrati
       .status
   ).toBe(200);
   expect(h.exchange).not.toHaveBeenCalled();
-  expect(h.validate).toHaveBeenCalledWith('saved-token', context);
+  expect(h.validate).toHaveBeenCalledWith('saved-token', context, 'cloud_api');
   expect(h.activate).toHaveBeenCalledWith(
     context,
     'private-token',
     expect.objectContaining({ registrationRequested: true }),
-    expect.any(Function)
+    expect.any(Function),
+    'cloud_api'
   );
 });
 it('persists the encrypted PIN and request marker in the attempt before registration', async () => {
@@ -338,4 +356,86 @@ it('verifies Meta before calling finalization and sends only server verification
     p_registered_at: '2026-10-08T12:01:00Z',
     p_subscribed_at: '2026-10-08T12:02:00Z',
   });
+});
+
+it('Coexistence completion persists mode, skips registration and starts synchronization', async () => {
+  const res = await POST(
+    request({
+      ...body,
+      completion_event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+    })
+  );
+  expect(res.status).toBe(200);
+  expect(h.activate).toHaveBeenCalledWith(
+    context,
+    'private-token',
+    expect.any(Object),
+    expect.any(Function),
+    'coexistence'
+  );
+  expect(
+    h.rpc.mock.calls.find(([name]) => name === 'reserve_whatsapp_signup')?.[1]
+      .p_metadata.onboarding_mode
+  ).toBe('coexistence');
+  expect(
+    h.rpc.mock.calls.some(([name]) => name === 'mark_whatsapp_registration')
+  ).toBe(false);
+  expect(h.sync).toHaveBeenCalledOnce();
+});
+it('completed Coexistence callbacks are idempotent', async () => {
+  const input = {
+    ...body,
+    completion_event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+  };
+  await POST(request(input));
+  expect((await POST(request(input))).status).toBe(200);
+  expect(h.exchange).toHaveBeenCalledOnce();
+  expect(h.activate).toHaveBeenCalledOnce();
+});
+it('rejects an unverified mode change on a completed standard attempt', async () => {
+  await POST(request(body));
+  expect(
+    (
+      await POST(
+        request({
+          ...body,
+          completion_event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+        })
+      )
+    ).status
+  ).toBe(409);
+});
+it('replays the original FINISH event after Meta confirms phone-number-first Coexistence', async () => {
+  h.activate.mockResolvedValueOnce({
+    needsRegistration: false,
+    mode: 'coexistence',
+  });
+  expect((await POST(request(body))).status).toBe(200);
+  expect(h.attempt.completion_mode).toBe('coexistence');
+  expect((await POST(request(body))).status).toBe(200);
+  expect(h.exchange).toHaveBeenCalledOnce();
+  expect(h.activate).toHaveBeenCalledOnce();
+  expect(
+    h.rpc.mock.calls.some(([name]) => name === 'mark_whatsapp_registration')
+  ).toBe(false);
+});
+it('reports unconfirmed Meta synchronization without undoing activation', async () => {
+  h.sync.mockResolvedValueOnce(false);
+  const res = await POST(
+    request({
+      ...body,
+      completion_event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+    })
+  );
+  expect(await res.json()).toMatchObject({ success: true, sync_pending: true });
+});
+it('reports synchronization recovery separately from successful connection activation', async () => {
+  h.sync.mockRejectedValueOnce(new Error('sync failed'));
+  const res = await POST(
+    request({
+      ...body,
+      completion_event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+    })
+  );
+  expect(await res.json()).toMatchObject({ success: true, sync_pending: true });
 });

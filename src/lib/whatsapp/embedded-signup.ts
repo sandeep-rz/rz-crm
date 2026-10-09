@@ -9,6 +9,9 @@ import {
 import {
   embeddedSignupConfig,
   type SignupContext,
+  type SignupSessionContext,
+  type SignupMode,
+  signupEligibilityError,
 } from './embedded-signup-context';
 
 export class SignupError extends Error {
@@ -19,20 +22,31 @@ export class SignupError extends Error {
     super(message);
   }
 }
-const base = 'https://graph.facebook.com/v21.0';
+const base = 'https://graph.facebook.com';
 /** Never propagate raw Meta errors: they can echo credentials or request parameters. */
-async function graph(path: string, token: string, init?: RequestInit) {
+async function graph(
+  path: string,
+  token: string,
+  init?: RequestInit,
+  version = 'v21.0'
+) {
   try {
-    const response = await fetch(`${base}/${path}`, {
+    const response = await fetch(`${base}/${version}/${path}`, {
       ...init,
       headers: { Authorization: `Bearer ${token}`, ...init?.headers },
       cache: 'no-store',
       signal: AbortSignal.timeout(15_000),
     });
     const result = await response.json();
-    if (!response.ok || result.error) throw new Error();
+    if (!response.ok || result.error) {
+      const code = result.error?.error_subcode ?? result.error?.code;
+      if (code === 2494064 || code === 3441034)
+        throw new SignupError(400, signupEligibilityError(code));
+      throw new Error();
+    }
     return result;
-  } catch {
+  } catch (error) {
+    if (error instanceof SignupError) throw error;
     throw new SignupError(
       502,
       'Meta could not complete this step. Recover saved setup when available, or retry signup.'
@@ -53,7 +67,11 @@ function signupSecret() {
     );
   return secret;
 }
-export async function exchangeSignupCode(code: string, context: SignupContext) {
+export async function exchangeSignupCode(
+  code: string,
+  context: SignupSessionContext,
+  mode: SignupMode = 'cloud_api'
+) {
   const secret = signupSecret();
   let exchanged;
   try {
@@ -83,12 +101,13 @@ export async function exchangeSignupCode(code: string, context: SignupContext) {
       'Facebook did not return a business access token. Start signup again.'
     );
   const token = exchanged.access_token as string;
-  return validateSignupToken(token, context);
+  return validateSignupToken(token, context, mode);
 }
 
 export async function validateSignupToken(
   token: string,
-  context: SignupContext
+  context: SignupSessionContext,
+  mode: SignupMode = 'cloud_api'
 ) {
   const { data } = await graph(
     `debug_token?input_token=${encodeURIComponent(token)}`,
@@ -115,13 +134,30 @@ export async function validateSignupToken(
     accessToken: token,
     signal: AbortSignal.timeout(15_000),
   });
-  const phone = numbers.find((number) => number.id === context.phone_number_id);
+  // Coexistence's documented completion event can contain only the WABA ID.
+  // Resolve exactly one authorized eligible phone; never pick the first of several.
+  let phone = numbers.find((number) => number.id === context.phone_number_id);
+  if (!context.phone_number_id && mode === 'coexistence') {
+    const eligible = [];
+    for (const number of numbers) {
+      const state = await readCoexistencePhone(number.id, token);
+      if (state.is_on_biz_app === true && state.platform_type === 'CLOUD_API')
+        eligible.push(number);
+    }
+    if (eligible.length !== 1)
+      throw new SignupError(
+        400,
+        'Meta did not identify one eligible Business app number. Complete signup with a phone number selection.'
+      );
+    phone = eligible[0];
+  }
   if (waba.id !== context.waba_id || !phone?.display_phone_number)
     throw new SignupError(
       400,
       'The selected phone number does not belong to the authorized WhatsApp account.'
     );
   return {
+    context: { waba_id: context.waba_id, phone_number_id: phone.id },
     token,
     encryptedToken: encrypt(token),
     wabaName: String(waba.name || context.waba_id).slice(0, 200),
@@ -137,7 +173,8 @@ export async function activateSignup(
   recovery:
     | { encryptedPin?: string | null; registrationRequested?: boolean }
     | undefined,
-  assertLease: () => Promise<void>
+  assertLease: () => Promise<void>,
+  mode: SignupMode = 'cloud_api'
 ) {
   const args = {
     wabaId: context.waba_id,
@@ -159,9 +196,17 @@ export async function activateSignup(
       );
   }
   const subscribedAt = new Date().toISOString();
+  if (mode === 'coexistence') {
+    await verifyCoexistencePhone(context.phone_number_id, token);
+    return {
+      needsRegistration: false as const,
+      registeredAt: new Date().toISOString(),
+      subscribedAt,
+    };
+  }
   const readPhone = async () => {
     const phone = await graph(
-      `${context.phone_number_id}?fields=id,status,display_phone_number`,
+      `${context.phone_number_id}?fields=id,status,display_phone_number,is_on_biz_app`,
       token
     );
     if (phone.id !== context.phone_number_id)
@@ -169,6 +214,17 @@ export async function activateSignup(
     return phone;
   };
   const phone = await readPhone();
+  if (phone.is_on_biz_app === true) {
+    // Phone-number-first v4 can route an existing app number into Coexistence
+    // even when the host launched the standard option. Meta state is authoritative.
+    await verifyCoexistencePhone(context.phone_number_id, token);
+    return {
+      needsRegistration: false as const,
+      registeredAt: new Date().toISOString(),
+      subscribedAt,
+      mode: 'coexistence' as const,
+    };
+  }
   if (phone.status !== 'CONNECTED') {
     if (recovery?.registrationRequested)
       throw new SignupError(
@@ -217,7 +273,8 @@ export async function activateSignup(
 /** Read-only final barrier, including subscription verification AFTER registration. */
 export async function verifySignupActivation(
   context: SignupContext,
-  token: string
+  token: string,
+  mode: SignupMode = 'cloud_api'
 ) {
   const apps = await getSubscribedApps({
     wabaId: context.waba_id,
@@ -234,6 +291,10 @@ export async function verifySignupActivation(
       'Meta webhook subscription is not verified. Recover saved setup to retry.'
     );
   const subscribedAt = new Date().toISOString();
+  if (mode === 'coexistence') {
+    await verifyCoexistencePhone(context.phone_number_id, token);
+    return { registeredAt: new Date().toISOString(), subscribedAt };
+  }
   const phone = await graph(
     `${context.phone_number_id}?fields=id,status`,
     token
@@ -244,4 +305,49 @@ export async function verifySignupActivation(
       'Meta phone registration is not verified. Recover saved setup to retry.'
     );
   return { registeredAt: new Date().toISOString(), subscribedAt };
+}
+
+// Coexistence-specific endpoints use the version in Meta's verified current guide.
+// Existing messaging/template/manual paths keep their existing Graph API version.
+async function readCoexistencePhone(phoneId: string, token: string) {
+  return graph(
+    `${phoneId}?fields=id,is_on_biz_app,platform_type`,
+    token,
+    undefined,
+    'v26.0'
+  );
+}
+async function verifyCoexistencePhone(phoneId: string, token: string) {
+  const phone = await readCoexistencePhone(phoneId, token);
+  if (
+    phone.id !== phoneId ||
+    phone.is_on_biz_app !== true ||
+    phone.platform_type !== 'CLOUD_API'
+  )
+    throw new SignupError(
+      409,
+      'Meta has not confirmed Business app Coexistence for this number. Check eligibility and existing provider access in WhatsApp Manager; recover saved setup after Meta confirms it.'
+    );
+}
+export async function requestCoexistenceSync(
+  phoneId: string,
+  token: string,
+  type: 'history' | 'smb_app_state_sync'
+) {
+  const result = await graph(
+    `${phoneId}/smb_app_data`,
+    token,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', sync_type: type }),
+    },
+    'v26.0'
+  );
+  if (typeof result.request_id !== 'string' || !result.request_id)
+    throw new SignupError(
+      502,
+      'Meta sync acceptance is unconfirmed. Check synchronization status before retrying.'
+    );
+  return result.request_id as string;
 }

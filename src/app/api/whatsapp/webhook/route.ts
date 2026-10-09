@@ -1,3 +1,8 @@
+import {
+  captureCoexistenceWebhook,
+  drainCoexistenceWebhook,
+  isCoexistenceField,
+} from '@/lib/whatsapp/coexistence-webhook';
 import { NextResponse, after } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
@@ -248,6 +253,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
+  try {
+    const captured = await captureCoexistenceWebhook(supabaseAdmin(), body);
+    if (captured)
+      after(() =>
+        drainCoexistenceWebhook(supabaseAdmin()).catch(() => {
+          console.error(
+            '[webhook] Coexistence processing deferred to database worker'
+          );
+        })
+      );
+  } catch {
+    // Meta retains the delivery when durable capture fails.
+    return NextResponse.json(
+      { error: 'Webhook storage unavailable' },
+      { status: 503 }
+    );
+  }
+
   // Process AFTER the response so we ack Meta within their ~20s timeout
   // (a slow ack triggers Meta retries + duplicate inserts), while still
   // guaranteeing the work runs to completion.
@@ -278,6 +301,7 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
   for (const entry of body.entry) {
     for (const change of entry.changes) {
+      if (isCoexistenceField(change.field)) continue;
       // Template-lifecycle events (status / quality / components
       // updates from Meta) come in on a different change.field and
       // have a different value shape — route them through the
@@ -849,11 +873,23 @@ async function processMessage(
   // re-advancing flows, re-firing automations, re-invoking AI handling, and
   // re-dispatching public webhooks (issue #367).
   if (!insertedRows || insertedRows.length === 0) {
-    console.info(
-      '[webhook] duplicate inbound message ignored (idempotent replay):',
-      message.id
-    );
-    return;
+    // A history chunk can arrive before the corresponding live inbound. Claim
+    // that import exactly once as live so it opens the service window and runs
+    // normal unread/automation behavior. Ordinary webhook replays remain no-ops.
+    const { data: promoted, error: promotionError } = await supabaseAdmin()
+      .from('messages')
+      .update({ coexistence_metadata: null })
+      .eq('conversation_id', conversation.id)
+      .eq('message_id', message.id)
+      .eq('coexistence_metadata->>history', 'true')
+      .select('id');
+    if (promotionError || !promoted?.length) {
+      console.info(
+        '[webhook] duplicate inbound message ignored (idempotent replay):',
+        message.id
+      );
+      return;
+    }
   }
 
   // Update conversation. The unread bump is done DB-side (migration 037's

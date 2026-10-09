@@ -13,26 +13,26 @@ Audited checkout: `a87704a`. **461 tests passed across 22 files.** Working tree 
 
 Classification: **A** shared semantic pipeline; **B** intentional legacy fallback; **C** needs migration; **D** not a template-send consumer. No code was classified **E — dead** without proof.
 
-| Consumer | Entry Point | Semantic Pipeline | PMS Optional | Legacy Path | Status |
-|----------|-------------|------------------|--------------|-------------|--------|
-| PMS event automation | PMS webhook → scheduler → worker → engine | Yes, with `template_id` | Required by trigger, not intrinsically by send action | Name-based actions remain | A / B / C |
-| PMS scheduled automation | Reservation schedule → same worker/engine | Yes, with `template_id` | Required by schedule | Same legacy actions | A / B / C |
-| CRM/inbound/tag automation | Trigger dispatch → engine | Yes, with `template_id` | Yes | Name-based actions remain | A / B / C |
-| Manual automation trigger | `/api/automations/engine` | Depends on action branch | Yes | Same engine branches | A / B / C |
-| Automation wait continuation | Pending execution → automation cron/worker | Depends on action branch | Yes | Same engine branches | A / B / C |
-| PMS automatic/manual retry | Trigger-job worker; execution retry endpoint | Fresh preparation for semantic actions | Depends on variables/trigger | Legacy values re-evaluated by legacy branch | A / B; retry issue |
-| Inbox template send | Template picker → `/api/whatsapp/send` | Yes for configured local template | Yes | Unmapped/manual templates | A / B |
-| Contact-detail template send | Same picker and send endpoint | Yes for configured local template | Yes | Unmapped/manual templates | A / B |
-| Public single-message API | `/api/v1/messages` | **No semantic option passed** | Legacy behavior | Caller positional/structured values | **C for configured templates** |
-| MCP single-message tool | `send_message` → public message API | Same bypass as API | Same as API | Same caller parameters | **C for configured templates** |
-| Dashboard broadcast | Browser hook → `/api/whatsapp/broadcast` | Yes, independently per recipient | Yes; reservation variables blocked | Frozen positional/custom mappings | A / B |
-| Public broadcast API | `/api/v1/broadcasts` → `after(deliverBroadcast)` | Yes, independently per recipient | Yes; reservation variables blocked | Caller parameters for legacy templates | A / B |
-| MCP broadcast tool | Wrapper around public broadcast API | Same as public broadcast | Yes | Same as public broadcast | A / B |
-| Broadcast resume/retry | `/api/whatsapp/broadcast/[id]/resume` | Yes for configured templates | Yes | Frozen legacy parameters | A / B |
-| Flows | Flow runner | No template-send node | Not applicable | Text/media/interactive only | D |
-| Campaigns | Broadcast terminology | No separate sender discovered | Same as broadcasts | Same as broadcasts | D as independent consumer |
-| Template submit/sync/mapping | Template-management APIs | Authoring/management, not delivery | Yes | Positional import support | D |
-| AI replies/test | AI text/interactive paths | Not template delivery | Not applicable | Not applicable | D |
+| Consumer                     | Entry Point                                      | Semantic Pipeline                      | PMS Optional                                          | Legacy Path                                 | Status                         |
+| ---------------------------- | ------------------------------------------------ | -------------------------------------- | ----------------------------------------------------- | ------------------------------------------- | ------------------------------ |
+| PMS event automation         | PMS webhook → scheduler → worker → engine        | Yes, with `template_id`                | Required by trigger, not intrinsically by send action | Name-based actions remain                   | A / B / C                      |
+| PMS scheduled automation     | Reservation schedule → same worker/engine        | Yes, with `template_id`                | Required by schedule                                  | Same legacy actions                         | A / B / C                      |
+| CRM/inbound/tag automation   | Trigger dispatch → engine                        | Yes, with `template_id`                | Yes                                                   | Name-based actions remain                   | A / B / C                      |
+| Manual automation trigger    | `/api/automations/engine`                        | Depends on action branch               | Yes                                                   | Same engine branches                        | A / B / C                      |
+| Automation wait continuation | Pending execution → automation cron/worker       | Depends on action branch               | Yes                                                   | Same engine branches                        | A / B / C                      |
+| PMS automatic/manual retry   | Trigger-job worker; execution retry endpoint     | Fresh preparation for semantic actions | Depends on variables/trigger                          | Legacy values re-evaluated by legacy branch | A / B; retry issue             |
+| Inbox template send          | Template picker → `/api/whatsapp/send`           | Yes for configured local template      | Yes                                                   | Unmapped/manual templates                   | A / B                          |
+| Contact-detail template send | Same picker and send endpoint                    | Yes for configured local template      | Yes                                                   | Unmapped/manual templates                   | A / B                          |
+| Public single-message API    | `/api/v1/messages`                               | **No semantic option passed**          | Legacy behavior                                       | Caller positional/structured values         | **C for configured templates** |
+| MCP single-message tool      | `send_message` → public message API              | Same bypass as API                     | Same as API                                           | Same caller parameters                      | **C for configured templates** |
+| Dashboard broadcast          | Browser hook → `/api/whatsapp/broadcast`         | Yes, independently per recipient       | Yes; reservation variables blocked                    | Frozen positional/custom mappings           | A / B                          |
+| Public broadcast API         | `/api/v1/broadcasts` → `after(deliverBroadcast)` | Yes, independently per recipient       | Yes; reservation variables blocked                    | Caller parameters for legacy templates      | A / B                          |
+| MCP broadcast tool           | Wrapper around public broadcast API              | Same as public broadcast               | Yes                                                   | Same as public broadcast                    | A / B                          |
+| Broadcast resume/retry       | `/api/whatsapp/broadcast/[id]/resume`            | Yes for configured templates           | Yes                                                   | Frozen legacy parameters                    | A / B                          |
+| Flows                        | Flow runner                                      | No template-send node                  | Not applicable                                        | Text/media/interactive only                 | D                              |
+| Campaigns                    | Broadcast terminology                            | No separate sender discovered          | Same as broadcasts                                    | Same as broadcasts                          | D as independent consumer      |
+| Template submit/sync/mapping | Template-management APIs                         | Authoring/management, not delivery     | Yes                                                   | Positional import support                   | D                              |
+| AI replies/test              | AI text/interactive paths                        | Not template delivery                  | Not applicable                                        | Not applicable                              | D                              |
 
 # 3. End-to-End Architecture
 
@@ -68,25 +68,25 @@ The architectural gap is that **some callers choose the legacy path by caller/ac
 
 Consumer execution profiles:
 
-| Feature | Recipient / template source | Context and preparation | Worker, persistence, retry |
-|---|---|---|---|
-| Automation | Owned trigger contact; action `template_id` or historical name | Contact ID plus explicit trigger reservation ID; shared pipeline for ID actions | PMS worker, immediate engine, or wait continuation; `messages` and execution logs; job retries rerun execution |
-| Manual inbox/contact | Owned conversation/contact; picker-selected template | Contact ID plus selected reservation ID; shared preparation for configured rows | Immediate endpoint; `messages`; immediate error and phone-variant retry |
-| Public/MCP single message | Requested phone resolved to owned contact/conversation; template name/language | Caller values; semantic preparation omitted | Immediate endpoint; same message persistence core; phone-variant retry |
-| Dashboard broadcast | Browser-resolved contact audience; selected template | Per-recipient contact ID for configured templates; legacy values frozen | Browser batch loop; recipient records updated client-side; HTTP 429 replay and server resume |
-| Public/MCP broadcast | Requested phones resolved to contacts; name/language resolves template | Per-recipient shared preparation for configured templates | `after()` delivery; recipient records updated server-side; explicit resume/retry |
-| Broadcast resume | Stored broadcast/template identity and recipient contacts | Fresh semantic values; frozen legacy values | Claimed server resume pass; same delivery core |
+| Feature                   | Recipient / template source                                                    | Context and preparation                                                         | Worker, persistence, retry                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Automation                | Owned trigger contact; action `template_id` or historical name                 | Contact ID plus explicit trigger reservation ID; shared pipeline for ID actions | PMS worker, immediate engine, or wait continuation; `messages` and execution logs; job retries rerun execution |
+| Manual inbox/contact      | Owned conversation/contact; picker-selected template                           | Contact ID plus selected reservation ID; shared preparation for configured rows | Immediate endpoint; `messages`; immediate error and phone-variant retry                                        |
+| Public/MCP single message | Requested phone resolved to owned contact/conversation; template name/language | Caller values; semantic preparation omitted                                     | Immediate endpoint; same message persistence core; phone-variant retry                                         |
+| Dashboard broadcast       | Browser-resolved contact audience; selected template                           | Per-recipient contact ID for configured templates; legacy values frozen         | Browser batch loop; recipient records updated client-side; HTTP 429 replay and server resume                   |
+| Public/MCP broadcast      | Requested phones resolved to contacts; name/language resolves template         | Per-recipient shared preparation for configured templates                       | `after()` delivery; recipient records updated server-side; explicit resume/retry                               |
+| Broadcast resume          | Stored broadcast/template identity and recipient contacts                      | Fresh semantic values; frozen legacy values                                     | Claimed server resume pass; same delivery core                                                                 |
 
 All discovered template deliveries ultimately call [sendTemplateMessage()](/Users/mac/Downloads/rz-crm/src/lib/whatsapp/meta-api.ts:542). No separate direct Graph template-message sender was discovered.
 
 # 4. Shared Pipeline Review
 
-| Component | Result | Evidence |
-|---|---|---|
-| `prepareTemplateMessage()` | **PASS** | Strict input shape; account-scoped template lookup; owned connection; configured and APPROVED requirement; Meta identity/language validation; mapping validation; one runtime call |
-| `resolveRuntimeVariables()` | **PASS, within implemented catalog/provider support** | Active catalog validation, deduplicated keys, account-scoped CRM/context reads, explicit reservation requirement, optional bulk provider call |
-| Meta payload assembly | **PASS** | Shared component assembly; required values checked; normalization occurs in provider payload construction |
-| Low-level Meta sender | **ISSUE at caller boundary** | Accepts both assembled semantic payloads and legacy values; does not itself enforce that configured templates use semantic preparation |
+| Component                   | Result                                                | Evidence                                                                                                                                                                           |
+| --------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prepareTemplateMessage()`  | **PASS**                                              | Strict input shape; account-scoped template lookup; owned connection; configured and APPROVED requirement; Meta identity/language validation; mapping validation; one runtime call |
+| `resolveRuntimeVariables()` | **PASS, within implemented catalog/provider support** | Active catalog validation, deduplicated keys, account-scoped CRM/context reads, explicit reservation requirement, optional bulk provider call                                      |
+| Meta payload assembly       | **PASS**                                              | Shared component assembly; required values checked; normalization occurs in provider payload construction                                                                          |
+| Low-level Meta sender       | **ISSUE at caller boundary**                          | Accepts both assembled semantic payloads and legacy values; does not itself enforce that configured templates use semantic preparation                                             |
 
 Important ownership distinction: `prepareTemplateMessage()` expects a **trusted, already-authorized account ID**. It validates template/connection ownership; it is not an authentication or membership service.
 
@@ -102,13 +102,13 @@ Sources: [preparation](/Users/mac/Downloads/rz-crm/src/lib/message-preparation/p
 
 # 5. PMS vs Non-PMS Review
 
-| Variables | Actual resolution |
-|---|---|
-| `workspace.*` with workspace/CRM metadata | Owned account data; currently `workspace.name` is implemented |
-| `contact.*` with contact/CRM metadata | Owned CRM contact |
-| `contact.*` with contact/context metadata, without reservation | Owned CRM contact |
-| `contact.*` with contact/context metadata, with reservation | Provider booking guest context takes precedence |
-| Reservation/property/listing/host/provider scopes | Explicit CRM reservation → owned property/integration mappings → provider adapter |
+| Variables                                                      | Actual resolution                                                                 |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `workspace.*` with workspace/CRM metadata                      | Owned account data; currently `workspace.name` is implemented                     |
+| `contact.*` with contact/CRM metadata                          | Owned CRM contact                                                                 |
+| `contact.*` with contact/context metadata, without reservation | Owned CRM contact                                                                 |
+| `contact.*` with contact/context metadata, with reservation    | Provider booking guest context takes precedence                                   |
+| Reservation/property/listing/host/provider scopes              | Explicit CRM reservation → owned property/integration mappings → provider adapter |
 
 CRM contact resolution supports first name, remaining name, full name, phone, and email through the catalog’s `resolver_key`.
 
@@ -229,18 +229,18 @@ No separate template test/debug sender was discovered. The authenticated automat
 
 # 10. Legacy Positional Code
 
-| Live code | Why it remains | Classification |
-|---|---|---|
-| Picker BODY/HEADER/URL inputs | Imported/unmapped manual sends | B |
-| `buildSendComponents()` | Legacy structured send components, media/buttons | B |
-| Low-level body-only component assembly | Legacy sends without a local template row | B |
-| `templateBodyParams()` / `renderTemplateBody()` | Parameter handling and rendering persisted body text | B; also used legitimately after semantic assembly |
-| Automation `variable_mappings` | Historical action-level catalog/custom/static mappings | B for legacy templates; C for configured templates |
-| Automation `variables` interpolation | Historical positional action records | B / C |
-| Broadcast personalization mappings | Legacy audience fields/custom/static values | B |
-| Stored recipient `template_params` | Frozen legacy resume values | B |
-| Public/MCP message parameters | Existing public contract | B for legacy templates; C for configured templates |
-| Older message-variable resolver | Snapshot context extraction and fallback handling | B |
+| Live code                                       | Why it remains                                         | Classification                                     |
+| ----------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------- |
+| Picker BODY/HEADER/URL inputs                   | Imported/unmapped manual sends                         | B                                                  |
+| `buildSendComponents()`                         | Legacy structured send components, media/buttons       | B                                                  |
+| Low-level body-only component assembly          | Legacy sends without a local template row              | B                                                  |
+| `templateBodyParams()` / `renderTemplateBody()` | Parameter handling and rendering persisted body text   | B; also used legitimately after semantic assembly  |
+| Automation `variable_mappings`                  | Historical action-level catalog/custom/static mappings | B for legacy templates; C for configured templates |
+| Automation `variables` interpolation            | Historical positional action records                   | B / C                                              |
+| Broadcast personalization mappings              | Legacy audience fields/custom/static values            | B                                                  |
+| Stored recipient `template_params`              | Frozen legacy resume values                            | B                                                  |
+| Public/MCP message parameters                   | Existing public contract                               | B for legacy templates; C for configured templates |
+| Older message-variable resolver                 | Snapshot context extraction and fallback handling      | B                                                  |
 
 The presence of `{{1}}` in approved transport content or persistence rendering is not itself a migration defect. The defect is allowing caller/action values to supply those slots for a configured semantic template.
 
@@ -262,14 +262,14 @@ This is a **P2 recipient/context consistency issue**. No cross-account data retr
 
 # 12. Retry / Resume / Persistence
 
-| Consumer | Persistence | Retry/resume values |
-|---|---|---|
-| Automation | Conversation `messages`, bot sender, template name, Meta ID, sent status; execution logs | Semantic values freshly prepared when action runs again |
-| Manual | Conversation `messages`, agent sender, template name, Meta ID, sent status | Fresh preparation on a new send; phone variants reuse the prepared payload |
-| Public message API | Same manual send-core persistence | Caller values through current legacy path |
-| Dashboard broadcast | Broadcast and recipient records; browser updates result status/Meta ID | Semantic values fresh; legacy values frozen |
-| Public/resumed broadcast | Recipient records updated server-side | Semantic values fresh; legacy values frozen |
-| Flows | Text/media/interactive messages | Not template delivery |
+| Consumer                 | Persistence                                                                              | Retry/resume values                                                        |
+| ------------------------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Automation               | Conversation `messages`, bot sender, template name, Meta ID, sent status; execution logs | Semantic values freshly prepared when action runs again                    |
+| Manual                   | Conversation `messages`, agent sender, template name, Meta ID, sent status               | Fresh preparation on a new send; phone variants reuse the prepared payload |
+| Public message API       | Same manual send-core persistence                                                        | Caller values through current legacy path                                  |
+| Dashboard broadcast      | Broadcast and recipient records; browser updates result status/Meta ID                   | Semantic values fresh; legacy values frozen                                |
+| Public/resumed broadcast | Recipient records updated server-side                                                    | Semantic values fresh; legacy values frozen                                |
+| Flows                    | Text/media/interactive messages                                                          | Not template delivery                                                      |
 
 Connection association for inbox messages is carried through the conversation; broadcasts store their WhatsApp connection.
 

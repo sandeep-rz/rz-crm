@@ -268,3 +268,97 @@ it.each(['subscription', 'registration'])(
     expect(h.subscribe).not.toHaveBeenCalled();
   }
 );
+
+it('captures WABA-only Coexistence completion without dropping the event', () => {
+  expect(
+    signupEvent('https://www.facebook.com', {
+      type: 'WA_EMBEDDED_SIGNUP',
+      event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+      data: { waba_id: '123' },
+      version: 3,
+    })
+  ).toEqual({
+    event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+    context: { waba_id: '123' },
+  });
+});
+it('Coexistence skips registration even when status is not CONNECTED', async () => {
+  fetcher.mockReset().mockResolvedValue(
+    response({
+      id: '456',
+      status: 'PENDING',
+      is_on_biz_app: true,
+      platform_type: 'CLOUD_API',
+    })
+  );
+  const result = await activateWithLease(
+    context,
+    'token',
+    undefined,
+    guard,
+    'coexistence'
+  );
+  expect(result.needsRegistration).toBe(false);
+  expect(fetcher.mock.calls.every(([, init]) => init?.method !== 'POST')).toBe(
+    true
+  );
+});
+it.each([
+  { is_on_biz_app: false, platform_type: 'CLOUD_API' },
+  { is_on_biz_app: true, platform_type: 'ON_PREMISE' },
+  {},
+])('blocks unverified Coexistence without registration %j', async (state) => {
+  fetcher.mockReset().mockResolvedValue(response({ id: '456', ...state }));
+  await expect(
+    activateWithLease(context, 'token', undefined, guard, 'coexistence')
+  ).rejects.toThrow('not confirmed');
+  expect(fetcher.mock.calls.every(([, init]) => init?.method !== 'POST')).toBe(
+    true
+  );
+});
+it('standard launch detects phone-number-first Coexistence and never registers', async () => {
+  fetcher.mockReset().mockImplementation(async () =>
+    response({
+      id: '456',
+      status: 'PENDING',
+      is_on_biz_app: true,
+      platform_type: 'CLOUD_API',
+    })
+  );
+  expect(await activateSignup(context, 'token')).toMatchObject({
+    needsRegistration: false,
+    mode: 'coexistence',
+  });
+  expect(fetcher.mock.calls.every(([, init]) => init?.method !== 'POST')).toBe(
+    true
+  );
+});
+it('resolves the sole authorized phone for WABA-only Coexistence completion', async () => {
+  fetcher
+    .mockReset()
+    .mockResolvedValueOnce(response({ data: validDebug }))
+    .mockResolvedValueOnce(response({ id: '123', name: 'Customer' }))
+    .mockResolvedValueOnce(
+      response({ id: '456', is_on_biz_app: true, platform_type: 'CLOUD_API' })
+    );
+  expect(
+    (await validateSignupToken('token', { waba_id: '123' }, 'coexistence'))
+      .context
+  ).toEqual(context);
+});
+it('does not guess a phone when two authorized Coexistence numbers exist', async () => {
+  h.numbers.mockResolvedValue([
+    { id: '456', display_phone_number: '+123' },
+    { id: '789', display_phone_number: '+456' },
+  ]);
+  fetcher
+    .mockReset()
+    .mockResolvedValueOnce(response({ data: validDebug }))
+    .mockResolvedValueOnce(response({ id: '123' }))
+    .mockImplementation(async () =>
+      response({ is_on_biz_app: true, platform_type: 'CLOUD_API' })
+    );
+  await expect(
+    validateSignupToken('token', { waba_id: '123' }, 'coexistence')
+  ).rejects.toThrow('one eligible');
+});

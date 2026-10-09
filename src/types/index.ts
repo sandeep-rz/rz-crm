@@ -242,6 +242,11 @@ export type MessageStatus =
   'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
 export interface Message {
+  coexistence_metadata?: {
+    history?: boolean;
+    placeholder?: boolean;
+    media_id?: string | null;
+  };
   id: string;
   conversation_id: string;
   sender_type: SenderType;

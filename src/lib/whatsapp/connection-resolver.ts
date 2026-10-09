@@ -100,7 +100,7 @@ export async function resolveWhatsAppConnection(
   let query = db
     .from('whatsapp_config')
     .select(
-      'id, account_id, user_id, display_name, is_primary, phone_number_id, waba_id, access_token, status'
+      'id, account_id, user_id, display_name, is_primary, phone_number_id, waba_id, access_token, status, onboarding_metadata'
     )
     .eq('account_id', accountId);
 
@@ -127,6 +127,16 @@ export async function resolveWhatsAppConnection(
     );
   }
 
+  if (
+    config.onboarding_metadata?.onboarding_mode === 'coexistence' &&
+    config.status !== 'connected'
+  ) {
+    throw new WhatsAppConnectionError(
+      'not_configured',
+      'The WhatsApp Business app connection is offboarded. Wait for reconnection or check Business Platform settings.',
+      409
+    );
+  }
   let accessToken: string;
   try {
     accessToken = decrypt(config.access_token);

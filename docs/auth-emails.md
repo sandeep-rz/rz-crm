@@ -12,10 +12,10 @@ Every emailed link is asked to return to the app's own origin at
 `/auth/callback`, which exchanges the link for a session and then
 forwards to the page the flow needs:
 
-| Flow | Started from | Link returns to |
-|---|---|---|
-| Email confirmation after sign-up | `/signup` | `/auth/callback?next=/dashboard` (or `/join/<token>` when signing up from an invite) |
-| Password reset | `/forgot-password` | `/auth/callback?next=/reset-password` |
+| Flow                             | Started from       | Link returns to                                                                      |
+| -------------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
+| Email confirmation after sign-up | `/signup`          | `/auth/callback?next=/dashboard` (or `/join/<token>` when signing up from an invite) |
+| Password reset                   | `/forgot-password` | `/auth/callback?next=/reset-password`                                                |
 
 "The app's own origin" is the origin the browser loaded the page from
 (`window.location.origin`) — `https://crm.example.com` in production,
@@ -25,7 +25,7 @@ involved.
 `/auth/callback` accepts both link shapes Supabase can produce — the
 default `?code=` (PKCE) and `?token_hash=&type=` from a customised
 template — validates `next` so it can only point at a same-origin path,
-and redirects with a *relative* `Location`, so it works unchanged
+and redirects with a _relative_ `Location`, so it works unchanged
 behind Cloudflare Tunnel, nginx, Hostinger, Vercel or any other proxy.
 
 ## What Supabase needs
@@ -85,7 +85,7 @@ additional_redirect_urls = ["http://localhost:3000/**"]
 
 ## Opening the link on another device
 
-The default flow is PKCE: the browser that *requested* the email holds
+The default flow is PKCE: the browser that _requested_ the email holds
 a one-time code verifier in a cookie, and `/auth/callback` needs it to
 complete the exchange. Open the link on a different device or browser
 and the callback lands on `/login` with a message saying the link
@@ -102,10 +102,16 @@ To make links device-independent, switch the Supabase email templates
 
 ```html
 <!-- Confirm signup -->
-<a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email&next=/dashboard">Confirm your email</a>
+<a
+  href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email&next=/dashboard"
+  >Confirm your email</a
+>
 
 <!-- Reset password -->
-<a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password">Reset your password</a>
+<a
+  href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password"
+  >Reset your password</a
+>
 ```
 
 These links are built from the **Site URL**, so that setting must be
@@ -113,13 +119,13 @@ your production origin.
 
 ## Symptoms → causes
 
-| You see | Likely cause |
-|---|---|
-| Link in the email is `http://localhost:3000…` in production | Site URL still at its default and/or your origin missing from Redirect URLs (see above). On self-hosted: `SITE_URL` in the Docker `.env`. |
-| Link points at the right domain but a 404 | You're on a build older than the one that added `/auth/callback` and `/reset-password`. Update your fork. |
-| `/login` says the link expired | Links are single-use and time-limited (Supabase default: 1 hour for recovery). Request a new one. |
-| `/login` says the link couldn't be used | Opened in a different browser than the one that requested it (PKCE), or already used. See the section above. |
-| Link works on localhost but not through a tunnel/proxy | Should not happen — the callback redirects with a relative `Location`. Check that your proxy forwards the `/auth/callback` path and its query string untouched. |
+| You see                                                     | Likely cause                                                                                                                                                    |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Link in the email is `http://localhost:3000…` in production | Site URL still at its default and/or your origin missing from Redirect URLs (see above). On self-hosted: `SITE_URL` in the Docker `.env`.                       |
+| Link points at the right domain but a 404                   | You're on a build older than the one that added `/auth/callback` and `/reset-password`. Update your fork.                                                       |
+| `/login` says the link expired                              | Links are single-use and time-limited (Supabase default: 1 hour for recovery). Request a new one.                                                               |
+| `/login` says the link couldn't be used                     | Opened in a different browser than the one that requested it (PKCE), or already used. See the section above.                                                    |
+| Link works on localhost but not through a tunnel/proxy      | Should not happen — the callback redirects with a relative `Location`. Check that your proxy forwards the `/auth/callback` path and its query string untouched. |
 
 ## Related
 

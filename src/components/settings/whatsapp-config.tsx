@@ -903,6 +903,74 @@ export function WhatsAppConfig() {
             </p>
           )}
 
+          {config?.onboarding_metadata?.onboarding_mode === 'coexistence' && (
+            <div className="space-y-2 rounded-lg border p-4 text-sm">
+              <p className="font-medium">WhatsApp Business App Coexistence</p>
+              <p>
+                Contacts:{' '}
+                {config.coexistence_state?.smb_app_state_sync?.state ||
+                  'Pending'}{' '}
+                · History:{' '}
+                {config.coexistence_state?.history?.state || 'Pending'}{' '}
+                {config.coexistence_state?.history?.progress !== undefined &&
+                  `(${config.coexistence_state.history.progress}%)`}
+              </p>
+              <p>
+                Local import batches:{' '}
+                {config.coexistence_import?.pending ?? 'Unknown'} pending ·{' '}
+                {config.coexistence_import?.failed ?? 'Unknown'} need recovery
+              </p>
+              <p className="text-muted-foreground text-xs">
+                Unconfirmed requests require Meta support review; they are never
+                sent twice. Declined history is respected. Keep the Business app
+                open during synchronization. Local processing may continue after
+                Meta delivers all chunks.
+              </p>
+              {canEditSettings && (
+                <Button
+                  variant="outline"
+                  disabled={saving}
+                  onClick={async () => {
+                    setSaving(true);
+                    try {
+                      const response = await fetch(
+                        '/api/whatsapp/embedded-signup',
+                        {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            action: 'sync',
+                            connection_id: config.id,
+                          }),
+                        }
+                      );
+                      const result = await response.json();
+                      if (!response.ok)
+                        throw new Error(
+                          result.error || 'Synchronization recovery failed.'
+                        );
+                      await fetchConfig(accountId!, config.id, true);
+                      await savedSignups.refresh();
+                      toast.success(
+                        'Synchronization status refreshed. Existing one-time requests were preserved.'
+                      );
+                    } catch (error) {
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : 'Synchronization recovery failed.'
+                      );
+                    } finally {
+                      setSaving(false);
+                    }
+                  }}
+                >
+                  Refresh and recover synchronization
+                </Button>
+              )}
+            </div>
+          )}
+
           {/* Registration Status — the "is it actually live?" check.
             Credentials being valid is necessary but not sufficient;
             without a successful /register call the number won't

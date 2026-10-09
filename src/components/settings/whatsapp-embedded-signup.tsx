@@ -12,8 +12,11 @@ import { cn } from '@/lib/utils';
 import { signupDiagnostic } from '@/lib/whatsapp/embedded-signup-diagnostics';
 import {
   signupEvent,
+  signupLaunchOptions,
+  signupEligibilityError,
+  type SignupMode,
+  type SignupSessionContext,
   embeddedSignupConfig,
-  type SignupContext,
   type SavedSignupAttempt,
 } from '@/lib/whatsapp/embedded-signup-context';
 
@@ -145,10 +148,12 @@ export function WhatsAppEmbeddedSignup({
     'idle' | 'preparing' | 'ready' | 'signup' | 'unconfirmed' | 'saving'
   >('idle');
   const [message, setMessage] = useState('');
+  const [mode, setMode] = useState<SignupMode>('cloud_api');
   const prepared = useRef<{ session: string; fb: Facebook } | null>(null);
   const run = useRef<{
     code?: string;
-    context?: SignupContext;
+    context?: SignupSessionContext;
+    completionEvent?: string;
     submitted: boolean;
     responded: boolean;
   } | null>(null);
@@ -215,6 +220,7 @@ export function WhatsAppEmbeddedSignup({
         session_id: prepared.current.session,
         code: current.code,
         context: current.context,
+        completion_event: current.completionEvent,
       });
       if (alive.current) {
         setRecoverySession(null);
@@ -241,12 +247,16 @@ export function WhatsAppEmbeddedSignup({
       if (!run.current || run.current.submitted) return;
       clearLaunchWatchdog();
       run.current.responded = true;
-      if (result.event === 'FINISH') {
+      if (
+        result.event === 'FINISH' ||
+        result.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
+      ) {
         setPhase('unconfirmed');
         setMessage(
           'WhatsApp details received. Finish Facebook authorization in the popup. If the popup has already closed, retry or cancel signup.'
         );
         run.current.context = result.context;
+        run.current.completionEvent = result.event;
         void complete();
       } else {
         signupDiagnostic('signup_cancelled_or_error', { event: result.event });
@@ -255,7 +265,9 @@ export function WhatsAppEmbeddedSignup({
             ? 'Signup cancelled. You can try again.'
             : result.event === 'INCOMPLETE'
               ? 'Signup did not return both a WhatsApp account and number. Start again.'
-              : 'Meta reported a signup error. Start again.'
+              : signupEligibilityError(
+                  'errorCode' in result ? result.errorCode : undefined
+                )
         );
       }
     };
@@ -269,6 +281,7 @@ export function WhatsAppEmbeddedSignup({
       const fb = await loadSdk();
       const data = await api({
         action: 'start',
+        mode,
         ...(reconnectId ? { reconnect_id: reconnectId } : {}),
       });
       if (alive.current) {
@@ -368,54 +381,42 @@ export function WhatsAppEmbeddedSignup({
         secureContext: window.isSecureContext,
         topLevel: window.top === window.self,
       });
-      prepared.current.fb.login(
-        (response) => {
-          const status = response?.status;
-          const errorCode = response?.error?.code;
-          signupDiagnostic('fb_login_callback', {
-            hasCode: Boolean(response?.authResponse?.code),
-            ...(status === 'connected' ||
-            status === 'not_authorized' ||
-            status === 'unknown'
-              ? { status }
-              : {}),
-            ...(typeof errorCode === 'number' && Number.isFinite(errorCode)
-              ? { errorCode }
-              : {}),
-          });
-          if (run.current !== current || current.submitted) return;
-          clearLaunchWatchdog();
-          current.responded = true;
-          if (response?.error) {
-            signupDiagnostic('fb_login_error');
-            stop(
-              'Facebook could not start signup. Check the app’s Login for Business settings and allowed domain, then retry.'
-            );
-            return;
-          }
-          if (!response?.authResponse?.code) {
-            signupDiagnostic('fb_login_cancelled');
-            stop(
-              'Facebook authorization was cancelled or incomplete. Start again.'
-            );
-            return;
-          }
-          run.current.code = response.authResponse.code;
-          setPhase('unconfirmed');
-          setMessage(
-            'Facebook authorization received. Finish selecting your WhatsApp account and number in the popup. If the popup has already closed, retry or cancel signup.'
-          );
-          void complete();
-        },
-        {
-          config_id: embeddedSignupConfig.configId,
-          response_type: 'code',
-          override_default_response_type: true,
-          // Standard Cloud API v4 launch from Meta's current implementation page.
-          // Products and version are selected by the Login for Business config.
-          extras: { setup: {} },
+      prepared.current.fb.login((response) => {
+        const status = response?.status;
+        const errorCode = response?.error?.code;
+        signupDiagnostic('fb_login_callback', {
+          hasCode: Boolean(response?.authResponse?.code),
+          ...(status === 'connected' ||
+          status === 'not_authorized' ||
+          status === 'unknown'
+            ? { status }
+            : {}),
+          ...(typeof errorCode === 'number' && Number.isFinite(errorCode)
+            ? { errorCode }
+            : {}),
+        });
+        if (run.current !== current || current.submitted) return;
+        clearLaunchWatchdog();
+        current.responded = true;
+        if (response?.error) {
+          signupDiagnostic('fb_login_error');
+          stop(signupEligibilityError(response.error.code));
+          return;
         }
-      );
+        if (!response?.authResponse?.code) {
+          signupDiagnostic('fb_login_cancelled');
+          stop(
+            'Facebook authorization was cancelled or incomplete. Start again.'
+          );
+          return;
+        }
+        run.current.code = response.authResponse.code;
+        setPhase('unconfirmed');
+        setMessage(
+          'Facebook authorization received. Finish selecting your WhatsApp account and number in the popup. If the popup has already closed, retry or cancel signup.'
+        );
+        void complete();
+      }, signupLaunchOptions(mode));
       // This only changes the silent-launch UI. It does not cancel an open,
       // long-running interaction, discard the session, or reject late callbacks.
       if (run.current === current && !current.responded && !current.submitted) {
@@ -477,6 +478,57 @@ export function WhatsAppEmbeddedSignup({
             </p>
           </div>
         </div>
+        <fieldset
+          disabled={phase !== 'idle'}
+          className="w-full space-y-3 text-left"
+        >
+          <legend className="text-sm font-semibold">
+            Choose your connection method
+          </legend>
+          {(
+            [
+              [
+                'coexistence',
+                'Connect with WhatsApp Business App',
+                'Recommended if you already use the mobile app. Keep using your existing WhatsApp Business app while connecting it to RGCRM for CRM messaging and automation.',
+              ],
+              [
+                'cloud_api',
+                'Connect with WhatsApp Cloud API',
+                'Connect a new or eligible WhatsApp number directly to RGCRM through Meta.',
+              ],
+            ] as const
+          ).map(([value, label, description]) => (
+            <label key={value} className="flex gap-3 rounded-xl border p-4">
+              <input
+                type="radio"
+                name={`signup-mode-${reconnectId || 'new'}`}
+                value={value}
+                checked={mode === value}
+                onChange={() => setMode(value)}
+              />
+              <span>
+                <span className="block text-sm font-medium">{label}</span>
+                <span className="text-muted-foreground text-xs">
+                  {description}
+                </span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {mode === 'coexistence' && (
+          <p className="text-muted-foreground text-left text-xs leading-relaxed">
+            Meta decides number eligibility. Keep the Business app open during
+            synchronization. You choose whether to share chat history in Meta;
+            eligible one-to-one history may be imported, but groups and some app
+            features are unavailable in RGCRM. Older media may be missing.
+            Linked devices may need reconnecting and some app features change.
+            Get customer consent before CRM messaging. Cloud API messages have
+            Meta charges and messaging-window rules. A number already using
+            AiSensy or another provider needs its supported transfer path
+            checked first.
+          </p>
+        )}
         <div
           className={cn(
             'flex flex-wrap items-center gap-3',

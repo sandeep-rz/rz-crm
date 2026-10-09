@@ -364,7 +364,9 @@ it('uses a table with headers and filters executions by status and contact/refer
   for (const row of host.querySelectorAll('tr[data-execution]')) {
     expect(row.textContent).not.toContain('Booking welcome');
   }
-  expect(host.querySelector('input')?.placeholder).toBe('Contact or reservation…');
+  expect(host.querySelector('input')?.placeholder).toBe(
+    'Contact or reservation…'
+  );
   expect(host.querySelectorAll('tr[data-execution]')).toHaveLength(2);
   const status = host.querySelector('select')!;
   await act(async () => {

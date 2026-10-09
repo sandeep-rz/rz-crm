@@ -60,27 +60,27 @@ describe('parseEmailLink', () => {
     // A code wins even if a token_hash also rides along.
     expect(
       parseEmailLink(
-        new URLSearchParams('code=abc&token_hash=th&type=recovery'),
-      ),
+        new URLSearchParams('code=abc&token_hash=th&type=recovery')
+      )
     ).toEqual({ kind: 'code', code: 'abc' });
   });
 
   it('parses a token_hash link with a known type', () => {
     expect(
-      parseEmailLink(new URLSearchParams('token_hash=th-1&type=recovery')),
+      parseEmailLink(new URLSearchParams('token_hash=th-1&type=recovery'))
     ).toEqual({ kind: 'token_hash', tokenHash: 'th-1', type: 'recovery' });
     expect(
-      parseEmailLink(new URLSearchParams('token_hash=th-2&type=email')),
+      parseEmailLink(new URLSearchParams('token_hash=th-2&type=email'))
     ).toEqual({ kind: 'token_hash', tokenHash: 'th-2', type: 'email' });
   });
 
   it('returns null for a token_hash with a missing or unknown type', () => {
     expect(parseEmailLink(new URLSearchParams('token_hash=th'))).toBeNull();
     expect(
-      parseEmailLink(new URLSearchParams('token_hash=th&type=sms')),
+      parseEmailLink(new URLSearchParams('token_hash=th&type=sms'))
     ).toBeNull();
     expect(
-      parseEmailLink(new URLSearchParams('token_hash=th&type=RECOVERY')),
+      parseEmailLink(new URLSearchParams('token_hash=th&type=RECOVERY'))
     ).toBeNull();
   });
 
@@ -115,20 +115,20 @@ describe('parseSupabaseError', () => {
     expect(
       parseSupabaseError(
         new URLSearchParams(
-          'error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired',
-        ),
-      ),
+          'error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired'
+        )
+      )
     ).toBe('link_expired');
   });
 
   it('maps any other upstream error to link_invalid', () => {
-    expect(
-      parseSupabaseError(new URLSearchParams('error=server_error')),
-    ).toBe('link_invalid');
+    expect(parseSupabaseError(new URLSearchParams('error=server_error'))).toBe(
+      'link_invalid'
+    );
     expect(
       parseSupabaseError(
-        new URLSearchParams('error=access_denied&error_code=otp_disabled'),
-      ),
+        new URLSearchParams('error=access_denied&error_code=otp_disabled')
+      )
     ).toBe('link_invalid');
   });
 

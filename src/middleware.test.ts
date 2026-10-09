@@ -144,9 +144,7 @@ describe('middleware — every dashboard route requires a session', () => {
     async (route) => {
       mockUser = null;
 
-      const res = await middleware(
-        new NextRequest(`https://app.test${route}`)
-      );
+      const res = await middleware(new NextRequest(`https://app.test${route}`));
 
       expect(res.status).toBe(307);
       expect(new URL(res.headers.get('location')!).pathname).toBe('/login');

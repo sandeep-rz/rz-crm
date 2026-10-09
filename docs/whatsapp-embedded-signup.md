@@ -1,5 +1,7 @@
 # RGCRM WhatsApp Embedded Signup implementation report
 
+For the current dual-mode v4 implementation, new Login Configuration ID, Coexistence synchronization and release checklist, see [WhatsApp Coexistence](./whatsapp-coexistence.md). The sections below preserve the earlier standard-signup and recovery audit history.
+
 Implemented and corrected 2026-10-08. Reconnect and interruption recovery were reviewed and corrected in forward migration 74. Automated implementation checks pass. **Live Meta E2E and deployment approval remain pending.** No remote database migration, Meta configuration change, real onboarding, billing operation, or deployment was performed.
 
 ## WABA concurrency and lease review: exact changes
@@ -118,7 +120,7 @@ Existing variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 
 Optional new server-only variable: `META_EMBEDDED_SIGNUP_APP_SECRET`. Use it if the existing webhook secret setting contains multiple comma-separated app secrets. It must be the **single secret for app 1444327167651307**, and must also appear in `META_APP_SECRET` so incoming webhook signatures can be accepted. Without the dedicated setting, onboarding uses a single `META_APP_SECRET`. The server rejects ambiguous/missing secrets or an onboarding secret absent from the webhook secret list. Restart after environment changes.
 
-Public configuration is fixed to the supplied App ID `1444327167651307` and TechConfig ID `1392665409205658`. Launch uses `response_type: code`, `override_default_response_type: true`, and `extras: { setup: {} }`, matching Meta’s current standard v4 implementation example. Product selection and v4 are driven by the Login for Business configuration. The browser SDK initializes with `v26.0`, matching the generated snippets in the supplied Meta app dashboard screenshot. Existing backend Graph calls remain on v21.0. No app secret or business token is shipped to the browser.
+Public configuration is fixed to the supplied App ID `1444327167651307` and TechConfig ID `1445638484111991`. Launch uses `response_type: code`, `override_default_response_type: true`, and `extras: { setup: {} }`, matching Meta’s current standard v4 implementation example. Product selection and v4 are driven by the Login for Business configuration. The browser SDK initializes with `v26.0`, matching the generated snippets in the supplied Meta app dashboard screenshot. Existing backend Graph calls remain on v21.0. No app secret or business token is shipped to the browser.
 
 Verify in the actual Meta dashboard before rollout:
 

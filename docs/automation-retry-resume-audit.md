@@ -25,15 +25,15 @@ PMS webhook processed and reservation synchronized
 → worker updates trigger job
 ```
 
-| Stage | Existing implementation |
-|---|---|
-| Schedule occurrences | `src/lib/automations/pms-scheduler.ts:269`, `schedulePmsAutomationsAfterSync()` |
-| Claim and dispatch | `src/lib/automations/pms-worker.ts:94`, `processPmsAutomationJob()` / `runPmsAutomationJobWorker()` |
-| Acquire attempt identity | `supabase/migrations/71_manual_pms_automation_retry.sql:12`, `begin_pms_automation_execution()` |
-| Execute action tree | `src/lib/automations/engine.ts:322`, `executeAutomation()` / `executeStepsFrom()` |
-| Prepare and send template | `src/lib/automations/engine.ts:695`, `executeAutomationStep()` → `engineSendTemplate()` |
-| Meta call and local persistence | `src/lib/automations/meta-send.ts:115`, `sendViaMeta()` |
-| Record progress/status | `src/lib/automations/engine.ts:1258`, `appendResults()` / `finalizeLog()` |
+| Stage                           | Existing implementation                                                                             |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Schedule occurrences            | `src/lib/automations/pms-scheduler.ts:269`, `schedulePmsAutomationsAfterSync()`                     |
+| Claim and dispatch              | `src/lib/automations/pms-worker.ts:94`, `processPmsAutomationJob()` / `runPmsAutomationJobWorker()` |
+| Acquire attempt identity        | `supabase/migrations/71_manual_pms_automation_retry.sql:12`, `begin_pms_automation_execution()`     |
+| Execute action tree             | `src/lib/automations/engine.ts:322`, `executeAutomation()` / `executeStepsFrom()`                   |
+| Prepare and send template       | `src/lib/automations/engine.ts:695`, `executeAutomationStep()` → `engineSendTemplate()`             |
+| Meta call and local persistence | `src/lib/automations/meta-send.ts:115`, `sendViaMeta()`                                             |
+| Record progress/status          | `src/lib/automations/engine.ts:1258`, `appendResults()` / `finalizeLog()`                           |
 
 The execution gate prevents re-entering an already-completed occurrence or duplicating the same claimed attempt. It does not resume a new attempt from a previous attempt’s successful steps.
 
@@ -77,16 +77,16 @@ Sources:
 
 Manual Retry deliberately permits rearming terminal/non-automatically-retryable failures, including attempts beyond the automatic limit.
 
-| Behavior | Automatic PMS retry | Manual Activity Retry |
-|---|---|---|
-| Same trigger job | Yes | Yes |
-| New log after a new claim reaches execution | Yes | Yes |
-| Old attempt preserved | Yes | Yes |
-| Previous successful steps skipped | No | No |
-| Starts at root position zero | Yes | Yes |
-| Can repeat earlier successful sends | Yes | Yes |
-| Honors automatic retryability/limit | Yes | Can rearm despite either |
-| Uses current automation/reservation | Yes | Yes |
+| Behavior                                    | Automatic PMS retry | Manual Activity Retry    |
+| ------------------------------------------- | ------------------- | ------------------------ |
+| Same trigger job                            | Yes                 | Yes                      |
+| New log after a new claim reaches execution | Yes                 | Yes                      |
+| Old attempt preserved                       | Yes                 | Yes                      |
+| Previous successful steps skipped           | No                  | No                       |
+| Starts at root position zero                | Yes                 | Yes                      |
+| Can repeat earlier successful sends         | Yes                 | Yes                      |
+| Honors automatic retryability/limit         | Yes                 | Can rearm despite either |
+| Uses current automation/reservation         | Yes                 | Yes                      |
 
 Neither deletes previous progress. Instead, the new attempt starts with empty progress and does not consult earlier progress.
 
@@ -151,27 +151,27 @@ Sources: `src/lib/automations/engine.ts:695`, `src/lib/automations/meta-send.ts:
 
 ### Failure behavior after acceptance
 
-| Boundary | Current behavior | Replay risk |
-|---|---|---|
-| Response parsing or accessing `data.messages[0].id` fails | No returned `wamid`; generic template failure becomes retryable | Accepted outcome may be unknown; automatic/manual resend possible |
-| Contact phone normalization | Returned database error is unchecked; a thrown exception aborts sending | Thrown failure can become retryable after acceptance |
-| Local body rendering | Occurs after Meta send; thrown error aborts the step | Can become retryable after acceptance |
-| Message insert returns an error | Throws `meta_sent_message_persistence_failed`, `retryable: false` | Automatic retry stops; manual Retry still permits resend |
-| Message insert throws rather than returning an error | Falls through generic template error handling | Can become retryable |
-| Conversation preview update returns an error | Error is unchecked; sender returns success | Message may be recorded while preview is stale |
-| Conversation preview update throws | Step fails after the message insert | Message exists, but automatic/manual retry can resend |
-| Process dies before step results are persisted | Successful action may lack a durable successful-step result | Lease recovery can replay |
-| Later action fails | Earlier send remains successful in history, if results persist | New attempt still replays it |
+| Boundary                                                  | Current behavior                                                        | Replay risk                                                       |
+| --------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Response parsing or accessing `data.messages[0].id` fails | No returned `wamid`; generic template failure becomes retryable         | Accepted outcome may be unknown; automatic/manual resend possible |
+| Contact phone normalization                               | Returned database error is unchecked; a thrown exception aborts sending | Thrown failure can become retryable after acceptance              |
+| Local body rendering                                      | Occurs after Meta send; thrown error aborts the step                    | Can become retryable after acceptance                             |
+| Message insert returns an error                           | Throws `meta_sent_message_persistence_failed`, `retryable: false`       | Automatic retry stops; manual Retry still permits resend          |
+| Message insert throws rather than returning an error      | Falls through generic template error handling                           | Can become retryable                                              |
+| Conversation preview update returns an error              | Error is unchecked; sender returns success                              | Message may be recorded while preview is stale                    |
+| Conversation preview update throws                        | Step fails after the message insert                                     | Message exists, but automatic/manual retry can resend             |
+| Process dies before step results are persisted            | Successful action may lack a durable successful-step result             | Lease recovery can replay                                         |
+| Later action fails                                        | Earlier send remains successful in history, if results persist          | New attempt still replays it                                      |
 
 The message-insert failure comment says not to pretend sending failed, but the implementation does throw, producing a failed automation step.
 
 ### What delivery evidence exists?
 
-| Classification | Evidence available today |
-|---|---|
-| A. Definitely not submitted by this invocation | Validation/preparation failure before the Meta request |
-| B. Meta acceptance observed | Returned `wamid`; persisted `messages.message_id`; successful step detail containing the provider ID |
-| C. Outcome unknown | Transport failure, response parsing failure, crash, or failure before acceptance evidence is durably recorded |
+| Classification                                 | Evidence available today                                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| A. Definitely not submitted by this invocation | Validation/preparation failure before the Meta request                                                        |
+| B. Meta acceptance observed                    | Returned `wamid`; persisted `messages.message_id`; successful step detail containing the provider ID          |
+| C. Outcome unknown                             | Transport failure, response parsing failure, crash, or failure before acceptance evidence is durably recorded |
 
 - Meta acceptance is not proof of delivery to the recipient.
 - On the recognized message-insert failure, `wamid` exists in the sender’s local variable but is not included in `AutomationTemplateSendError`.
@@ -183,22 +183,22 @@ There is no exactly-once delivery guarantee in this implementation.
 
 ## 5. Existing Checkpoint Data
 
-| State | Current role | Safe resume checkpoint? |
-|---|---|---|
-| `steps_executed` | JSON array of step ID, type, status, detail | Useful evidence, insufficient alone |
-| `automation_logs` | Attempt history and execution result | Reusable storage, not currently a resume ledger |
-| `trigger_job_id` | Stable PMS occurrence identity | Yes, for grouping attempts |
-| `trigger_job_attempt_count` | Claim attempt associated with log | Yes, for attempt identity |
-| `trigger_job_execution_state` | Processing/completed/failed gate state | Whole-execution protection only |
-| Job `status` | Queue lifecycle | No step progress |
-| `attempt_count` | Claim count | No step progress |
-| `retryable` / `next_attempt_at` | Automatic retry policy | No delivery classification |
-| `last_error` | Latest queue failure | Not reliable delivery evidence |
-| `processing_started_at` | Lease age | No execution cursor |
-| `completed_at` | Queue completion/terminal timestamp | No per-step completion |
-| Pending parent/branch/position/context | Wait continuation cursor | Scope-specific resume information |
-| `completed_wait_continuation_ids` | Completed continuation segment identities | Segment-level replay protection |
-| `messages.message_id` | Provider message identity | Acceptance evidence without step correlation |
+| State                                  | Current role                                | Safe resume checkpoint?                         |
+| -------------------------------------- | ------------------------------------------- | ----------------------------------------------- |
+| `steps_executed`                       | JSON array of step ID, type, status, detail | Useful evidence, insufficient alone             |
+| `automation_logs`                      | Attempt history and execution result        | Reusable storage, not currently a resume ledger |
+| `trigger_job_id`                       | Stable PMS occurrence identity              | Yes, for grouping attempts                      |
+| `trigger_job_attempt_count`            | Claim attempt associated with log           | Yes, for attempt identity                       |
+| `trigger_job_execution_state`          | Processing/completed/failed gate state      | Whole-execution protection only                 |
+| Job `status`                           | Queue lifecycle                             | No step progress                                |
+| `attempt_count`                        | Claim count                                 | No step progress                                |
+| `retryable` / `next_attempt_at`        | Automatic retry policy                      | No delivery classification                      |
+| `last_error`                           | Latest queue failure                        | Not reliable delivery evidence                  |
+| `processing_started_at`                | Lease age                                   | No execution cursor                             |
+| `completed_at`                         | Queue completion/terminal timestamp         | No per-step completion                          |
+| Pending parent/branch/position/context | Wait continuation cursor                    | Scope-specific resume information               |
+| `completed_wait_continuation_ids`      | Completed continuation segment identities   | Segment-level replay protection                 |
+| `messages.message_id`                  | Provider message identity                   | Acceptance evidence without step correlation    |
 
 `steps_executed` is represented as:
 
@@ -255,21 +255,21 @@ Therefore, a global “resume at step N” is insufficient.
 
 All current action types were inspected in `src/lib/automations/engine.ts:651`, `executeAutomationStep()`.
 
-| Step type | Classification | Replay implications |
-|---|---|---|
-| `condition` | Pure/control-flow | Reevaluation can select a different branch |
-| `wait` | Wait/scheduling | Replay can enqueue another continuation |
-| `send_template` | External, duplicate-sensitive | Another WhatsApp message |
-| `send_message` | External, duplicate-sensitive | Another WhatsApp message |
-| `send_buttons` | External, duplicate-sensitive | Another interactive message |
-| `send_list` | External, duplicate-sensitive | Another interactive message |
-| `send_webhook` | External, duplicate-sensitive | Repeats POST; no engine-generated idempotency key |
-| `create_deal` | Non-idempotent database mutation | Inserts another deal |
-| `add_tag` | Conditionally repeatable | Existing association prevents duplicate add/dispatch; first add triggers other automations |
-| `remove_tag` | Generally repeatable | Repeats deletion; may undo intervening changes |
-| `update_contact_field` | Generally repeatable assignment/upsert | Can overwrite intervening edits; timestamps change |
-| `assign_conversation` | Conditional | Explicit assignment repeats; round robin advances and may choose another agent |
-| `close_conversation` | Generally repeatable assignment | Can close a conversation reopened since the earlier attempt |
+| Step type              | Classification                         | Replay implications                                                                        |
+| ---------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `condition`            | Pure/control-flow                      | Reevaluation can select a different branch                                                 |
+| `wait`                 | Wait/scheduling                        | Replay can enqueue another continuation                                                    |
+| `send_template`        | External, duplicate-sensitive          | Another WhatsApp message                                                                   |
+| `send_message`         | External, duplicate-sensitive          | Another WhatsApp message                                                                   |
+| `send_buttons`         | External, duplicate-sensitive          | Another interactive message                                                                |
+| `send_list`            | External, duplicate-sensitive          | Another interactive message                                                                |
+| `send_webhook`         | External, duplicate-sensitive          | Repeats POST; no engine-generated idempotency key                                          |
+| `create_deal`          | Non-idempotent database mutation       | Inserts another deal                                                                       |
+| `add_tag`              | Conditionally repeatable               | Existing association prevents duplicate add/dispatch; first add triggers other automations |
+| `remove_tag`           | Generally repeatable                   | Repeats deletion; may undo intervening changes                                             |
+| `update_contact_field` | Generally repeatable assignment/upsert | Can overwrite intervening edits; timestamps change                                         |
+| `assign_conversation`  | Conditional                            | Explicit assignment repeats; round robin advances and may choose another agent             |
+| `close_conversation`   | Generally repeatable assignment        | Can close a conversation reopened since the earlier attempt                                |
 
 Interactive sending delegates to existing Flows sender functions in `src/lib/flows/meta-send.ts:346`. These also send before inserting the local message, and post-send persistence errors become ordinary errors.
 
@@ -360,14 +360,14 @@ Relevant tests:
 
 ### Requested scenarios
 
-| Scenario | Current coverage |
-|---|---|
-| Step 1 succeeds, Step 2 fails, retry skips Step 1 | Missing |
-| Template send succeeds, later action fails, retry avoids duplicate | Missing |
-| Meta succeeds, message persistence fails | Unit classification covered; full manual replay not covered |
-| Automatic retry avoids successful-action replay | Missing |
-| Manual retry avoids successful-action replay | Missing; RPC tests explicitly permit requeue |
-| Branch resume preserves completed actions and chosen path | Missing; saved Wait scope/position is covered |
+| Scenario                                                           | Current coverage                                            |
+| ------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Step 1 succeeds, Step 2 fails, retry skips Step 1                  | Missing                                                     |
+| Template send succeeds, later action fails, retry avoids duplicate | Missing                                                     |
+| Meta succeeds, message persistence fails                           | Unit classification covered; full manual replay not covered |
+| Automatic retry avoids successful-action replay                    | Missing                                                     |
+| Manual retry avoids successful-action replay                       | Missing; RPC tests explicitly permit requeue                |
+| Branch resume preserves completed actions and chosen path          | Missing; saved Wait scope/position is covered               |
 
 Also missing are post-insert conversation exceptions, crashes before progress persistence, stale-lease overlap with an active sender, and failed continuation segments receiving completion markers.
 

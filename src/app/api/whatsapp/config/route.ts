@@ -127,7 +127,7 @@ export async function GET(request: Request) {
     const { data: configs, error } = await supabase
       .from('whatsapp_config')
       .select(
-        'id, display_name, is_primary, phone_number_id, waba_id, verify_token, onboarding_metadata, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, mirror_inbound_media, created_at, updated_at'
+        'id, display_name, is_primary, phone_number_id, waba_id, verify_token, onboarding_metadata, coexistence_state, status, connected_at, registered_at, subscribed_apps_at, last_registration_error, mirror_inbound_media, created_at, updated_at'
       )
       .eq('account_id', accountId)
       .order('is_primary', { ascending: false })
@@ -137,6 +137,29 @@ export async function GET(request: Request) {
         { error: 'Failed to fetch WhatsApp configuration' },
         { status: 500 }
       );
+    let importSummary: {
+      connection_id: string;
+      pending: number;
+      failed: number;
+    }[] = [];
+    if (
+      configs?.some(
+        (row) => row.onboarding_metadata?.onboarding_mode === 'coexistence'
+      )
+    ) {
+      // The user-scoped connection read above establishes the workspace. Private
+      // receipt payloads remain service-role-only; return aggregate counts only.
+      const db = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { persistSession: false, autoRefreshToken: false } }
+      );
+      const { data, error: summaryError } = await db.rpc(
+        'whatsapp_coexistence_import_summary',
+        { p_account: accountId }
+      );
+      if (!summaryError) importSummary = data ?? [];
+    }
     const connections = (configs ?? []).map((row) => ({
       id: row.id,
       display_name: row.display_name || 'WhatsApp connection',
@@ -148,6 +171,7 @@ export async function GET(request: Request) {
         row.onboarding_metadata?.method === 'embedded_signup'
           ? {
               method: 'embedded_signup',
+              onboarding_mode: row.onboarding_metadata.onboarding_mode,
               display_phone_number:
                 row.onboarding_metadata.display_phone_number,
               waba_name: row.onboarding_metadata.waba_name,
@@ -155,6 +179,10 @@ export async function GET(request: Request) {
               token_expires_at: row.onboarding_metadata.token_expires_at,
             }
           : undefined,
+      coexistence_state: row.coexistence_state,
+      coexistence_import:
+        importSummary.find((summary) => summary.connection_id === row.id) ??
+        null,
       status: row.status,
       connected_at: row.connected_at,
       registered_at: row.registered_at,
@@ -367,7 +395,9 @@ export async function POST(request: Request) {
     // intentionally replace it.
     let existingQuery = supabase
       .from('whatsapp_config')
-      .select('id, registered_at, phone_number_id, verify_token')
+      .select(
+        'id, registered_at, phone_number_id, verify_token, onboarding_metadata'
+      )
       .eq('account_id', accountId);
     existingQuery = connectionId
       ? existingQuery.eq('id', connectionId)
@@ -423,7 +453,8 @@ export async function POST(request: Request) {
     let registrationSkipped = false;
 
     const needsRegistration =
-      !sameNumber || (typeof pin === 'string' && pin.length > 0);
+      existing?.onboarding_metadata?.onboarding_mode !== 'coexistence' &&
+      (!sameNumber || (typeof pin === 'string' && pin.length > 0));
     if (needsRegistration) {
       if (!pin) {
         // No PIN provided. Meta TEST numbers (Developer Console) are

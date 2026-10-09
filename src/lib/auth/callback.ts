@@ -40,7 +40,7 @@ const MAX_NEXT_LENGTH = 2048;
  */
 export function safeNextPath(
   raw: string | null | undefined,
-  fallback: string = DEFAULT_NEXT_PATH,
+  fallback: string = DEFAULT_NEXT_PATH
 ): string {
   if (typeof raw !== 'string') return fallback;
   const value = raw.trim();
@@ -108,7 +108,7 @@ export function parseEmailLink(params: URLSearchParams): EmailLink | null {
  * failure /login can explain precisely; everything else is generic.
  */
 export function parseSupabaseError(
-  params: URLSearchParams,
+  params: URLSearchParams
 ): CallbackFailure | null {
   const errorCode = params.get('error_code');
   const error = params.get('error');

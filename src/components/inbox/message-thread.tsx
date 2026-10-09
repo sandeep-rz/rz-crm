@@ -237,7 +237,9 @@ export function MessageThread({
     // Find last customer message
     const lastCustomerMsg = [...messages]
       .reverse()
-      .find((m) => m.sender_type === 'customer');
+      .find(
+        (m) => m.sender_type === 'customer' && !m.coexistence_metadata?.history
+      );
 
     if (!lastCustomerMsg)
       return { expired: true, remaining: tTimer('noCustomerMessages') };

@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 // ============================================================
 // /reset-password — the form the password-reset email leads to.
@@ -15,31 +15,31 @@
 // away from the very page they need.
 // ============================================================
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useTranslations } from "next-intl";
-import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useTranslations } from 'next-intl';
+import { createClient } from '@/lib/supabase/client';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { CheckCircle, KeyRound, Loader2, MailX } from "lucide-react";
+} from '@/components/ui/card';
+import { CheckCircle, KeyRound, Loader2, MailX } from 'lucide-react';
 
-type Status = "checking" | "ready" | "expired" | "done";
+type Status = 'checking' | 'ready' | 'expired' | 'done';
 
 export default function ResetPasswordPage() {
-  const t = useTranslations("ResetPasswordPage");
+  const t = useTranslations('ResetPasswordPage');
   const supabase = createClient();
 
-  const [status, setStatus] = useState<Status>("checking");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [status, setStatus] = useState<Status>('checking');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -48,7 +48,7 @@ export default function ResetPasswordPage() {
     // The callback wrote the session cookies server-side; the browser
     // client reads them here. No user → the link didn't yield a session.
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!cancelled) setStatus(user ? "ready" : "expired");
+      if (!cancelled) setStatus(user ? 'ready' : 'expired');
     });
     return () => {
       cancelled = true;
@@ -60,12 +60,12 @@ export default function ResetPasswordPage() {
     setError(null);
 
     if (password !== confirmPassword) {
-      setError(t("passwordsMismatch"));
+      setError(t('passwordsMismatch'));
       return;
     }
     // Same floor as /signup.
     if (password.length < 6) {
-      setError(t("passwordTooShort"));
+      setError(t('passwordTooShort'));
       return;
     }
 
@@ -77,47 +77,47 @@ export default function ResetPasswordPage() {
       setError(error.message);
       return;
     }
-    setStatus("done");
+    setStatus('done');
   };
 
-  if (status === "checking") {
+  if (status === 'checking') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="bg-background flex min-h-screen items-center justify-center px-4">
+        <div className="text-muted-foreground flex items-center gap-2 text-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
-          {t("checking")}
+          {t('checking')}
         </div>
       </div>
     );
   }
 
-  if (status === "expired") {
+  if (status === 'expired') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md border-border bg-card">
+      <div className="bg-background flex min-h-screen items-center justify-center px-4">
+        <Card className="border-border bg-card w-full max-w-md">
           <CardHeader className="items-center text-center">
             <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10">
               <MailX className="h-6 w-6 text-amber-400" />
             </div>
-            <CardTitle className="text-xl text-foreground">
-              {t("expiredTitle")}
+            <CardTitle className="text-foreground text-xl">
+              {t('expiredTitle')}
             </CardTitle>
             <CardDescription className="text-muted-foreground">
-              {t("expiredDesc")}
+              {t('expiredDesc')}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <Link href="/forgot-password">
-              <Button className="h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                {t("requestNewLink")}
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 h-10 w-full">
+                {t('requestNewLink')}
               </Button>
             </Link>
             <Link href="/login">
               <Button
                 variant="outline"
-                className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="border-border text-muted-foreground hover:bg-muted hover:text-foreground w-full"
               >
-                {t("backToSignIn")}
+                {t('backToSignIn')}
               </Button>
             </Link>
           </CardContent>
@@ -126,34 +126,34 @@ export default function ResetPasswordPage() {
     );
   }
 
-  if (status === "done") {
+  if (status === 'done') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <Card className="w-full max-w-md border-border bg-card">
+      <div className="bg-background flex min-h-screen items-center justify-center px-4">
+        <Card className="border-border bg-card w-full max-w-md">
           <CardHeader className="items-center text-center">
-            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-              <CheckCircle className="h-6 w-6 text-primary" />
+            <div className="bg-primary/10 mb-2 flex h-12 w-12 items-center justify-center rounded-xl">
+              <CheckCircle className="text-primary h-6 w-6" />
             </div>
-            <CardTitle className="text-xl text-foreground">
-              {t("successTitle")}
+            <CardTitle className="text-foreground text-xl">
+              {t('successTitle')}
             </CardTitle>
             <CardDescription className="text-muted-foreground">
-              {t("successDesc")}
+              {t('successDesc')}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Button
-              className="h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 h-10 w-full"
               onClick={() => {
                 // Full-page navigation, like /login: the middleware
                 // gating /dashboard must see the session cookies on a
                 // fresh top-level request, which a soft router.push
                 // can race (issue #365).
                 // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- deliberate full reload so the auth cookies reach the middleware
-                window.location.href = "/dashboard";
+                window.location.href = '/dashboard';
               }}
             >
-              {t("continueToDashboard")}
+              {t('continueToDashboard')}
             </Button>
           </CardContent>
         </Card>
@@ -162,15 +162,17 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border-border bg-card">
+    <div className="bg-background flex min-h-screen items-center justify-center px-4">
+      <Card className="border-border bg-card w-full max-w-md">
         <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            <KeyRound className="h-6 w-6 text-primary" />
+          <div className="bg-primary/10 mb-2 flex h-12 w-12 items-center justify-center rounded-xl">
+            <KeyRound className="text-primary h-6 w-6" />
           </div>
-          <CardTitle className="text-xl text-foreground">{t("title")}</CardTitle>
+          <CardTitle className="text-foreground text-xl">
+            {t('title')}
+          </CardTitle>
           <CardDescription className="text-muted-foreground">
-            {t("desc")}
+            {t('desc')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -183,13 +185,13 @@ export default function ResetPasswordPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="password" className="text-muted-foreground">
-                {t("passwordLabel")}
+                {t('passwordLabel')}
               </Label>
               <Input
                 id="password"
                 type="password"
                 autoComplete="new-password"
-                placeholder={t("passwordPlaceholder")}
+                placeholder={t('passwordPlaceholder')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -198,14 +200,17 @@ export default function ResetPasswordPage() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="confirmPassword" className="text-muted-foreground">
-                {t("confirmPasswordLabel")}
+              <Label
+                htmlFor="confirmPassword"
+                className="text-muted-foreground"
+              >
+                {t('confirmPasswordLabel')}
               </Label>
               <Input
                 id="confirmPassword"
                 type="password"
                 autoComplete="new-password"
-                placeholder={t("confirmPasswordPlaceholder")}
+                placeholder={t('confirmPasswordPlaceholder')}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
@@ -216,9 +221,9 @@ export default function ResetPasswordPage() {
             <Button
               type="submit"
               disabled={saving}
-              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 mt-2 h-10 w-full disabled:opacity-50"
             >
-              {saving ? t("saving") : t("submit")}
+              {saving ? t('saving') : t('submit')}
             </Button>
           </form>
         </CardContent>

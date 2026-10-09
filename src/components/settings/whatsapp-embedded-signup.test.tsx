@@ -277,7 +277,7 @@ it('disables recovery and discard while another worker holds the attempt lease',
 it('uses Meta’s current standard v4 launch options and retries a silent launch without another session', async () => {
   await launch();
   expect(login.mock.calls[0][1]).toEqual({
-    config_id: '1392665409205658',
+    config_id: '1445638484111991',
     response_type: 'code',
     override_default_response_type: true,
     extras: { setup: {} },
@@ -410,4 +410,37 @@ it('reports enforced CSP directives in development without logging blocked URLs'
   );
   expect(JSON.stringify(log.mock.calls)).not.toContain('private-code');
   expect(JSON.stringify(log.mock.calls)).not.toContain('blockedURI');
+});
+
+it('launches Coexistence and accepts WABA-only session completion', async () => {
+  await act(() =>
+    host.querySelector<HTMLInputElement>('input[value="coexistence"]')!.click()
+  );
+  await click('Connect WhatsApp');
+  await click('Continue with Facebook');
+  expect(login.mock.calls.at(-1)?.[1]).toMatchObject({
+    extras: {
+      featureType: 'whatsapp_business_app_onboarding',
+      sessionInfoVersion: '3',
+    },
+  });
+  await act(() =>
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: 'https://www.facebook.com',
+        data: {
+          type: 'WA_EMBEDDED_SIGNUP',
+          event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+          data: { waba_id: '123' },
+          version: 3,
+        },
+      })
+    )
+  );
+  await act(async () => callback({ authResponse: { code: 'code' } }));
+  const saved = JSON.parse(fetcher.mock.calls.at(-1)![1]!.body as string);
+  expect(saved).toMatchObject({
+    completion_event: 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+    context: { waba_id: '123' },
+  });
 });

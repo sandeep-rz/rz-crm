@@ -489,12 +489,12 @@ export function WhatsAppEmbeddedSignup({
             [
               [
                 'coexistence',
-                'Connect with WhatsApp Business App',
+                'Connect my WhatsApp Business App',
                 'Recommended if you already use the mobile app. Keep using your existing WhatsApp Business app while connecting it to RGCRM for CRM messaging and automation.',
               ],
               [
                 'cloud_api',
-                'Connect with WhatsApp Cloud API',
+                'Connect a new WhatsApp number',
                 'Connect a new or eligible WhatsApp number directly to RGCRM through Meta.',
               ],
             ] as const
@@ -657,13 +657,16 @@ export function WhatsAppEmbeddedSignup({
           </p>
         )}
         {onManualSetup && (
-          <Button
-            variant="ghost"
-            className="text-muted-foreground hover:text-foreground h-auto px-0 py-1 text-xs hover:bg-transparent"
-            onClick={onManualSetup}
-          >
-            Advanced: manual connection
-          </Button>
+          <details className="text-muted-foreground text-xs">
+            <summary className="cursor-pointer py-1">Advanced Options</summary>
+            <Button
+              variant="ghost"
+              className="text-muted-foreground hover:text-foreground h-auto px-0 py-1 text-xs hover:bg-transparent"
+              onClick={onManualSetup}
+            >
+              Manual connection
+            </Button>
+          </details>
         )}
       </div>
       <div className="bg-muted/30 border-t px-6 py-4 sm:px-8">

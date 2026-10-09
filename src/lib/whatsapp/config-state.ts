@@ -40,3 +40,31 @@ export interface WhatsAppLocalConfig {
   connections: WhatsAppConnectionSummary[];
   selected_connection_id: string | null;
 }
+
+/** Contact receipts do not imply a documented completion signal from Meta. */
+export function coexistenceSyncLabel(state?: string, contacts = false): string {
+  switch (state) {
+    case 'received':
+      return contacts ? 'Contact updates received' : 'Messages received';
+    case 'complete':
+      return 'Complete';
+    case 'declined':
+      return 'Sharing declined';
+    case 'failed':
+      return 'Could not synchronize; review with Meta support';
+    case 'deadline_expired':
+      return 'Sharing window expired; reconnect to start again';
+    case 'unconfirmed':
+      return 'Meta has not confirmed the request; contact Meta support';
+    case 'accepted':
+      return contacts
+        ? 'Waiting for contact updates'
+        : 'Waiting for message history';
+    case 'partial':
+      return 'History sharing reported an error; review with Meta support';
+    case 'syncing':
+      return 'Synchronizing';
+    default:
+      return 'Not started';
+  }
+}

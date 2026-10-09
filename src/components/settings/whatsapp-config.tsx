@@ -37,7 +37,10 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion';
-import type { WhatsAppConnectionSummary } from '@/lib/whatsapp/config-state';
+import {
+  coexistenceSyncLabel,
+  type WhatsAppConnectionSummary,
+} from '@/lib/whatsapp/config-state';
 import {
   AddWhatsAppConnectionButton,
   WhatsAppConnectionCard,
@@ -894,7 +897,10 @@ export function WhatsAppConfig() {
           )}
           {config?.onboarding_metadata?.method === 'embedded_signup' && (
             <p className="text-muted-foreground text-sm">
-              {config.onboarding_metadata.display_phone_number} ·{' '}
+              {config.onboarding_metadata.onboarding_mode === 'coexistence'
+                ? 'WhatsApp Business App'
+                : 'WhatsApp Cloud API'}{' '}
+              · {config.onboarding_metadata.display_phone_number} ·{' '}
               {config.onboarding_metadata.waba_name} · Webhook subscription last
               verified:{' '}
               {config.subscribed_apps_at
@@ -908,23 +914,28 @@ export function WhatsAppConfig() {
               <p className="font-medium">WhatsApp Business App Coexistence</p>
               <p>
                 Contacts:{' '}
-                {config.coexistence_state?.smb_app_state_sync?.state ||
-                  'Pending'}{' '}
+                {coexistenceSyncLabel(
+                  config.coexistence_state?.smb_app_state_sync?.state,
+                  true
+                )}{' '}
                 · History:{' '}
-                {config.coexistence_state?.history?.state || 'Pending'}{' '}
+                {coexistenceSyncLabel(config.coexistence_state?.history?.state)}{' '}
                 {config.coexistence_state?.history?.progress !== undefined &&
                   `(${config.coexistence_state.history.progress}%)`}
               </p>
-              <p>
-                Local import batches:{' '}
-                {config.coexistence_import?.pending ?? 'Unknown'} pending ·{' '}
-                {config.coexistence_import?.failed ?? 'Unknown'} need recovery
-              </p>
+              {(config.coexistence_import?.pending ?? 0) > 0 && (
+                <p>Some messages are still being imported.</p>
+              )}
+              {(config.coexistence_import?.failed ?? 0) > 0 && (
+                <p>
+                  Some messages could not be imported. Refresh synchronization
+                  to retry.
+                </p>
+              )}
               <p className="text-muted-foreground text-xs">
-                Unconfirmed requests require Meta support review; they are never
-                sent twice. Declined history is respected. Keep the Business app
-                open during synchronization. Local processing may continue after
-                Meta delivers all chunks.
+                Keep the WhatsApp Business App open during synchronization.
+                Contact updates can arrive over time. Messages may continue
+                appearing after Meta finishes sharing history.
               </p>
               {canEditSettings && (
                 <Button
@@ -951,9 +962,7 @@ export function WhatsAppConfig() {
                         );
                       await fetchConfig(accountId!, config.id, true);
                       await savedSignups.refresh();
-                      toast.success(
-                        'Synchronization status refreshed. Existing one-time requests were preserved.'
-                      );
+                      toast.success('Synchronization status refreshed.');
                     } catch (error) {
                       toast.error(
                         error instanceof Error
@@ -965,7 +974,7 @@ export function WhatsAppConfig() {
                     }
                   }}
                 >
-                  Refresh and recover synchronization
+                  Refresh synchronization
                 </Button>
               )}
             </div>
@@ -1085,7 +1094,7 @@ export function WhatsAppConfig() {
               <AccordionTrigger className="hover:no-underline">
                 <span className="text-left">
                   <span className="text-foreground block font-medium">
-                    Advanced settings
+                    Advanced Options
                   </span>
                   <span className="text-muted-foreground mt-1 block text-xs font-normal">
                     Credentials, webhook configuration, registration, and

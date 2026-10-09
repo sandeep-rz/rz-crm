@@ -17,7 +17,12 @@ import {
 export class SignupError extends Error {
   constructor(
     public readonly status: number,
-    message: string
+    message: string,
+    public readonly meta?: {
+      code?: number;
+      subcode?: number;
+      fbtrace_id?: string;
+    }
   ) {
     super(message);
   }
@@ -39,10 +44,42 @@ async function graph(
     });
     const result = await response.json();
     if (!response.ok || result.error) {
-      const code = result.error?.error_subcode ?? result.error?.code;
-      if (code === 2494064 || code === 3441034)
-        throw new SignupError(400, signupEligibilityError(code));
-      throw new Error();
+      const error = result.error;
+      const meta = {
+        ...(Number.isSafeInteger(error?.code)
+          ? { code: error.code as number }
+          : {}),
+        ...(Number.isSafeInteger(error?.error_subcode)
+          ? { subcode: error.error_subcode as number }
+          : {}),
+        ...(typeof error?.fbtrace_id === 'string' &&
+        /^[A-Za-z0-9_-]{1,100}$/.test(error.fbtrace_id)
+          ? { fbtrace_id: error.fbtrace_id as string }
+          : {}),
+      };
+      const code = meta.subcode ?? meta.code;
+      // Only Meta's user-facing text is eligible for display. Raw messages can
+      // echo request credentials; remove known credentials even from this field.
+      let userMessage =
+        typeof error?.error_user_msg === 'string' ? error.error_user_msg : '';
+      const secrets = [token, ...token.split('|')];
+      if (init?.body instanceof URLSearchParams)
+        secrets.push(...Array.from(init.body.values()));
+      for (const secret of secrets.filter(Boolean))
+        userMessage = userMessage.split(secret).join('[redacted]');
+      userMessage = userMessage
+        .replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .slice(0, 500)
+        .trim();
+      const guidance =
+        code === 2494064 || code === 3441034
+          ? signupEligibilityError(code)
+          : `Meta rejected this step${code !== undefined ? ` (error ${code})` : ''}. Recover saved setup when available, or review eligibility with Meta support.`;
+      throw new SignupError(
+        response.status >= 500 ? 502 : 400,
+        userMessage ? `${userMessage} ${guidance}` : guidance,
+        Object.keys(meta).length ? meta : undefined
+      );
     }
     return result;
   } catch (error) {
@@ -89,7 +126,8 @@ export async function exchangeSignupCode(
         }),
       }
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof SignupError && error.meta) throw error;
     throw new SignupError(
       400,
       'The Facebook authorization code expired or could not be exchanged. Start signup again.'

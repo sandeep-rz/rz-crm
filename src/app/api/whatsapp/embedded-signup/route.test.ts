@@ -1,3 +1,4 @@
+import { SignupError } from '@/lib/whatsapp/embedded-signup';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { encrypt } from '@/lib/whatsapp/encryption';
@@ -382,6 +383,41 @@ it('Coexistence completion persists mode, skips registration and starts synchron
   ).toBe(false);
   expect(h.sync).toHaveBeenCalledOnce();
 });
+it('keeps the server-selected Coexistence mode when Meta sends generic FINISH', async () => {
+  h.attempt.onboarding_mode = 'coexistence';
+  const res = await POST(
+    request({ ...body, completion_event: 'FINISH', mode: 'cloud_api' })
+  );
+  expect(res.status).toBe(200);
+  expect(h.activate).toHaveBeenCalledWith(
+    context,
+    'private-token',
+    expect.any(Object),
+    expect.any(Function),
+    'coexistence'
+  );
+  expect(
+    h.rpc.mock.calls.some(([name]) => name === 'mark_whatsapp_registration')
+  ).toBe(false);
+  expect(
+    (await POST(request({ ...body, completion_event: 'FINISH' }))).status
+  ).toBe(200);
+  expect(h.exchange).toHaveBeenCalledOnce();
+});
+it('rejects contradictory registration activation for an explicitly selected Business App flow', async () => {
+  h.attempt.onboarding_mode = 'coexistence';
+  const register = vi.fn();
+  h.activate.mockResolvedValueOnce({
+    needsRegistration: true,
+    encryptedPin: 'pin',
+    register,
+  });
+  expect((await POST(request(body))).status).toBe(409);
+  expect(register).not.toHaveBeenCalled();
+  expect(
+    h.rpc.mock.calls.some(([name]) => name === 'mark_whatsapp_registration')
+  ).toBe(false);
+});
 it('completed Coexistence callbacks are idempotent', async () => {
   const input = {
     ...body,
@@ -438,4 +474,21 @@ it('reports synchronization recovery separately from successful connection activ
     })
   );
   expect(await res.json()).toMatchObject({ success: true, sync_pending: true });
+});
+
+it('returns sanitized Meta error details for an unsuccessful signup', async () => {
+  h.exchange.mockRejectedValue(
+    new SignupError(400, 'Meta blocked onboarding (2494064).', {
+      code: 100,
+      subcode: 2494064,
+      fbtrace_id: 'safe-trace',
+    })
+  );
+  const response = await POST(request(body));
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({
+    error: 'Meta blocked onboarding (2494064).',
+    meta: { code: 100, subcode: 2494064, fbtrace_id: 'safe-trace' },
+  });
+  expect(h.activate).not.toHaveBeenCalled();
 });

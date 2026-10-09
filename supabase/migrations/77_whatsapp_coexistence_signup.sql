@@ -15,6 +15,8 @@ BEGIN
   SELECT * INTO a FROM public.whatsapp_signup_attempts WHERE id=p_attempt AND user_id=p_user AND account_id=p_account FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Invalid session' USING ERRCODE='42501'; END IF;
   IF p_mode IS NOT NULL AND p_mode NOT IN ('cloud_api','coexistence') THEN RAISE EXCEPTION 'Invalid mode' USING ERRCODE='22023'; END IF;
+  -- The persisted choice is server-bound; generic FINISH cannot downgrade it.
+  IF a.onboarding_mode='coexistence' THEN p_mode := 'coexistence'; END IF;
   -- The session event is a hint. A verified phone-number-first promotion must
   -- survive replay of the original FINISH event without downgrading its mode.
   IF a.completion_mode IS NOT NULL AND p_mode IS NOT NULL AND a.completion_mode<>p_mode
@@ -54,25 +56,35 @@ END $$;
 REVOKE ALL ON FUNCTION public.mark_whatsapp_signup_coexistence(uuid,uuid) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.mark_whatsapp_signup_coexistence(uuid,uuid) TO service_role;
 
--- Retain the existing abandonment/registration safeguards behind a mode gate.
-ALTER FUNCTION public.mark_whatsapp_registration(uuid,uuid,text) RENAME TO mark_whatsapp_cloud_registration;
-REVOKE ALL ON FUNCTION public.mark_whatsapp_cloud_registration(uuid,uuid,text) FROM PUBLIC,anon,authenticated,service_role;
-CREATE FUNCTION public.mark_whatsapp_registration(p_attempt uuid,p_lease uuid,p_encrypted_pin text)
+-- Add the mode gate directly to the existing guarded registration function.
+CREATE OR REPLACE FUNCTION public.mark_whatsapp_registration(p_attempt uuid,p_lease uuid,p_encrypted_pin text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 BEGIN
   PERFORM public.assert_whatsapp_signup_lease(p_attempt,p_lease);
   IF EXISTS (SELECT 1 FROM public.whatsapp_signup_attempts WHERE id=p_attempt AND completion_mode='coexistence') THEN
     RAISE EXCEPTION 'Coexistence numbers cannot be registered' USING ERRCODE='42501';
   END IF;
-  PERFORM public.mark_whatsapp_cloud_registration(p_attempt,p_lease,p_encrypted_pin);
+  IF p_encrypted_pin IS NULL OR length(p_encrypted_pin)=0 THEN RAISE EXCEPTION 'Missing encrypted PIN' USING ERRCODE='22023'; END IF;
+  -- Abandonment cannot erase an uncertain external registration. The backend
+  -- can still finish a new signup when Meta verifies the number is CONNECTED,
+  -- but must never blindly submit another registration for this number.
+  IF EXISTS (SELECT 1 FROM public.whatsapp_signup_attempts old
+    JOIN public.whatsapp_signup_attempts current ON current.id=p_attempt
+    WHERE old.id<>current.id AND old.discarded_at IS NOT NULL AND old.registration_requested_at IS NOT NULL
+      AND old.context->>'phone_number_id'=current.context->>'phone_number_id'
+      AND old.context->>'waba_id'=current.context->>'waba_id') THEN
+    RAISE EXCEPTION 'Discarded registration outcome must be verified in Meta' USING ERRCODE='42501';
+  END IF;
+  UPDATE public.whatsapp_signup_attempts SET pending_registration_pin=p_encrypted_pin,registration_requested_at=clock_timestamp()
+    WHERE id=p_attempt AND lease_id=p_lease AND state='processing' AND lease_until>clock_timestamp()
+      AND expires_at>clock_timestamp() AND registration_requested_at IS NULL AND pending_access_token IS NOT NULL;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Registration outcome must be reconciled' USING ERRCODE='42501'; END IF;
 END $$;
 REVOKE ALL ON FUNCTION public.mark_whatsapp_registration(uuid,uuid,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.mark_whatsapp_registration(uuid,uuid,text) TO service_role;
 
-ALTER FUNCTION public.finish_whatsapp_signup(uuid,uuid,timestamptz,timestamptz) RENAME TO finish_whatsapp_signup_activation;
-REVOKE ALL ON FUNCTION public.finish_whatsapp_signup_activation(uuid,uuid,timestamptz,timestamptz) FROM PUBLIC,anon,authenticated,service_role;
-CREATE FUNCTION public.finish_whatsapp_signup(p_attempt uuid,p_lease uuid,p_registered_at timestamptz,p_subscribed_at timestamptz)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+CREATE OR REPLACE FUNCTION public.finish_whatsapp_signup(p_attempt uuid,p_lease uuid,p_registered_at timestamptz,p_subscribed_at timestamptz)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE a public.whatsapp_signup_attempts; c public.whatsapp_config;
 BEGIN
   SELECT * INTO STRICT a FROM public.whatsapp_signup_attempts WHERE id=p_attempt FOR UPDATE;
@@ -80,12 +92,25 @@ BEGIN
   IF coalesce(a.pending_metadata->>'onboarding_mode','cloud_api') IS DISTINCT FROM coalesce(a.completion_mode,'cloud_api') THEN
     RAISE EXCEPTION 'Staged onboarding mode mismatch' USING ERRCODE='42501';
   END IF;
-  SELECT * INTO c FROM public.whatsapp_config WHERE id=a.connection_id FOR UPDATE;
+  IF a.state<>'processing' OR a.lease_id IS DISTINCT FROM p_lease OR a.lease_until<=clock_timestamp() OR a.expires_at<=clock_timestamp() OR a.pending_access_token IS NULL
+    OR p_registered_at IS NULL OR p_subscribed_at IS NULL OR NOT EXISTS (SELECT 1 FROM public.profiles WHERE user_id=a.user_id AND account_id=a.account_id AND account_role IN ('admin','owner')) THEN
+    RAISE EXCEPTION 'Invalid signup session' USING ERRCODE='42501';
+  END IF;
+  PERFORM public.assert_whatsapp_signup_lease(p_attempt,p_lease);
+  SELECT * INTO c FROM public.whatsapp_config WHERE id=a.connection_id AND account_id=a.account_id FOR UPDATE;
+  IF NOT FOUND OR c.updated_at IS DISTINCT FROM a.connection_updated_at
+    OR c.phone_number_id IS DISTINCT FROM a.context->>'phone_number_id' OR c.waba_id IS DISTINCT FROM a.context->>'waba_id' THEN
+    RAISE EXCEPTION 'Connection changed during setup' USING ERRCODE='23505';
+  END IF;
   IF a.pending_metadata->>'onboarding_mode'='coexistence' AND (c.coexistence_state->>'lifecycle_at')::timestamptz > a.signup_completed_at
     AND c.coexistence_state->>'lifecycle_event' IN ('PARTNER_REMOVED','ACCOUNT_OFFBOARDED') THEN
     RAISE EXCEPTION 'Connection offboarded during signup' USING ERRCODE='23505';
   END IF;
-  PERFORM public.finish_whatsapp_signup_activation(p_attempt,p_lease,p_registered_at,p_subscribed_at);
+  -- Recheck after waiting for the live connection row lock.
+  PERFORM public.assert_whatsapp_signup_lease(p_attempt,p_lease);
+  UPDATE public.whatsapp_config SET access_token=a.pending_access_token,onboarding_metadata=a.pending_metadata,
+    registration_pin=coalesce(a.pending_registration_pin,registration_pin),status='connected',connected_at=now(),
+    registered_at=p_registered_at,subscribed_apps_at=p_subscribed_at,last_registration_error=NULL,updated_at=now() WHERE id=c.id;
   IF a.pending_metadata->>'onboarding_mode'='coexistence' THEN
     UPDATE public.whatsapp_config SET onboarding_metadata=onboarding_metadata || '{"is_on_biz_app":true,"platform_type":"CLOUD_API"}', coexistence_state=CASE WHEN coexistence_state->>'lifecycle_event'='PARTNER_REMOVED'
         AND (coexistence_state->>'lifecycle_at')::timestamptz<a.signup_completed_at THEN
@@ -93,6 +118,8 @@ BEGIN
       ELSE coexistence_state || jsonb_build_object('onboarded_at',coalesce(coexistence_state->>'onboarded_at',a.signup_completed_at::text)) END
       WHERE id=a.connection_id AND account_id=a.account_id;
   END IF;
+  UPDATE public.whatsapp_signup_attempts SET state='complete',lease_id=NULL,lease_until=NULL,
+    pending_access_token=NULL,pending_registration_pin=NULL WHERE id=a.id;
 END $$;
 
 CREATE FUNCTION public.begin_whatsapp_coexistence_sync(p_connection uuid,p_type text)

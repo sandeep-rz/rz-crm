@@ -76,7 +76,15 @@ export async function GET() {
       error instanceof ForbiddenError ||
       error instanceof SignupError
     )
-      return reply({ error: error.message }, error.status);
+      return reply(
+        {
+          error: error.message,
+          ...(error instanceof SignupError && error.meta
+            ? { meta: error.meta }
+            : {}),
+        },
+        error.status
+      );
     return reply({ error: 'Could not load saved signup attempts.' }, 503);
   }
 }
@@ -184,7 +192,7 @@ export async function POST(request: Request) {
     const recovering = body.action === 'recover';
     if (!recovering && body.action !== 'complete')
       throw new SignupError(400, 'Invalid signup action.');
-    const completionMode =
+    let completionMode =
       body.completion_event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
         ? 'coexistence'
         : 'cloud_api';
@@ -196,10 +204,7 @@ export async function POST(request: Request) {
       )
     )
       throw new SignupError(400, 'Invalid completion event.');
-    const incomingContext =
-      completionMode === 'coexistence'
-        ? signupSessionContext(body.context)
-        : signupContext(body.context);
+    const incomingContext = signupSessionContext(body.context);
     if (
       !recovering &&
       (!uuid(body.session_id) ||
@@ -232,6 +237,19 @@ export async function POST(request: Request) {
       throw new SignupError(
         404,
         'No saved signup is available for this user and workspace.'
+      );
+    // The authenticated start persisted the host's choice. A generic FINISH
+    // event cannot downgrade an explicitly selected Business App flow.
+    if (attempt.onboarding_mode === 'coexistence')
+      completionMode = 'coexistence';
+    if (
+      !recovering &&
+      completionMode === 'cloud_api' &&
+      !signupContext(body.context)
+    )
+      throw new SignupError(
+        400,
+        'A phone number ID is required for Cloud API signup.'
       );
     const hash = recovering
       ? null
@@ -367,6 +385,11 @@ export async function POST(request: Request) {
       mode = 'coexistence';
     }
     if (activation.needsRegistration) {
+      if (mode === 'coexistence')
+        throw new SignupError(
+          409,
+          'Meta activation contradicts the selected Business App flow. Registration was not attempted.'
+        );
       // Atomically verify the current, unexpired lease and persist one registration
       // intent. Reclaimed leases can only reconcile an existing uncertain intent.
       const { error } = await db.rpc('mark_whatsapp_registration', {
@@ -434,7 +457,15 @@ export async function POST(request: Request) {
       error instanceof ForbiddenError ||
       error instanceof SignupError
     )
-      return reply({ error: error.message }, error.status);
+      return reply(
+        {
+          error: error.message,
+          ...(error instanceof SignupError && error.meta
+            ? { meta: error.meta }
+            : {}),
+        },
+        error.status
+      );
     return reply(
       {
         error:

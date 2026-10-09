@@ -15,13 +15,12 @@ const timestamp = (v: unknown) => {
     ? new Date(n * 1000).toISOString()
     : null;
 };
-export const isCoexistenceField = (field: string) =>
-  [
-    'history',
-    'smb_app_state_sync',
-    'smb_message_echoes',
-    'account_update',
-  ].includes(field);
+export const isCoexistenceField = (field: string, value?: unknown) =>
+  ['history', 'smb_app_state_sync', 'smb_message_echoes'].includes(field) ||
+  (field === 'account_update' &&
+    ['PARTNER_REMOVED', 'ACCOUNT_OFFBOARDED', 'ACCOUNT_RECONNECTED'].includes(
+      String(obj(value).event)
+    ));
 
 export function coexistenceRecords(
   field: string,
@@ -141,12 +140,7 @@ export function coexistenceRecords(
               : null,
       });
     }
-  } else if (
-    field === 'account_update' &&
-    ['PARTNER_REMOVED', 'ACCOUNT_OFFBOARDED', 'ACCOUNT_RECONNECTED'].includes(
-      String(v.event)
-    )
-  ) {
+  } else if (field === 'account_update' && isCoexistenceField(field, v)) {
     const at = timestamp(time);
     if (!at) throw new Error('Missing account lifecycle timestamp.');
     records.push({
@@ -173,7 +167,7 @@ export async function captureCoexistenceWebhook(
     for (const rawChange of arr(entry.changes)) {
       const change = obj(rawChange),
         field = String(change.field);
-      if (!isCoexistenceField(field)) continue;
+      if (!isCoexistenceField(field, change.value)) continue;
       const v = obj(change.value);
       const records = coexistenceRecords(field, v, entry.time);
       if (!records.length) continue;
@@ -198,10 +192,15 @@ export async function captureCoexistenceWebhook(
     }
   }
   if (!events.length) return false;
-  const { error } = await db.rpc('capture_whatsapp_coexistence_event', {
+  const { data, error } = await db.rpc('capture_whatsapp_coexistence_event', {
     p_events: events,
   });
   if (error) throw new Error('Coexistence capture failed.');
+  if (typeof data === 'number' && data > 0)
+    console.warn('[webhook] Coexistence lifecycle event unresolved', {
+      reason: 'ambiguous_phone_identity',
+      count: data,
+    });
   return true;
 }
 export async function drainCoexistenceWebhook(db: SupabaseClient) {

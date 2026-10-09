@@ -413,6 +413,8 @@ it('reports enforced CSP directives in development without logging blocked URLs'
 });
 
 it('launches Coexistence and accepts WABA-only session completion', async () => {
+  expect(host.textContent).toContain('Connect a new WhatsApp number');
+  expect(host.textContent).toContain('Connect my WhatsApp Business App');
   await act(() =>
     host.querySelector<HTMLInputElement>('input[value="coexistence"]')!.click()
   );

@@ -301,7 +301,7 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
 
   for (const entry of body.entry) {
     for (const change of entry.changes) {
-      if (isCoexistenceField(change.field)) continue;
+      if (isCoexistenceField(change.field, change.value)) continue;
       // Template-lifecycle events (status / quality / components
       // updates from Meta) come in on a different change.field and
       // have a different value shape — route them through the

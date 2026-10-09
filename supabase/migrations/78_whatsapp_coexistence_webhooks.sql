@@ -26,8 +26,8 @@ ALTER TABLE public.messages ADD COLUMN coexistence_metadata jsonb;
 COMMENT ON COLUMN public.messages.coexistence_metadata IS 'History provenance and media placeholders. Imports must not open a Cloud API customer service window.';
 
 CREATE FUNCTION public.capture_whatsapp_coexistence_event(p_events jsonb)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
-DECLARE event jsonb; c public.whatsapp_config; matches integer; target uuid;
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+DECLARE event jsonb; c public.whatsapp_config; matches integer; target uuid; unresolved integer := 0;
 BEGIN
   IF jsonb_typeof(p_events) IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'Invalid events'; END IF;
   FOR event IN SELECT value FROM jsonb_array_elements(p_events) LOOP
@@ -43,7 +43,7 @@ BEGIN
           SELECT 1 FROM jsonb_array_elements(event->'records') r
           WHERE nullif(r->>'phone','') IS NOT NULL AND
             regexp_replace(coalesce(onboarding_metadata->>'display_phone_number',''),'\D','','g') IS DISTINCT FROM r->>'phone');
-      IF matches<>1 THEN CONTINUE; END IF;
+      IF matches<>1 THEN unresolved := unresolved+1; CONTINUE; END IF;
     ELSE
       SELECT id INTO target FROM public.whatsapp_config WHERE waba_id=event->>'waba' AND phone_number_id=event->>'phone_id';
     END IF;
@@ -53,6 +53,7 @@ BEGIN
     INSERT INTO public.whatsapp_coexistence_events(event_key,connection_id,account_id,onboarding_epoch,records)
       VALUES((event->>'key') || ':' || c.id::text,c.id,c.account_id,c.coexistence_state->>'onboarded_at',event->'records') ON CONFLICT(event_key) DO NOTHING;
   END LOOP;
+  RETURN unresolved;
 END $$;
 
 CREATE FUNCTION public.process_whatsapp_coexistence_event(p_limit integer DEFAULT 1)
@@ -93,7 +94,8 @@ BEGIN
         IF r->>'kind'='progress' THEN
           progress := greatest(coalesce((c.coexistence_state->'history'->>'progress')::integer,0),coalesce((r->>'progress')::integer,0));
           source := coalesce(c.coexistence_state->'history','{}') || jsonb_build_object('progress',progress,
-            'state',CASE WHEN (r->>'denied')::boolean THEN 'declined' WHEN (r->>'error')::boolean THEN 'partial' WHEN progress=100 THEN 'complete' ELSE 'syncing' END);
+            'state',CASE WHEN c.coexistence_state->'history'->>'state' IN ('declined','complete','failed') THEN c.coexistence_state->'history'->>'state'
+              WHEN (r->>'denied')::boolean THEN 'declined' WHEN (r->>'error')::boolean THEN 'partial' WHEN progress=100 THEN 'complete' ELSE 'syncing' END);
           -- Keep chunk identities without depending on delivery ordering.
           IF r ? 'phase' AND r ? 'chunk_order' THEN source := source || jsonb_build_object('chunks',coalesce(source->'chunks','{}') || jsonb_build_object((r->>'phase') || ':' || (r->>'chunk_order'),true)); END IF;
           UPDATE public.whatsapp_config SET coexistence_state=jsonb_set(coexistence_state,'{history}',source) WHERE id=c.id;
@@ -125,7 +127,8 @@ BEGIN
             name=CASE WHEN coalesce(name,'') IN ('',peer,coalesce(old_source->>'name','')) AND NOT (r->>'removed')::boolean THEN coalesce(nullif(r->>'name',''),name) ELSE name END
             WHERE id=person AND account_id=c.account_id;
           UPDATE public.whatsapp_config SET coexistence_state=jsonb_set(coexistence_state,'{smb_app_state_sync}',
-            coalesce(coexistence_state->'smb_app_state_sync','{}') || '{"state":"syncing"}') WHERE id=c.id;
+            coalesce(coexistence_state->'smb_app_state_sync','{}') || jsonb_build_object('data_received',true,
+              'state',CASE WHEN coexistence_state->'smb_app_state_sync'->>'state' IN ('complete','declined','failed') THEN coexistence_state->'smb_app_state_sync'->>'state' ELSE 'received' END)) WHERE id=c.id;
           CONTINUE;
         END IF;
         INSERT INTO public.conversations(account_id,user_id,contact_id,whatsapp_config_id) VALUES(c.account_id,c.user_id,person,c.id)

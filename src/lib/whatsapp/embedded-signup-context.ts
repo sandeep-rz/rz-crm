@@ -40,7 +40,7 @@ export function signupLaunchOptions(mode: SignupMode) {
 export function signupEligibilityError(code?: number) {
   if (code === 2494064 || code === 3441034)
     return `Meta blocked onboarding (${code}). Check number eligibility, existing provider access and the app’s Tech Provider approval with Meta support. Keep any AiSensy or other provider connection in place until an approved transfer path is confirmed.`;
-  return 'Meta reported a signup error. Check eligibility and Login for Business settings, then retry.';
+  return `Meta reported a signup error${Number.isSafeInteger(code) ? ` (${code})` : ''}. Check eligibility and Login for Business settings, then retry.`;
 }
 const metaId = (v: unknown): v is string =>
   typeof v === 'string' && /^\d{1,30}$/.test(v);

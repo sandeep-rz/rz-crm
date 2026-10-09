@@ -1,3 +1,4 @@
+import { coexistenceSyncLabel } from '@/lib/whatsapp/config-state';
 // @vitest-environment jsdom
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -129,7 +130,7 @@ it.each([true, false])(
   async (success) => {
     h.connections = [];
     await act(() => root.render(<WhatsAppConfig />));
-    await click('Advanced: manual connection');
+    await click('Manual connection');
     await act(() => {
       (h.wizard.setPhoneNumberId as (v: string) => void)('123');
       (h.wizard.setWabaId as (v: string) => void)('456');
@@ -197,7 +198,7 @@ it('explicit testing uses the live endpoint and does not rewrite local connectio
   await act(async () => {
     await (h.cards.at(-1)!.onManage as () => Promise<void>)();
   });
-  await click('Advanced settings');
+  await click('Advanced Options');
   fetcher.mockResolvedValue(
     new Response(
       JSON.stringify({
@@ -219,7 +220,7 @@ it('changing inbound media retention invalidates local configuration', async () 
   await act(async () => {
     await (h.cards.at(-1)!.onManage as () => Promise<void>)();
   });
-  await click('Advanced settings');
+  await click('Advanced Options');
   fetcher.mockResolvedValue(new Response(JSON.stringify({ success: true })));
   const toggle = host.querySelector<HTMLButtonElement>('[role="switch"]');
   expect(toggle).toBeTruthy();
@@ -245,5 +246,16 @@ it('renders a single signup entry point when no numbers are connected', async ()
       (button) => button.textContent === 'Connect'
     )
   ).toBe(false);
-  expect(host.textContent).toContain('Advanced: manual connection');
+  expect(host.textContent).toContain('Manual connection');
+});
+
+it.each([
+  ['unconfirmed', 'Meta has not confirmed the request; contact Meta support'],
+  ['deadline_expired', 'Sharing window expired; reconnect to start again'],
+  ['declined', 'Sharing declined'],
+  ['complete', 'Complete'],
+  ['received', 'Contact updates received'],
+  ['accepted', 'Waiting for contact updates'],
+])('shows a useful contact sync status for %s', (state, label) => {
+  expect(coexistenceSyncLabel(state, true)).toBe(label);
 });

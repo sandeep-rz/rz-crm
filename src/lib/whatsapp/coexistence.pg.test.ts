@@ -3,23 +3,35 @@ import { promisify } from 'node:util';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { coexistenceRecords } from './coexistence-webhook';
 const execute = promisify(execFile);
-// Fixed disposable socket/database only. Never use application env credentials.
+// Two fixed disposable targets only; the full-schema target must carry a marker.
+// Never use application database credentials or a caller-supplied remote host.
+const fullSchema = process.env.RGCRM_COEXISTENCE_FULL_SCHEMA === '1';
 const sql = async (query: string) =>
   (
-    await execute('/opt/homebrew/opt/postgresql@14/bin/psql', [
-      '-X',
-      '-h',
-      '/tmp',
-      '-p',
-      '55441',
-      '-d',
-      'rgcrm_coexistence_test',
-      '-qAt',
-      '-v',
-      'ON_ERROR_STOP=1',
-      '-c',
-      query,
-    ])
+    await execute(
+      'psql',
+      [
+        '-X',
+        '-h',
+        fullSchema ? '127.0.0.1' : '/tmp',
+        '-p',
+        fullSchema ? '54325' : '55441',
+        ...(fullSchema ? ['-U', 'supabase_admin'] : []),
+        '-d',
+        fullSchema ? 'postgres' : 'rgcrm_coexistence_test',
+        '-qAt',
+        '-v',
+        'ON_ERROR_STOP=1',
+        '-c',
+        query,
+      ],
+      {
+        env: {
+          ...process.env,
+          ...(fullSchema ? { PGPASSWORD: 'postgres' } : {}),
+        },
+      }
+    )
   ).stdout.trim();
 const q = (v: unknown) => `'${String(v).replaceAll("'", "''")}'`;
 const account = '00000000-0000-0000-0000-000000000001',
@@ -28,6 +40,31 @@ const account = '00000000-0000-0000-0000-000000000001',
 const otherAccount = '00000000-0000-0000-0000-000000000004',
   otherUser = '00000000-0000-0000-0000-000000000005',
   otherConnection = '00000000-0000-0000-0000-000000000006';
+const assertDisposable = async () => {
+  if (fullSchema) {
+    expect(
+      await sql(
+        "SELECT shobj_description(oid,'pg_database') FROM pg_database WHERE datname=current_database()"
+      )
+    ).toBe('RGCRM disposable coexistence full schema');
+  } else
+    expect(await sql('SELECT current_database()')).toBe(
+      'rgcrm_coexistence_test'
+    );
+};
+const seed = fullSchema
+  ? `
+  ALTER TABLE auth.users DISABLE TRIGGER on_auth_user_created;
+  INSERT INTO auth.users(id,email) VALUES(${q(user)},'one@example.test'),(${q(otherUser)},'two@example.test');
+  INSERT INTO accounts(id,name,owner_user_id) VALUES(${q(account)},'One',${q(user)}),(${q(otherAccount)},'Two',${q(otherUser)});
+  INSERT INTO profiles(user_id,account_id,account_role,full_name,email) VALUES(${q(user)},${q(account)},'owner','One','one@example.test'),(${q(otherUser)},${q(otherAccount)},'owner','Two','two@example.test');
+  INSERT INTO account_members(account_id,user_id,role) VALUES(${q(account)},${q(user)},'owner'),(${q(otherAccount)},${q(otherUser)},'owner');
+  ALTER TABLE auth.users ENABLE TRIGGER on_auth_user_created;
+`
+  : `
+  INSERT INTO accounts VALUES(${q(account)}),(${q(otherAccount)});INSERT INTO auth.users VALUES(${q(user)}),(${q(otherUser)});
+  INSERT INTO profiles VALUES(${q(user)},${q(account)},'owner'),(${q(otherUser)},${q(otherAccount)},'owner');
+`;
 const metadata = {
   display_phone_number: '15551234567',
   phone_number_id: '456',
@@ -64,15 +101,12 @@ describe.skipIf(process.env.RGCRM_COEXISTENCE_PG_TEST !== '1')(
   'Coexistence actual PostgreSQL migrations',
   () => {
     beforeEach(async () => {
-      expect(await sql('SELECT current_database()')).toBe(
-        'rgcrm_coexistence_test'
-      );
-      await sql(`TRUNCATE whatsapp_coexistence_events,messages,conversations,contacts,whatsapp_signup_attempts,whatsapp_config,profiles,accounts,auth.users CASCADE;
-   INSERT INTO accounts VALUES(${q(account)}),(${q(otherAccount)});INSERT INTO auth.users VALUES(${q(user)}),(${q(otherUser)});
-   INSERT INTO profiles VALUES(${q(user)},${q(account)},'owner'),(${q(otherUser)},${q(otherAccount)},'owner');
+      await assertDisposable();
+      await sql(`BEGIN; TRUNCATE whatsapp_coexistence_events,messages,conversations,contacts,whatsapp_signup_attempts,whatsapp_config,profiles,accounts,auth.users CASCADE;
+   ${seed}
    INSERT INTO whatsapp_config(id,user_id,account_id,phone_number_id,waba_id,access_token,display_name,status,onboarding_metadata,coexistence_state)
     VALUES(${q(connection)},${q(user)},${q(account)},'456','123','encrypted','Test','connected','{"onboarding_mode":"coexistence","display_phone_number":"15551234567"}',jsonb_build_object('onboarded_at',now())),
-    (${q(otherConnection)},${q(otherUser)},${q(otherAccount)},'789','999','encrypted','Other','connected','{"onboarding_mode":"coexistence"}',jsonb_build_object('onboarded_at',now()));`);
+    (${q(otherConnection)},${q(otherUser)},${q(otherAccount)},'789','999','encrypted','Other','connected','{"onboarding_mode":"coexistence"}',jsonb_build_object('onboarded_at',now())); COMMIT;`);
     });
     it('imports echoes once through overlapping workers and webhook replays', async () => {
       const rows = coexistenceRecords('smb_message_echoes', {
@@ -141,6 +175,21 @@ describe.skipIf(process.env.RGCRM_COEXISTENCE_PG_TEST !== '1')(
           `SELECT count(*) FROM contacts WHERE account_id=${q(otherAccount)}`
         )
       ).toBe('0');
+      if (fullSchema) {
+        await sql(
+          `INSERT INTO contacts(account_id,user_id,phone,name) VALUES(${q(otherAccount)},${q(otherUser)},'15550009999','Other');`
+        );
+        expect(
+          await sql(
+            `SET ROLE authenticated; SET request.jwt.claim.sub=${q(user)}; SELECT count(*) FROM contacts;`
+          )
+        ).toBe('1');
+        expect(
+          await sql(
+            `SET ROLE authenticated; SET request.jwt.claim.sub=${q(user)}; SELECT count(*) FROM whatsapp_config WHERE account_id=${q(otherAccount)};`
+          )
+        ).toBe('0');
+      }
     });
     it('ignores ambiguous phone-less lifecycle events and resolves a supplied display number exactly', async () => {
       await sql(
@@ -269,6 +318,63 @@ describe.skipIf(process.env.RGCRM_COEXISTENCE_PG_TEST !== '1')(
         )
       ).toBe('declined');
       expect(await sql('SELECT count(*) FROM messages')).toBe('0');
+      await capture(history(20, 1), 'old-progress');
+      await drain();
+      expect(
+        await sql(
+          `SELECT coexistence_state->'history'->>'state' FROM whatsapp_config WHERE id=${q(connection)}`
+        )
+      ).toBe('declined');
+    });
+    it('keeps completed history terminal on late errors and duplicate progress', async () => {
+      await capture(history(100, 3), 'complete');
+      await drain();
+      await capture(
+        [{ kind: 'progress', progress: 10, error: true }],
+        'late-error'
+      );
+      await drain();
+      await capture(history(10, 1), 'late');
+      await capture(history(10, 1), 'late');
+      await drain();
+      expect(
+        await sql(
+          `SELECT coexistence_state->'history'->>'state',coexistence_state->'history'->>'progress' FROM whatsapp_config WHERE id=${q(connection)}`
+        )
+      ).toBe('complete|100');
+    });
+    it('records contact receipt without inventing completion or regressing terminal states', async () => {
+      const contacts = coexistenceRecords('smb_app_state_sync', {
+        metadata,
+        state_sync: [
+          {
+            type: 'contact',
+            action: 'add',
+            contact: { phone_number: echo.to },
+            metadata: { timestamp: '1739230955' },
+          },
+        ],
+      });
+      await capture(contacts, 'contacts');
+      await drain();
+      expect(
+        await sql(
+          `SELECT coexistence_state->'smb_app_state_sync'->>'state' FROM whatsapp_config WHERE id=${q(connection)}`
+        )
+      ).toBe('received');
+      await sql(
+        `SELECT accept_whatsapp_coexistence_sync(${q(connection)},'smb_app_state_sync','request'); UPDATE whatsapp_config SET coexistence_state=jsonb_set(coexistence_state,'{smb_app_state_sync,state}','"failed"') WHERE id=${q(connection)}`
+      );
+      await capture(
+        [{ ...contacts[0], at: '2025-02-11T02:23:00Z' }],
+        'later-contacts'
+      );
+      await drain();
+      expect(
+        await sql(
+          `SELECT coexistence_state->'smb_app_state_sync'->>'state' FROM whatsapp_config WHERE id=${q(connection)}`
+        )
+      ).toBe('failed');
     });
     it('contact additions and removals are ordered tombstones; CRM history is retained', async () => {
       const contact = (action: string, timestamp: string) =>
@@ -428,6 +534,18 @@ describe.skipIf(process.env.RGCRM_COEXISTENCE_PG_TEST !== '1')(
         )
       ).toBe('deadline_expired');
     });
+    it('keeps guarded signup functions service-only without redundant activation wrappers', async () => {
+      expect(
+        await sql(
+          "SELECT to_regprocedure('public.mark_whatsapp_cloud_registration(uuid,uuid,text)') IS NULL AND to_regprocedure('public.finish_whatsapp_signup_activation(uuid,uuid,timestamptz,timestamptz)') IS NULL"
+        )
+      ).toBe('t');
+      expect(
+        await sql(
+          "SELECT has_function_privilege('service_role','public.mark_whatsapp_registration(uuid,uuid,text)','EXECUTE') AND has_function_privilege('service_role','public.finish_whatsapp_signup(uuid,uuid,timestamptz,timestamptz)','EXECUTE') AND NOT has_function_privilege('authenticated','public.mark_whatsapp_registration(uuid,uuid,text)','EXECUTE') AND NOT has_function_privilege('anon','public.finish_whatsapp_signup(uuid,uuid,timestamptz,timestamptz)','EXECUTE')"
+        )
+      ).toBe('t');
+    });
     it('authenticated and anonymous callers cannot read payloads or execute privileged processing', async () => {
       await expect(
         sql('SET ROLE authenticated; SELECT * FROM whatsapp_coexistence_events')
@@ -450,9 +568,10 @@ describe.skipIf(process.env.RGCRM_COEXISTENCE_PG_TEST !== '1')(
     const attempt = '00000000-0000-0000-0000-000000000007',
       lease = '00000000-0000-0000-0000-000000000008';
     beforeEach(async () => {
-      await sql(`TRUNCATE whatsapp_coexistence_events,messages,conversations,contacts,whatsapp_signup_attempts,whatsapp_config,profiles,accounts,auth.users CASCADE;
-   INSERT INTO accounts VALUES(${q(account)});INSERT INTO auth.users VALUES(${q(user)});INSERT INTO profiles VALUES(${q(user)},${q(account)},'owner');
-   INSERT INTO whatsapp_signup_attempts(id,user_id,account_id,onboarding_mode) VALUES(${q(attempt)},${q(user)},${q(account)},'coexistence');`);
+      await assertDisposable();
+      await sql(`BEGIN; TRUNCATE whatsapp_coexistence_events,messages,conversations,contacts,whatsapp_signup_attempts,whatsapp_config,profiles,accounts,auth.users CASCADE;
+   ${seed}
+   INSERT INTO whatsapp_signup_attempts(id,user_id,account_id,onboarding_mode) VALUES(${q(attempt)},${q(user)},${q(account)},'coexistence'); COMMIT;`);
     });
     const claim = () =>
       sql(
@@ -473,6 +592,21 @@ describe.skipIf(process.env.RGCRM_COEXISTENCE_PG_TEST !== '1')(
         )
       ).toBe('t');
       expect(await claim()).toBe(attempt);
+    });
+    it('never downgrades an explicitly selected Coexistence session on FINISH', async () => {
+      await sql(
+        `SELECT * FROM claim_whatsapp_signup(${q(attempt)},${q(user)},${q(account)},${q(lease)},'hash','{"waba_id":"123","phone_number_id":"456"}','cloud_api')`
+      );
+      expect(
+        await sql(
+          'SELECT onboarding_mode,completion_mode FROM whatsapp_signup_attempts'
+        )
+      ).toBe('coexistence|coexistence');
+      await expect(
+        sql(
+          `SELECT mark_whatsapp_registration(${q(attempt)},${q(lease)},'pin')`
+        )
+      ).rejects.toThrow();
     });
     it('rejects cross-tenant claims and expired worker phone resolution', async () => {
       await expect(
@@ -532,8 +666,58 @@ describe.skipIf(process.env.RGCRM_COEXISTENCE_PG_TEST !== '1')(
         )
       ).rejects.toThrow();
     });
+    const stageCloud = async () =>
+      sql(`UPDATE whatsapp_signup_attempts SET onboarding_mode='cloud_api' WHERE id=${q(attempt)};
+      SELECT * FROM claim_whatsapp_signup(${q(attempt)},${q(user)},${q(account)},${q(lease)},'hash','{"waba_id":"123","phone_number_id":"456"}','cloud_api');
+      SELECT reserve_whatsapp_signup(${q(attempt)},${q(lease)},'456','123','encrypted','{"onboarding_mode":"cloud_api"}');`);
+    it('preserves standard registration once-only intent and completion replay', async () => {
+      await stageCloud();
+      await sql(
+        `SELECT mark_whatsapp_registration(${q(attempt)},${q(lease)},'encrypted-pin')`
+      );
+      await expect(
+        sql(
+          `SELECT mark_whatsapp_registration(${q(attempt)},${q(lease)},'encrypted-pin')`
+        )
+      ).rejects.toThrow('must be reconciled');
+      await sql(
+        `SELECT finish_whatsapp_signup(${q(attempt)},${q(lease)},now(),now()); SELECT finish_whatsapp_signup(${q(attempt)},${q(lease)},now(),now());`
+      );
+      expect(await sql('SELECT state FROM whatsapp_signup_attempts')).toBe(
+        'complete'
+      );
+    });
+    it('preserves discarded ambiguous registration protection in the simplified function', async () => {
+      await stageCloud();
+      await sql(`INSERT INTO whatsapp_signup_attempts(id,user_id,account_id,context,registration_requested_at,discarded_at)
+        SELECT '00000000-0000-0000-0000-000000000009',user_id,account_id,context,now(),now() FROM whatsapp_signup_attempts WHERE id=${q(attempt)}`);
+      await expect(
+        sql(
+          `SELECT mark_whatsapp_registration(${q(attempt)},${q(lease)},'encrypted-pin')`
+        )
+      ).rejects.toThrow('Discarded registration outcome');
+    });
+    it('rejects stale activation leases and changed canonical connections', async () => {
+      await stageCloud();
+      await sql(
+        `UPDATE whatsapp_config SET updated_at=updated_at+interval '1 second' WHERE id=(SELECT connection_id FROM whatsapp_signup_attempts WHERE id=${q(attempt)})`
+      );
+      await expect(
+        sql(
+          `SELECT finish_whatsapp_signup(${q(attempt)},${q(lease)},now(),now())`
+        )
+      ).rejects.toThrow('Connection changed');
+      await sql(
+        `UPDATE whatsapp_signup_attempts SET lease_until=now()-interval '1 second' WHERE id=${q(attempt)}`
+      );
+      await expect(
+        sql(
+          `SELECT finish_whatsapp_signup(${q(attempt)},${q(lease)},now(),now())`
+        )
+      ).rejects.toThrow('Invalid signup session');
+    });
     it('refuses mode promotion after registration intent and under a stale lease', async () => {
-      await sql(`SELECT * FROM claim_whatsapp_signup(${q(attempt)},${q(user)},${q(account)},${q(lease)},'hash','{"waba_id":"123","phone_number_id":"456"}','cloud_api');
+      await sql(`UPDATE whatsapp_signup_attempts SET onboarding_mode='cloud_api' WHERE id=${q(attempt)}; SELECT * FROM claim_whatsapp_signup(${q(attempt)},${q(user)},${q(account)},${q(lease)},'hash','{"waba_id":"123","phone_number_id":"456"}','cloud_api');
         SELECT reserve_whatsapp_signup(${q(attempt)},${q(lease)},'456','123','encrypted','{"onboarding_mode":"cloud_api"}');
         SELECT mark_whatsapp_registration(${q(attempt)},${q(lease)},'encrypted-pin');`);
       await expect(

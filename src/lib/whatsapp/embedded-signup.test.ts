@@ -6,7 +6,11 @@ import {
   validateSignupToken,
 } from './embedded-signup';
 import { decrypt } from './encryption';
-import { signupContext, signupEvent } from './embedded-signup-context';
+import {
+  signupContext,
+  signupEvent,
+  signupEligibilityError,
+} from './embedded-signup-context';
 const guard = vi.fn(async () => {});
 const activateSignup = (
   context: Parameters<typeof activateWithLease>[0],
@@ -361,4 +365,39 @@ it('does not guess a phone when two authorized Coexistence numbers exist', async
   await expect(
     validateSignupToken('token', { waba_id: '123' }, 'coexistence')
   ).rejects.toThrow('one eligible');
+});
+
+it('shows Meta eligibility details without exposing OAuth credentials or raw messages', async () => {
+  fetcher.mockReset().mockResolvedValue(
+    response(
+      {
+        error: {
+          code: 100,
+          error_subcode: 2494064,
+          fbtrace_id: 'trace_safe-123',
+          message: 'raw private-token',
+          error_user_msg:
+            'This number is ineligible: private-code test-meta-app-secret',
+        },
+      },
+      400
+    )
+  );
+  const failure = await exchangeSignupCode('private-code', context).catch(
+    (error) => error
+  );
+  expect(failure.message).toContain('This number is ineligible');
+  expect(failure.message).toContain('2494064');
+  expect(failure.message).not.toContain('private-code');
+  expect(failure.message).not.toContain('private-token');
+  expect(failure.message).not.toContain('test-meta-app-secret');
+  expect(failure.meta).toEqual({
+    code: 100,
+    subcode: 2494064,
+    fbtrace_id: 'trace_safe-123',
+  });
+});
+
+it('retains an unfamiliar numeric Meta signup error without inventing its cause', () => {
+  expect(signupEligibilityError(123456)).toContain('(123456)');
 });

@@ -51,7 +51,7 @@ vi.mock('./whatsapp-setup-ui', () => ({
 }));
 vi.mock('@/components/ui/dialog', () => ({
   Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
-    open ? <div>{children}</div> : null,
+    open ? <div role="dialog">{children}</div> : null,
   DialogContent: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
   ),
@@ -130,6 +130,7 @@ it.each([true, false])(
   async (success) => {
     h.connections = [];
     await act(() => root.render(<WhatsAppConfig />));
+    await click('Connect');
     await click('Manual connection');
     await act(() => {
       (h.wizard.setPhoneNumberId as (v: string) => void)('123');
@@ -233,22 +234,15 @@ it('changing inbound media retention invalidates local configuration', async () 
   expect(h.invalidate).toHaveBeenCalledOnce();
 });
 
-it('renders a single signup entry point when no numbers are connected', async () => {
+it('shows only an empty-state action until setup is explicitly opened', async () => {
   h.connections = [];
   await act(() => root.render(<WhatsAppConfig />));
-  const connectButtons = [...host.querySelectorAll('button')].filter((button) =>
-    ['Connect WhatsApp', 'Preparing…', 'Continue with Facebook'].includes(
-      button.textContent ?? ''
-    )
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(host.textContent).not.toContain('Continue with Facebook');
+  await click('Connect');
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain(
+    'Connect WhatsApp'
   );
-  expect(connectButtons).toHaveLength(1);
-  // The old empty-state component exposes a separate Connect button in this mock.
-  expect(
-    [...host.querySelectorAll('button')].some(
-      (button) => button.textContent === 'Connect'
-    )
-  ).toBe(false);
-  expect(host.textContent).toContain('Manual connection');
 });
 
 it.each([
@@ -297,4 +291,27 @@ it('backs off active sync polling across fresh connection snapshots and stops on
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('keeps setup hidden until Add is clicked and opens management in a dialog', async () => {
+  await act(() => root.render(<WhatsAppConfig />));
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(host.textContent).not.toContain('Continue with Facebook');
+  await click('Add');
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain(
+    'Add WhatsApp connection'
+  );
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain(
+    'Connect WhatsApp'
+  );
+  await act(async () => {
+    await (h.cards.at(-1)!.onManage as () => Promise<void>)();
+  });
+  const dialogs = host.querySelectorAll('[role="dialog"]');
+  expect(dialogs).toHaveLength(1);
+  expect(dialogs[0].textContent).toContain('Manage connection');
+  expect(dialogs[0].textContent).not.toContain('Add WhatsApp connection');
+  await click('Done');
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(host.textContent).not.toContain('Live Meta status not checked');
 });

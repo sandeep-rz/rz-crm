@@ -108,6 +108,52 @@ describe.skipIf(process.env.RGCRM_COEXISTENCE_PG_TEST !== '1')(
     VALUES(${q(connection)},${q(user)},${q(account)},'456','123','encrypted','Test','connected','{"onboarding_mode":"coexistence","display_phone_number":"15551234567"}',jsonb_build_object('onboarded_at',now())),
     (${q(otherConnection)},${q(otherUser)},${q(otherAccount)},'789','999','encrypted','Other','connected','{"onboarding_mode":"coexistence"}',jsonb_build_object('onboarded_at',now())); COMMIT;`);
     });
+    it.skipIf(!fullSchema)(
+      'deletes a connection with colliding unlinked history without losing conversations, messages or templates',
+      async () => {
+        await capture(
+          coexistenceRecords('smb_message_echoes', {
+            metadata,
+            message_echoes: [echo],
+          })
+        );
+        await drain();
+        const contact = await sql('SELECT contact_id FROM conversations');
+        const replacement = '00000000-0000-0000-0000-000000000007';
+        await sql(`INSERT INTO conversations(account_id,user_id,contact_id) VALUES(${q(account)},${q(user)},${q(contact)});
+        INSERT INTO message_templates(account_id,user_id,name,language,body_text,whatsapp_config_id) VALUES
+          (${q(account)},${q(user)},'same_name','en_US','Linked history',${q(connection)}),
+          (${q(account)},${q(user)},'same_name','en_US','Unlinked history',NULL);
+        INSERT INTO whatsapp_config(id,user_id,account_id,phone_number_id,waba_id,access_token,is_primary) VALUES(${q(replacement)},${q(user)},${q(account)},'555','123','encrypted',false);
+        UPDATE whatsapp_config SET is_primary=true WHERE id=${q(connection)};`);
+        expect(
+          await sql(
+            `SET ROLE authenticated; SET request.jwt.claim.sub=${q(user)}; SELECT delete_whatsapp_connection(${q(connection)})`
+          )
+        ).toBe(replacement);
+        expect(
+          await sql(
+            'SELECT count(*),count(whatsapp_config_id) FROM conversations'
+          )
+        ).toBe('2|0');
+        expect(await sql('SELECT count(*) FROM messages')).toBe('1');
+        expect(
+          await sql(
+            'SELECT count(*),count(whatsapp_config_id) FROM message_templates'
+          )
+        ).toBe('2|0');
+        expect(
+          await sql(
+            `SELECT is_primary FROM whatsapp_config WHERE id=${q(replacement)}`
+          )
+        ).toBe('t');
+        await expect(
+          sql(
+            `INSERT INTO conversations(account_id,user_id,contact_id,whatsapp_config_id) VALUES(${q(account)},${q(user)},${q(contact)},${q(replacement)}),(${q(account)},${q(user)},${q(contact)},${q(replacement)})`
+          )
+        ).rejects.toThrow();
+      }
+    );
     it('counts a retried inbound reply once and only for its sending connection in a multi-number workspace', async () => {
       await capture(
         coexistenceRecords('smb_message_echoes', {

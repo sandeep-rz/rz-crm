@@ -160,3 +160,19 @@ it('preparation DB failure does not fabricate Meta acceptance or expose SQL', as
     error: 'This template could not be prepared. No message was sent.',
   });
 });
+
+it('returns a clear local quota response without claiming an unknown Meta outcome', async () => {
+  h.send.mockRejectedValue(
+    new SendMessageError(
+      'rate_limited',
+      'WhatsApp is busy. Retry shortly.',
+      429
+    )
+  );
+  const response = await POST(request());
+  expect(response.status).toBe(429);
+  expect(await response.json()).toMatchObject({
+    code: 'rate_limited',
+    error: 'WhatsApp is busy. Retry shortly.',
+  });
+});

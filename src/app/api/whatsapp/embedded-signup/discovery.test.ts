@@ -57,6 +57,14 @@ beforeEach(() => {
         rows = rows.filter((r) => r[k] === v);
         return q;
       },
+      gt: (k: string, v: string) => {
+        rows = rows.filter((r) => Date.parse(String(r[k])) > Date.parse(v));
+        return q;
+      },
+      limit: (n: number) => {
+        rows = rows.slice(0, n);
+        return q;
+      },
       order: async () => ({ data: rows, error: null }),
     };
     return q;
@@ -94,7 +102,7 @@ it('reports active leases and expired authorization accurately', async () => {
   ];
   const { attempts } = await (await GET()).json();
   expect(attempts[0].busy).toBe(true);
-  expect(attempts[1].recoverable).toBe(false);
+  expect(attempts).toHaveLength(1);
 });
 it.each([new UnauthorizedError('login'), new ForbiddenError('admin required')])(
   'rejects unauthorized discovery and discard',

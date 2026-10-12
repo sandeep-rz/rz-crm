@@ -5,7 +5,7 @@ import { compileSemanticTemplate, importedMetadata } from './semantic-template';
 import { createBroadcast, deliverBroadcast } from './broadcast-core';
 import { planBroadcastResume } from './broadcast-resume';
 import { BROADCAST_DELIVERY_UNCONFIRMED } from './broadcast-delivery';
-import { MetaApiError } from './meta-api';
+import { MetaApiError, MetaSendPolicyError } from './meta-api';
 import { persistBroadcastMessage } from './broadcast-message';
 import { POST as sendBatch } from '@/app/api/whatsapp/broadcast/route';
 import { POST as validate } from '@/app/api/whatsapp/broadcast/resolve-variables/route';
@@ -922,5 +922,19 @@ it.each(['sent', 'delivered', 'read', 'replied'])(
     await deliverBroadcast(db, plan);
     expect(h.send).not.toHaveBeenCalled();
     expect(tables.broadcast_recipients[0].status).toBe(status);
+  }
+);
+
+it.each(['rate_limited', 'disconnected'] as const)(
+  'preserves unsent broadcast recipients when %s blocks a prepared plan',
+  async (reason) => {
+    const plan = await oneRecipientPlan();
+    h.send.mockRejectedValueOnce(new MetaSendPolicyError(reason));
+    await deliverBroadcast(db, plan);
+    expect(tables.broadcast_recipients[0].status).toBe('pending');
+    expect(tables.broadcast_recipients[0].whatsapp_message_id).toBeUndefined();
+    expect(tables.broadcast_recipients[0].error_message).not.toBe(
+      BROADCAST_DELIVERY_UNCONFIRMED
+    );
   }
 );

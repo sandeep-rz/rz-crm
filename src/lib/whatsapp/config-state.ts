@@ -50,10 +50,12 @@ export function coexistenceSyncLabel(state?: string, contacts = false): string {
       return 'Complete';
     case 'declined':
       return 'Sharing declined';
+    case 'rejected':
+      return 'Meta rejected synchronization; review eligibility with Meta support';
     case 'failed':
       return 'Could not synchronize; review with Meta support';
     case 'deadline_expired':
-      return 'Sharing window expired; reconnect to start again';
+      return 'Sharing window expired; review the supported recovery path with Meta';
     case 'unconfirmed':
       return 'Meta has not confirmed the request; contact Meta support';
     case 'accepted':
@@ -67,4 +69,15 @@ export function coexistenceSyncLabel(state?: string, contacts = false): string {
     default:
       return 'Not started';
   }
+}
+
+/** Meta sharing progress is separate from our durable import backlog. */
+export function coexistenceHistoryLabel(
+  connection: WhatsAppConnectionSummary
+): string {
+  if (!connection.coexistence_import) return 'Checking import progress';
+  if (connection.coexistence_import.failed > 0) return 'Import needs review';
+  if (connection.coexistence_import.pending > 0)
+    return 'Importing received history';
+  return coexistenceSyncLabel(connection.coexistence_state?.history?.state);
 }

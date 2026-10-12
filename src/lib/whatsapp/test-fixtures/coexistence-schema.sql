@@ -19,9 +19,12 @@ CREATE TABLE public.conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  last_message_at timestamptz,last_message_text text,unread_count integer DEFAULT 0,status text DEFAULT 'open');
 CREATE UNIQUE INDEX ON public.conversations(account_id,contact_id,whatsapp_config_id) WHERE whatsapp_config_id IS NOT NULL;
 CREATE TABLE public.messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),conversation_id uuid REFERENCES public.conversations(id),sender_type text CHECK(sender_type IN ('customer','agent','bot')),
- content_type text CHECK(content_type IN ('text','image','audio','video','document','location','interactive','template')),content_text text,media_type text,media_url text,message_id text,status text CHECK(status IN ('sending','sent','delivered','read','failed')),created_at timestamptz,UNIQUE(conversation_id,message_id));
+ error_code integer,error_title text,error_details text,interactive_reply_id text, reply_to_message_id uuid, content_type text CHECK(content_type IN ('text','image','audio','video','document','location','interactive','template')),content_text text,media_type text,media_url text,message_id text,status text CHECK(status IN ('sending','sent','delivered','read','failed')),created_at timestamptz,UNIQUE(conversation_id,message_id));
 -- pg_cron isn't shipped by Homebrew PostgreSQL. Record the real schedule call;
 -- runtime scheduler execution remains a deployed Supabase check.
 CREATE SCHEMA cron;
 CREATE TABLE cron.job(jobid bigint GENERATED ALWAYS AS IDENTITY,jobname text,schedule text,command text);
 CREATE FUNCTION cron.schedule(text,text,text) RETURNS bigint LANGUAGE sql AS $$ INSERT INTO cron.job(jobname,schedule,command) VALUES($1,$2,$3) RETURNING jobid $$;
+
+CREATE TABLE public.broadcasts(id uuid PRIMARY KEY,user_id uuid,name text,template_name text,account_id uuid,whatsapp_config_id uuid);
+CREATE TABLE public.broadcast_recipients(id uuid PRIMARY KEY,broadcast_id uuid,contact_id uuid,replied_at timestamptz,whatsapp_message_id text,status text,sent_at timestamptz,delivered_at timestamptz,read_at timestamptz,error_message text);

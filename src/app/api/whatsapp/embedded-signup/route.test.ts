@@ -6,6 +6,7 @@ import { POST } from './route';
 const h = vi.hoisted(() => ({
   role: vi.fn(),
   exchange: vi.fn(),
+  authorize: vi.fn(),
   sync: vi.fn(),
   validate: vi.fn(),
   activate: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('@/lib/auth/account', () => ({
 vi.mock('@/lib/whatsapp/embedded-signup', async (original) => ({
   ...(await original<object>()),
   exchangeSignupCode: h.exchange,
+  exchangeSignupAuthorization: h.authorize,
   validateSignupToken: h.validate,
   activateSignup: h.activate,
   verifySignupActivation: h.verifyActivation,
@@ -53,6 +55,7 @@ vi.mock('@supabase/supabase-js', () => ({
           return q;
         },
         gte: () => q,
+        gt: () => q,
         not: () => q,
         neq: () => q,
         order: () => q,
@@ -105,6 +108,7 @@ beforeEach(() => {
     expiresAt: null,
   };
   h.exchange.mockResolvedValue(verified);
+  h.authorize.mockResolvedValue(verified);
   h.validate.mockResolvedValue(verified);
   h.activate.mockResolvedValue({
     needsRegistration: false,
@@ -181,7 +185,6 @@ it('rejects foreign origins before authentication', async () => {
 it.each([
   { ...body, context: {} },
   { ...body, session_id: 'invalid' },
-  { ...body, context: { waba_id: '123' } },
   { ...body, context: { phone_number_id: '456' } },
 ])('rejects invalid sessions/context %#', async (value) => {
   expect((await POST(request(value))).status).toBe(400);
@@ -490,5 +493,45 @@ it('returns sanitized Meta error details for an unsuccessful signup', async () =
     error: 'Meta blocked onboarding (2494064).',
     meta: { code: 100, subcode: 2494064, fbtrace_id: 'safe-trace' },
   });
+  expect(h.activate).not.toHaveBeenCalled();
+});
+
+it('authorizes before asset selection and saves only encrypted credentials under the workspace lease', async () => {
+  const response = await POST(
+    request({ action: 'authorize', session_id: id, code: 'short-lived' })
+  );
+  expect(response.status).toBe(200);
+  expect(h.authorize).toHaveBeenCalledWith('short-lived');
+  expect(h.rpc).toHaveBeenCalledWith(
+    'begin_whatsapp_authorization',
+    expect.objectContaining({
+      p_attempt: id,
+      p_user: 'user',
+      p_account: 'account',
+      p_hash: createHash('sha256').update('short-lived').digest('hex'),
+    })
+  );
+  expect(h.rpc).toHaveBeenCalledWith(
+    'save_whatsapp_authorization',
+    expect.objectContaining({ p_attempt: id, p_token: expect.any(String) })
+  );
+  expect(await response.text()).not.toMatch(
+    /short-lived|private-token|encryptedToken/
+  );
+  expect(h.activate).not.toHaveBeenCalled();
+});
+it('WABA-only standard completion stays awaiting phone verification', async () => {
+  const response = await POST(
+    request({
+      ...body,
+      context: { waba_id: '123' },
+      completion_event: 'FINISH_ONLY_WABA',
+    })
+  );
+  expect(await response.json()).toMatchObject({
+    success: false,
+    needs_phone: true,
+  });
+  expect(h.exchange).not.toHaveBeenCalled();
   expect(h.activate).not.toHaveBeenCalled();
 });

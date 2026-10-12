@@ -3,7 +3,7 @@ import { decrypt } from '@/lib/whatsapp/encryption';
 import { drainCoexistenceWebhook } from '@/lib/whatsapp/coexistence-webhook';
 import { resumeCoexistenceSync } from '@/lib/whatsapp/coexistence-sync';
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
   requireRole,
   UnauthorizedError,
@@ -17,6 +17,7 @@ import {
 import {
   activateSignup,
   exchangeSignupCode,
+  exchangeSignupAuthorization,
   validateSignupToken,
   verifySignupActivation,
   SignupError,
@@ -37,6 +38,26 @@ const uuid = (v: unknown): v is string =>
   typeof v === 'string' &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
+async function completedReply(
+  db: SupabaseClient,
+  connectionId: string | null,
+  mode: string | null
+) {
+  let syncPending = false;
+  if (mode === 'coexistence' && connectionId) {
+    try {
+      syncPending = !(await resumeCoexistenceSync(db, connectionId));
+    } catch {
+      syncPending = true;
+    }
+  }
+  return reply({
+    success: true,
+    connection_id: connectionId,
+    sync_pending: syncPending,
+  });
+}
+
 export async function GET() {
   try {
     const ctx = await requireRole('admin');
@@ -49,6 +70,8 @@ export async function GET() {
       .eq('user_id', ctx.userId)
       .neq('state', 'complete')
       .is('discarded_at', null)
+      .gt('expires_at', new Date().toISOString())
+      .limit(20)
       .order('created_at', { ascending: false });
     if (error) throw new SignupError(503, 'Saved signup storage unavailable.');
     return reply({
@@ -103,6 +126,45 @@ export async function POST(request: Request) {
     if (!body || typeof body !== 'object')
       return reply({ error: 'Invalid signup request' }, 400);
     const db = admin();
+    if (body.action === 'authorize') {
+      if (
+        !uuid(body.session_id) ||
+        typeof body.code !== 'string' ||
+        !body.code.trim() ||
+        body.code.length > 4096
+      )
+        throw new SignupError(400, 'Invalid authorization.');
+      const authorizationLease = randomUUID();
+      const { data: saved, error: claimError } = await db.rpc(
+        'begin_whatsapp_authorization',
+        {
+          p_attempt: body.session_id,
+          p_user: ctx.userId,
+          p_account: ctx.accountId,
+          p_hash: createHash('sha256').update(body.code).digest('hex'),
+          p_lease: authorizationLease,
+        }
+      );
+      if (claimError)
+        throw new SignupError(
+          409,
+          'Authorization is busy or expired. Start a new Facebook authorization.'
+        );
+      if (!saved) {
+        const authorization = await exchangeSignupAuthorization(body.code);
+        const { error } = await db.rpc('save_whatsapp_authorization', {
+          p_attempt: body.session_id,
+          p_lease: authorizationLease,
+          p_token: authorization.encryptedToken,
+        });
+        if (error)
+          throw new SignupError(
+            503,
+            'Authorization could not be saved. Start new authorization; your working connection is unchanged.'
+          );
+      }
+      return reply({ success: true });
+    }
     if (body.action === 'discard') {
       if (!uuid(body.session_id))
         throw new SignupError(400, 'Invalid saved session.');
@@ -199,9 +261,11 @@ export async function POST(request: Request) {
     if (
       !recovering &&
       body.completion_event !== undefined &&
-      !['FINISH', 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'].includes(
-        body.completion_event
-      )
+      ![
+        'FINISH',
+        'FINISH_ONLY_WABA',
+        'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+      ].includes(body.completion_event)
     )
       throw new SignupError(400, 'Invalid completion event.');
     const incomingContext = signupSessionContext(body.context);
@@ -246,11 +310,23 @@ export async function POST(request: Request) {
       !recovering &&
       completionMode === 'cloud_api' &&
       !signupContext(body.context)
-    )
-      throw new SignupError(
-        400,
-        'A phone number ID is required for Cloud API signup.'
-      );
+    ) {
+      const { error } = await db
+        .from('whatsapp_signup_attempts')
+        .update({ context: incomingContext })
+        .eq('id', attempt.id)
+        .eq('account_id', ctx.accountId)
+        .eq('user_id', ctx.userId)
+        .eq('state', 'pending');
+      if (error)
+        throw new SignupError(503, 'Could not save account selection.');
+      return reply({
+        success: false,
+        needs_phone: true,
+        message:
+          'Meta account access is saved. Continue Facebook setup to add and verify your phone number.',
+      });
+    }
     const hash = recovering
       ? null
       : createHash('sha256').update(body.code).digest('hex');
@@ -270,7 +346,7 @@ export async function POST(request: Request) {
             )))
       )
         throw new SignupError(409, 'Signup context mismatch.');
-      return reply({ success: true, connection_id: attempt.connection_id });
+      return completedReply(db, attempt.connection_id, attempt.completion_mode);
     }
     lease = randomUUID();
     const { data: claims, error: claimError } = await db.rpc(
@@ -292,17 +368,15 @@ export async function POST(request: Request) {
       );
     const claimed = claims[0];
     if (claimed.state === 'complete')
-      return reply({ success: true, connection_id: claimed.connection_id });
+      return completedReply(db, claimed.connection_id, claimed.completion_mode);
     claimedId = claimed.id;
     let context = signupSessionContext(claimed.context);
     let mode = claimed.completion_mode ?? 'cloud_api';
     if (!context) throw new SignupError(400, 'Invalid saved signup context.');
-    const verified = claimed.pending_access_token
-      ? await validateSignupToken(
-          decrypt(claimed.pending_access_token),
-          context,
-          mode
-        )
+    const stagedToken =
+      claimed.pending_access_token ?? claimed.authorization_token;
+    const verified = stagedToken
+      ? await validateSignupToken(decrypt(stagedToken), context, mode)
       : await exchangeSignupCode(body.code, context, mode);
     context = verified.context ?? signupContext(context);
     if (!context?.phone_number_id)

@@ -156,9 +156,10 @@ async function handleStatusUpdate(
     submission_error: null,
   };
 
-  const { data: configs } = wabaId
+  const { data: configs, error: lookupError } = wabaId
     ? await supabase.from('whatsapp_config').select('id').eq('waba_id', wabaId)
-    : { data: [] };
+    : { data: [], error: null };
+  if (lookupError) throw new Error('template_write_failed');
   const connectionIds = (configs ?? []).map((row: { id: string }) => row.id);
 
   const runUpdate = () =>
@@ -176,7 +177,7 @@ async function handleStatusUpdate(
       metaTemplateId,
       error.message
     );
-    return;
+    throw new Error('template_write_failed');
   }
   if (!data || data.length === 0) {
     await createStubForUnknownTemplate({
@@ -222,9 +223,10 @@ async function handleQualityUpdate(
       : null;
 
   const update = { quality_score: score };
-  const { data: configs } = wabaId
+  const { data: configs, error: lookupError } = wabaId
     ? await supabase.from('whatsapp_config').select('id').eq('waba_id', wabaId)
-    : { data: [] };
+    : { data: [], error: null };
+  if (lookupError) throw new Error('template_write_failed');
   const connectionIds = (configs ?? []).map((row: { id: string }) => row.id);
   const runUpdate = () =>
     supabase
@@ -242,7 +244,7 @@ async function handleQualityUpdate(
       metaTemplateId,
       error.message
     );
-    return;
+    throw new Error('template_write_failed');
   }
   if (!data || data.length === 0) {
     // A quality event carries no status. Leave `status` to the column
@@ -318,7 +320,7 @@ async function createStubForUnknownTemplate(p: StubParams): Promise<void> {
       `[template-webhook] ${kind} for unknown template ${where} — whatsapp_config lookup failed:`,
       configError.message
     );
-    return;
+    throw new Error('template_write_failed');
   }
   const rows = (configs ?? []) as {
     id: string;
@@ -359,7 +361,7 @@ async function createStubForUnknownTemplate(p: StubParams): Promise<void> {
       `[template-webhook] ${kind} for unknown template ${where} — stub insert failed:`,
       insertError.message
     );
-    return;
+    throw new Error('template_write_failed');
   }
 
   // Unique violation: either a concurrent sync/webhook just created the
@@ -373,7 +375,7 @@ async function createStubForUnknownTemplate(p: StubParams): Promise<void> {
       `[template-webhook] ${kind} for unknown template ${where} — retry after unique violation failed:`,
       error.message
     );
-    return;
+    throw new Error('template_write_failed');
   }
   if (!data || data.length === 0) {
     console.warn(

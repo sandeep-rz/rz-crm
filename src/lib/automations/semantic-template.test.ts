@@ -6,7 +6,7 @@ import { AutomationTemplateSendError } from './template-send-error';
 import { executeAutomationStep, runAutomationForTrigger } from './engine';
 import { buildMetaTemplateMessagePayload } from '@/lib/whatsapp/meta-template-payload';
 import { validateStepsForActivation } from './validate';
-import { MetaApiError } from '@/lib/whatsapp/meta-api';
+import { MetaApiError, MetaSendPolicyError } from '@/lib/whatsapp/meta-api';
 
 const h = vi.hoisted(() => ({
   assemble: vi.fn(),
@@ -733,6 +733,17 @@ describe('whole-execution duplicate retry containment', () => {
       expect(h.log.retry_safety).toEqual(earlier);
       await executeAutomationStep(action(), args());
       expect(h.log.retry_safety).toEqual(earlier);
+    }
+  );
+  it.each(['rate_limited', 'disconnected'] as const)(
+    'keeps local %s deferral retryable without an unknown delivery latch',
+    async (reason) => {
+      h.send.mockImplementationOnce(async (input) => {
+        await input.onBeforeMeta();
+        throw new MetaSendPolicyError(reason);
+      });
+      expect(await run()).toMatchObject({ status: 'failed', retryable: true });
+      expect(h.log.retry_safety).toBeNull();
     }
   );
   it('clears the same-step unknown latch only with structured pre-request proof', async () => {

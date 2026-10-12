@@ -21,10 +21,12 @@ export type SignupDiagnostic = {
   errorCode?: number;
   event?:
     | 'FINISH'
+    | 'FINISH_ONLY_WABA'
     | 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
     | 'CANCEL'
     | 'ERROR'
-    | 'INCOMPLETE';
+    | 'INCOMPLETE'
+    | 'ACTION_NEEDED';
 };
 export function signupDiagnostic(
   event: string,

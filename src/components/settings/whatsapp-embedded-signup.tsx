@@ -148,7 +148,8 @@ export function WhatsAppEmbeddedSignup({
     'idle' | 'preparing' | 'ready' | 'signup' | 'unconfirmed' | 'saving'
   >('idle');
   const [message, setMessage] = useState('');
-  const [mode, setMode] = useState<SignupMode>('cloud_api');
+  const [mode, setMode] = useState<SignupMode>('coexistence');
+  const preparationGeneration = useRef(0);
   const prepared = useRef<{ session: string; fb: Facebook } | null>(null);
   const run = useRef<{
     code?: string;
@@ -156,6 +157,7 @@ export function WhatsAppEmbeddedSignup({
     completionEvent?: string;
     submitted: boolean;
     responded: boolean;
+    authorization?: Promise<unknown>;
   } | null>(null);
   const launchWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearLaunchWatchdog = () => {
@@ -196,6 +198,7 @@ export function WhatsAppEmbeddedSignup({
   }, []);
   const stop = (text: string) => {
     clearLaunchWatchdog();
+    preparationGeneration.current++;
     run.current = null;
     prepared.current = null;
     setMessage(text);
@@ -215,7 +218,8 @@ export function WhatsAppEmbeddedSignup({
     setPhase('saving');
     setRecoverySession(prepared.current.session);
     try {
-      await api({
+      await current.authorization;
+      const result = await api({
         action: 'complete',
         session_id: prepared.current.session,
         code: current.code,
@@ -223,10 +227,16 @@ export function WhatsAppEmbeddedSignup({
         completion_event: current.completionEvent,
       });
       if (alive.current) {
-        setRecoverySession(null);
-        stop(
-          'WhatsApp connected. Payment setup still needs to be checked in WhatsApp Manager.'
-        );
+        if (result.needs_phone) {
+          stop(result.message);
+        } else {
+          setRecoverySession(null);
+          stop(
+            result.sync_pending
+              ? 'WhatsApp connected. Background synchronization needs attention; check the status below.'
+              : 'WhatsApp connected. Your inbox is ready.'
+          );
+        }
       }
     } catch (error) {
       if (alive.current)
@@ -249,6 +259,7 @@ export function WhatsAppEmbeddedSignup({
       run.current.responded = true;
       if (
         result.event === 'FINISH' ||
+        result.event === 'FINISH_ONLY_WABA' ||
         result.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
       ) {
         setPhase('unconfirmed');
@@ -261,13 +272,15 @@ export function WhatsAppEmbeddedSignup({
       } else {
         signupDiagnostic('signup_cancelled_or_error', { event: result.event });
         stop(
-          result.event === 'CANCEL'
-            ? 'Signup cancelled. You can try again.'
-            : result.event === 'INCOMPLETE'
-              ? 'Signup did not return both a WhatsApp account and number. Start again.'
-              : signupEligibilityError(
-                  'errorCode' in result ? result.errorCode : undefined
-                )
+          result.event === 'ACTION_NEEDED'
+            ? 'Meta returned an access-sharing or provider-migration flow. Review activation with support and keep your current provider connected.'
+            : result.event === 'CANCEL' && !('errorCode' in result)
+              ? 'Signup cancelled. You can try again.'
+              : result.event === 'INCOMPLETE'
+                ? 'Signup did not return both a WhatsApp account and number. Start again.'
+                : signupEligibilityError(
+                    'errorCode' in result ? result.errorCode : undefined
+                  )
         );
       }
     };
@@ -275,16 +288,20 @@ export function WhatsAppEmbeddedSignup({
     return () => window.removeEventListener('message', listener);
   });
   async function prepare() {
+    const generation = ++preparationGeneration.current;
+    prepared.current = null;
     setPhase('preparing');
     setMessage('');
     try {
       const fb = await loadSdk();
+      if (!alive.current || generation !== preparationGeneration.current)
+        return;
       const data = await api({
         action: 'start',
         mode,
         ...(reconnectId ? { reconnect_id: reconnectId } : {}),
       });
-      if (alive.current) {
+      if (alive.current && generation === preparationGeneration.current) {
         prepared.current = { fb, session: data.session_id };
         signupDiagnostic('signup_ready', {
           sdkVersion: embeddedSignupConfig.sdkVersion,
@@ -295,12 +312,19 @@ export function WhatsAppEmbeddedSignup({
         setPhase('ready');
       }
     } catch (error) {
-      if (alive.current)
+      if (alive.current && generation === preparationGeneration.current)
         stop(
           error instanceof Error ? error.message : 'Could not start signup.'
         );
     }
   }
+  useEffect(() => {
+    // Prepare once per selected path while the panel opens. The actual login
+    // stays synchronous in the user's click, preserving popup permission.
+    if (!attempts.length) void prepare();
+    // prepare deliberately captures only the selected mode/reconnect identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, reconnectId]);
   async function recover(session = recoverySession) {
     setPhase('saving');
     setMessage('Checking saved credentials and current Meta state…');
@@ -395,7 +419,8 @@ export function WhatsAppEmbeddedSignup({
             ? { errorCode }
             : {}),
         });
-        if (run.current !== current || current.submitted) return;
+        if (run.current !== current || current.submitted || run.current.code)
+          return;
         clearLaunchWatchdog();
         current.responded = true;
         if (response?.error) {
@@ -411,6 +436,22 @@ export function WhatsAppEmbeddedSignup({
           return;
         }
         run.current.code = response.authResponse.code;
+        const session = prepared.current!.session;
+        const active = run.current;
+        active.authorization = api({
+          action: 'authorize',
+          session_id: session,
+          code: response.authResponse.code,
+        });
+        // Install rejection handling immediately, even if the session event is late.
+        void active.authorization.catch((error) => {
+          if (run.current === active && !active.submitted)
+            stop(
+              error instanceof Error
+                ? error.message
+                : 'Authorization failed. Try again.'
+            );
+        });
         setPhase('unconfirmed');
         setMessage(
           'Facebook authorization received. Finish selecting your WhatsApp account and number in the popup. If the popup has already closed, retry or cancel signup.'
@@ -479,23 +520,23 @@ export function WhatsAppEmbeddedSignup({
           </div>
         </div>
         <fieldset
-          disabled={phase !== 'idle'}
+          disabled={!['idle', 'ready'].includes(phase)}
           className="w-full space-y-3 text-left"
         >
           <legend className="text-sm font-semibold">
-            Choose your connection method
+            Do you use the WhatsApp Business app?
           </legend>
           {(
             [
               [
                 'coexistence',
                 'Connect my WhatsApp Business App',
-                'Recommended if you already use the mobile app. Keep using your existing WhatsApp Business app while connecting it to RGCRM for CRM messaging and automation.',
+                'Keep your Business app and connect the same number to your shared inbox.',
               ],
               [
                 'cloud_api',
                 'Connect a new WhatsApp number',
-                'Connect a new or eligible WhatsApp number directly to RGCRM through Meta.',
+                'Set up a new or eligible number for CRM messaging. Meta guides you through verification.',
               ],
             ] as const
           ).map(([value, label, description]) => (
@@ -517,17 +558,25 @@ export function WhatsAppEmbeddedSignup({
           ))}
         </fieldset>
         {mode === 'coexistence' && (
-          <p className="text-muted-foreground text-left text-xs leading-relaxed">
-            Meta decides number eligibility. Keep the Business app open during
-            synchronization. You choose whether to share chat history in Meta;
-            eligible one-to-one history may be imported, but groups and some app
-            features are unavailable in RGCRM. Older media may be missing.
-            Linked devices may need reconnecting and some app features change.
-            Get customer consent before CRM messaging. Cloud API messages have
-            Meta charges and messaging-window rules. A number already using
-            AiSensy or another provider needs its supported transfer path
-            checked first.
-          </p>
+          <div className="text-muted-foreground space-y-2 text-left text-xs leading-relaxed">
+            <p>
+              Keep your Business app open during setup. You choose whether to
+              share chat history in Meta.
+            </p>
+            <details>
+              <summary className="cursor-pointer">
+                Eligibility and app limits
+              </summary>
+              <p className="pt-2">
+                Meta decides eligibility. Groups and some app features are
+                unavailable in the CRM; older media may be missing and linked
+                devices may need reconnecting. If you use AiSensy or another
+                provider, keep it connected until Meta confirms a supported
+                sharing or transfer path. Review app greeting and away replies
+                when enabling CRM automation to avoid duplicate responses.
+              </p>
+            </details>
+          </div>
         )}
         <div
           className={cn(
@@ -608,7 +657,7 @@ export function WhatsAppEmbeddedSignup({
               Recover saved setup
             </Button>
           )}
-        {phase === 'idle' &&
+        {['idle', 'ready'].includes(phase) &&
           visibleAttempts.map((attempt) => (
             <div
               key={attempt.id}
@@ -617,8 +666,8 @@ export function WhatsAppEmbeddedSignup({
               <p className="text-sm">
                 Saved setup ·{' '}
                 {attempt.context
-                  ? `Number ID ${attempt.context.phone_number_id}`
-                  : 'Facebook signup not completed'}{' '}
+                  ? 'WhatsApp selection saved'
+                  : 'Facebook setup unfinished'}{' '}
                 · {new Date(attempt.created_at).toLocaleString()}
               </p>
               {!attempt.recoverable && !attempt.busy && (
@@ -651,6 +700,11 @@ export function WhatsAppEmbeddedSignup({
               </Button>
             </div>
           ))}
+        {message.startsWith('WhatsApp connected.') && (
+          <a href="/inbox" className="text-sm underline">
+            Open inbox
+          </a>
+        )}
         {message && (
           <p role="status" className="text-sm">
             {message}

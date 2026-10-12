@@ -3,10 +3,15 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { encrypt } from './encryption';
 import { resumeCoexistenceSync } from './coexistence-sync';
 const h = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('./embedded-signup', () => ({ requestCoexistenceSync: h.request }));
+vi.mock('./embedded-signup', async (original) => ({
+  ...(await original<typeof import('./embedded-signup')>()),
+  requestCoexistenceSync: h.request,
+}));
 const intents = new Set<string>();
 let configOverrides: Record<string, unknown> = {};
 let saveError = false;
+let reads = 0;
+let currentOverrides: Record<string, unknown> | null = null;
 const rpc = vi.fn(async (name: string, args: Record<string, string>) => {
   if (name === 'begin_whatsapp_coexistence_sync') {
     if (intents.has(args.p_type)) return { data: false, error: null };
@@ -27,6 +32,7 @@ const db = {
             status: 'connected',
             onboarding_metadata: { onboarding_mode: 'coexistence' },
             ...configOverrides,
+            ...(reads++ > 0 ? currentOverrides : {}),
           },
           error: null,
         }),
@@ -37,6 +43,8 @@ const db = {
 } as unknown as SupabaseClient;
 beforeEach(() => {
   intents.clear();
+  reads = 0;
+  currentOverrides = null;
   configOverrides = {};
   saveError = false;
   rpc.mockClear();
@@ -100,4 +108,29 @@ it('keeps a saved unconfirmed outcome pending without resending it', async () =>
   expect(h.request.mock.calls.map((call) => call[2])).toEqual([
     'smb_app_state_sync',
   ]);
+});
+
+it('defers missing sync without reserving intent when worker time is nearly exhausted', async () => {
+  expect(await resumeCoexistenceSync(db, 'c', Date.now() + 1000)).toBe(false);
+  expect(rpc).not.toHaveBeenCalled();
+  expect(h.request).not.toHaveBeenCalled();
+});
+
+it('uses confirmed current states rather than stale initial unconfirmed flags', async () => {
+  intents.add('history');
+  intents.add('smb_app_state_sync');
+  configOverrides = {
+    coexistence_state: {
+      history: { state: 'unconfirmed' },
+      smb_app_state_sync: { state: 'unconfirmed' },
+    },
+  };
+  currentOverrides = {
+    coexistence_state: {
+      history: { state: 'accepted' },
+      smb_app_state_sync: { state: 'received' },
+    },
+  };
+  expect(await resumeCoexistenceSync(db, 'c')).toBe(true);
+  expect(h.request).not.toHaveBeenCalled();
 });

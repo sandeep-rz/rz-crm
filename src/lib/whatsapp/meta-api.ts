@@ -1,3 +1,4 @@
+import { acquireMetaSend } from './send-policy';
 /**
  * Meta WhatsApp Cloud API helpers.
  *
@@ -84,6 +85,37 @@ export class MetaApiError extends Error {
     this.userMessage = fields.userMessage ?? null;
     this.details = fields.details ?? null;
   }
+}
+/** A definite local refusal, before HTTP. Background callers keep unsent work. */
+export class MetaSendPolicyError extends MetaApiError {
+  constructor(
+    readonly reason: 'rate_limited' | 'disconnected' | 'unavailable',
+    readonly retryAfterMs = 0
+  ) {
+    super(
+      reason === 'disconnected'
+        ? 'WhatsApp is disconnected. Reconnect before sending.'
+        : 'WhatsApp is busy. Retry shortly.',
+      { httpStatus: reason === 'disconnected' ? 409 : 429 }
+    );
+    this.name = 'MetaSendPolicyError';
+  }
+}
+async function guardMetaSend(phoneNumberId: string) {
+  let allowance: number;
+  try {
+    allowance = await acquireMetaSend(phoneNumberId);
+    // One short wait avoids failing a sequential send loop at the next 50ms
+    // boundary. Recheck lifecycle when obtaining the actual allowance.
+    if (allowance > 0 && allowance <= 75) {
+      await new Promise((resolve) => setTimeout(resolve, allowance));
+      allowance = await acquireMetaSend(phoneNumberId);
+    }
+  } catch {
+    throw new MetaSendPolicyError('unavailable');
+  }
+  if (allowance < 0) throw new MetaSendPolicyError('disconnected');
+  if (allowance > 0) throw new MetaSendPolicyError('rate_limited', allowance);
 }
 
 /**
@@ -402,6 +434,7 @@ export async function sendTextMessage(
   if (contextMessageId) {
     body.context = { message_id: contextMessageId };
   }
+  await guardMetaSend(phoneNumberId);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -476,6 +509,7 @@ export async function sendMediaMessage(
   };
   if (contextMessageId) body.context = { message_id: contextMessageId };
 
+  await guardMetaSend(phoneNumberId);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -602,6 +636,7 @@ export async function sendTemplateMessage(
     body.context = { message_id: contextMessageId };
   }
 
+  await guardMetaSend(phoneNumberId);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -862,6 +897,7 @@ export async function sendReactionMessage(
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, to, targetMessageId, emoji } = args;
   const url = `${META_API_BASE}/${phoneNumberId}/messages`;
+  await guardMetaSend(phoneNumberId);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -1054,6 +1090,7 @@ export async function sendInteractiveButtons(
   if (contextMessageId) body.context = { message_id: contextMessageId };
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`;
+  await guardMetaSend(phoneNumberId);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -1196,6 +1233,7 @@ export async function sendInteractiveList(
   if (contextMessageId) body.context = { message_id: contextMessageId };
 
   const url = `${META_API_BASE}/${phoneNumberId}/messages`;
+  await guardMetaSend(phoneNumberId);
   const response = await fetch(url, {
     method: 'POST',
     headers: {

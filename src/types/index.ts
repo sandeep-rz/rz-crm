@@ -246,6 +246,18 @@ export interface Message {
     history?: boolean;
     placeholder?: boolean;
     media_id?: string | null;
+    context?: { id?: string } | null;
+    filename?: string | null;
+    location?: {
+      latitude?: number;
+      longitude?: number;
+      name?: string;
+      address?: string;
+    } | null;
+    interactive?: Record<string, unknown> | null;
+    edited?: boolean;
+    revoked?: boolean;
+    app_updated_at?: string;
   };
   id: string;
   conversation_id: string;

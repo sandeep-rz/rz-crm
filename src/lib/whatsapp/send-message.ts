@@ -29,6 +29,7 @@ import {
   sendInteractiveList,
   type MediaKind,
   MetaApiError,
+  MetaSendPolicyError,
 } from '@/lib/whatsapp/meta-api';
 import {
   validateInteractivePayload,
@@ -73,7 +74,8 @@ export class SendMessageError extends Error {
     code: string,
     message: string,
     status: number,
-    readonly acceptedMessageId?: string
+    readonly acceptedMessageId?: string,
+    readonly failedBeforeMetaRequest = false
   ) {
     super(message);
     this.name = 'SendMessageError';
@@ -512,6 +514,16 @@ export async function sendMessageToConversation(
 
     if (lastError) throw lastError;
   } catch (err) {
+    if (err instanceof MetaSendPolicyError)
+      throw new SendMessageError(
+        err.reason === 'disconnected'
+          ? 'whatsapp_disconnected'
+          : 'rate_limited',
+        err.message,
+        err.httpStatus,
+        undefined,
+        Boolean(prepared)
+      );
     const message =
       err instanceof Error ? err.message : 'Unknown Meta API error';
     if (

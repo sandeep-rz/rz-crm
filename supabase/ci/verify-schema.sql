@@ -75,6 +75,18 @@ BEGIN
       'messages.error_code/error_title/error_details are missing — migration 042 did not apply';
   END IF;
 
+  -- 79: private durable intake and shared allowance must be available to the
+  -- worker while remaining inaccessible through public client credentials.
+  IF has_function_privilege('anon','public.inspect_whatsapp_coexistence_failures(uuid)','EXECUTE') OR
+     has_function_privilege('authenticated','public.retry_whatsapp_coexistence_event(uuid,bigint)','EXECUTE') OR
+     NOT has_function_privilege('service_role','public.process_whatsapp_coexistence_event(integer,integer)','EXECUTE') OR
+     to_regclass('public.whatsapp_send_budgets') IS NULL OR
+     NOT has_function_privilege('service_role','public.capture_whatsapp_deliveries(jsonb)','EXECUTE') OR
+     has_function_privilege('anon','public.acquire_whatsapp_send(text)','EXECUTE') OR
+     has_function_privilege('authenticated','public.begin_whatsapp_authorization(uuid,uuid,uuid,text,uuid)','EXECUTE') THEN
+    RAISE EXCEPTION 'WhatsApp worker security boundary is missing (migration 79)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

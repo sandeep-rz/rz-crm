@@ -63,6 +63,9 @@ export function signupEvent(origin: string, value: unknown) {
       v.type !== 'WA_EMBEDDED_SIGNUP' ||
       ![
         'FINISH',
+        'FINISH_ONLY_WABA',
+        'FINISH_OBO_MIGRATION',
+        'FINISH_GRANT_ONLY_API_ACCESS',
         'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
         'CANCEL',
         'ERROR',
@@ -70,25 +73,35 @@ export function signupEvent(origin: string, value: unknown) {
     )
       return null;
     if (
+      v.event === 'FINISH_OBO_MIGRATION' ||
+      v.event === 'FINISH_GRANT_ONLY_API_ACCESS'
+    )
+      return { event: 'ACTION_NEEDED' as const };
+    if (
       v.event === 'FINISH' ||
+      v.event === 'FINISH_ONLY_WABA' ||
       v.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
     ) {
       const coexistence = v.event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING';
-      const context = coexistence
-        ? signupSessionContext(v.data)
-        : signupContext(v.data);
+      const context =
+        coexistence || v.event === 'FINISH_ONLY_WABA'
+          ? signupSessionContext(v.data)
+          : signupContext(v.data);
       return context
         ? {
             event: v.event as
-              'FINISH' | 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
+              | 'FINISH'
+              | 'FINISH_ONLY_WABA'
+              | 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
             context,
           }
         : { event: 'INCOMPLETE' as const };
     }
     return {
       event: v.event as 'CANCEL' | 'ERROR',
-      ...(v.event === 'ERROR' && typeof v.data?.error_code === 'number'
-        ? { errorCode: v.data.error_code }
+      ...(['ERROR', 'CANCEL'].includes(v.event) &&
+      /^\d+$/.test(String(v.data?.error_code ?? ''))
+        ? { errorCode: Number(v.data.error_code) }
         : {}),
     };
   } catch {

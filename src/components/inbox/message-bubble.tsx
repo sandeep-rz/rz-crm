@@ -193,14 +193,32 @@ function MessageContent({
         </div>
       );
 
-    case 'location':
+    case 'location': {
+      const location = message.coexistence_metadata?.location;
+      const valid =
+        typeof location?.latitude === 'number' &&
+        typeof location.longitude === 'number' &&
+        Math.abs(location.latitude) <= 90 &&
+        Math.abs(location.longitude) <= 180;
+      const label = message.content_text || t('locationShared');
       return (
         <div className="flex items-center gap-2 text-sm">
           <MapPin className="text-muted-foreground h-4 w-4 shrink-0" />
-          <span>{message.content_text || t('locationShared')}</span>
+          {valid ? (
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${location!.latitude},${location!.longitude}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              {label}
+            </a>
+          ) : (
+            <span>{label}</span>
+          )}
         </div>
       );
-
+    }
     case 'interactive': {
       // Three cases share content_type='interactive':
       //  - OUTBOUND with payload (composer / automation / Flow send after

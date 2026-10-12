@@ -30,7 +30,16 @@ beforeEach(async () => {
     .mockResolvedValueOnce(
       new Response(JSON.stringify({ session_id: 'session' }))
     )
-    .mockResolvedValue(new Response(JSON.stringify({ success: true })));
+    .mockImplementation(
+      async (_url, init) =>
+        new Response(
+          JSON.stringify(
+            JSON.parse(String(init?.body)).action === 'start'
+              ? { session_id: 'session' }
+              : { success: true }
+          )
+        )
+    );
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -46,8 +55,8 @@ afterEach(async () => {
 async function click(text: string) {
   await act(async () => {
     [...host.querySelectorAll('button')]
-      .find((button) => button.textContent === text)!
-      .click();
+      .find((button) => button.textContent === text)
+      ?.click();
   });
 }
 async function event(event = 'FINISH') {
@@ -86,7 +95,7 @@ it.each([true, false])(
     }
     await event();
     await code();
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(changed).toHaveBeenCalledOnce();
     expect(host.textContent).toContain('WhatsApp connected');
     expect(login.mock.calls[0]).toHaveLength(2);
@@ -153,7 +162,9 @@ it('recovers a saved setup without opening Facebook again', async () => {
         status: 503,
       })
     )
-    .mockResolvedValue(new Response(JSON.stringify({ success: true })));
+    .mockImplementation(
+      async () => new Response(JSON.stringify({ success: true }))
+    );
   await launch();
   await event();
   await act(async () => callback({ authResponse: { code: 'code' } }));
@@ -275,6 +286,9 @@ it('disables recovery and discard while another worker holds the attempt lease',
 });
 
 it('uses Meta’s current standard v4 launch options and retries a silent launch without another session', async () => {
+  await act(() =>
+    host.querySelector<HTMLInputElement>('input[value=cloud_api]')!.click()
+  );
   await launch();
   expect(login.mock.calls[0][1]).toEqual({
     config_id: '1445638484111991',
@@ -286,13 +300,13 @@ it('uses Meta’s current standard v4 launch options and retries a silent launch
   await click('Popup didn’t open?');
   expect(host.textContent).toContain('Allow popups for this site');
   await click('Continue with Facebook');
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher).toHaveBeenCalledTimes(2);
   expect(login).toHaveBeenCalledTimes(2);
   await event();
   await act(() => earlier({ authResponse: { code: 'stale-code' } }));
-  expect(fetcher).toHaveBeenCalledOnce();
-  await act(() => callback({ authResponse: { code: 'current-code' } }));
   expect(fetcher).toHaveBeenCalledTimes(2);
+  await act(() => callback({ authResponse: { code: 'current-code' } }));
+  expect(fetcher).toHaveBeenCalledTimes(4);
   expect(host.textContent).toContain('WhatsApp connected');
 });
 
@@ -308,8 +322,8 @@ it('calls FB.login before the actual click handler returns without any interveni
   });
   await act(() => {
     [...host.querySelectorAll('button')]
-      .find((b) => b.textContent === 'Continue with Facebook')!
-      .click();
+      .find((b) => b.textContent === 'Continue with Facebook')
+      ?.click();
     expect(login).toHaveBeenCalledOnce();
     returned = true;
   });
@@ -446,3 +460,27 @@ it('launches Coexistence and accepts WABA-only session completion', async () => 
     context: { waba_id: '123' },
   });
 });
+
+it('exchanges the short-lived code before waiting for phone selection and ignores repeated SDK callbacks', async () => {
+  await launch();
+  await act(() => callback({ authResponse: { code: 'short-lived' } }));
+  expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({
+    action: 'authorize',
+    session_id: 'session',
+    code: 'short-lived',
+  });
+  expect(changed).not.toHaveBeenCalled();
+  await act(() => callback({ authResponse: { code: 'short-lived' } }));
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await event();
+  expect(fetcher).toHaveBeenCalledTimes(3);
+});
+it.each(['FINISH_OBO_MIGRATION', 'FINISH_GRANT_ONLY_API_ACCESS'])(
+  'classifies %s without an endless authorization wait',
+  async (kind) => {
+    await launch();
+    await event(kind);
+    expect(host.textContent).toContain('Review activation with support');
+    expect(host.textContent).toContain('keep your current provider connected');
+  }
+);

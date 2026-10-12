@@ -401,3 +401,20 @@ it('shows Meta eligibility details without exposing OAuth credentials or raw mes
 it('retains an unfamiliar numeric Meta signup error without inventing its cause', () => {
   expect(signupEligibilityError(123456)).toContain('(123456)');
 });
+
+it('recognizes WABA-only completion and Meta migration/grant-only outcomes', () => {
+  expect(
+    signupEvent('https://www.facebook.com', {
+      type: 'WA_EMBEDDED_SIGNUP',
+      event: 'FINISH_ONLY_WABA',
+      data: { waba_id: '123' },
+    })
+  ).toEqual({ event: 'FINISH_ONLY_WABA', context: { waba_id: '123' } });
+  for (const event of ['FINISH_OBO_MIGRATION', 'FINISH_GRANT_ONLY_API_ACCESS'])
+    expect(
+      signupEvent('https://www.facebook.com', {
+        type: 'WA_EMBEDDED_SIGNUP',
+        event,
+      })
+    ).toEqual({ event: 'ACTION_NEEDED' });
+});

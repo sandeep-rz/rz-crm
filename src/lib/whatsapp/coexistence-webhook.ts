@@ -40,10 +40,44 @@ export function coexistenceRecords(
     const at = timestamp(m.timestamp);
     if (!peer || typeof m.id !== 'string' || !m.id || !at)
       throw new Error('Invalid Coexistence message identity.');
+    if (['edit', 'revoke'].includes(String(m.type))) {
+      const update = obj(m[String(m.type)]);
+      if (
+        typeof update.original_message_id !== 'string' ||
+        !update.original_message_id
+      )
+        throw new Error('Invalid app update identity.');
+      const edited = obj(update.message),
+        content = obj(edited[String(edited.type)]);
+      records.push({
+        kind: 'message_update',
+        peer,
+        id: m.id,
+        original_id: update.original_message_id,
+        at,
+        revoked: m.type === 'revoke',
+        text:
+          typeof content.body === 'string'
+            ? content.body
+            : typeof content.caption === 'string'
+              ? content.caption
+              : null,
+      });
+      return;
+    }
     const kind = String(m.type || 'unknown');
     const content = obj(m[kind]);
     const outbound = mediaOnly ? undefined : phone(m.from) === own;
     records.push({
+      context:
+        typeof obj(m.context).id === 'string'
+          ? { id: obj(m.context).id }
+          : null,
+      interactive: kind === 'interactive' ? content : null,
+      interactive_reply_id:
+        obj(content.button_reply).id ?? obj(content.list_reply).id ?? null,
+      location: kind === 'location' ? content : null,
+      filename: typeof content.filename === 'string' ? content.filename : null,
       kind: 'message',
       peer,
       id: m.id,
@@ -69,9 +103,23 @@ export function coexistenceRecords(
           ? content.body
           : typeof content.caption === 'string'
             ? content.caption
-            : kind === 'media_placeholder'
-              ? '[Historical media unavailable]'
-              : `[${kind}]`,
+            : kind === 'location'
+              ? [
+                  content.name,
+                  content.address,
+                  `${content.latitude}, ${content.longitude}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+              : kind === 'interactive'
+                ? String(
+                    obj(content.button_reply).title ??
+                      obj(content.list_reply).title ??
+                      '[Interactive message]'
+                  )
+                : kind === 'media_placeholder'
+                  ? '[Historical media unavailable]'
+                  : `[${kind}]`,
       media_id: typeof content.id === 'string' ? content.id : null,
       mime_type:
         typeof content.mime_type === 'string' ? content.mime_type : null,
@@ -197,17 +245,19 @@ export async function captureCoexistenceWebhook(
   });
   if (error) throw new Error('Coexistence capture failed.');
   if (typeof data === 'number' && data > 0)
-    console.warn('[webhook] Coexistence lifecycle event unresolved', {
-      reason: 'ambiguous_phone_identity',
-      count: data,
-    });
+    throw new Error('coexistence_routing_unresolved');
   return true;
 }
-export async function drainCoexistenceWebhook(db: SupabaseClient) {
+export async function drainCoexistenceWebhook(
+  db: SupabaseClient,
+  limit = 5,
+  maxPriority = 3
+) {
   // SQL imports one small batch and commits its completion atomically. A
   // terminated after() callback cannot lose an acknowledged chunk.
   const { error } = await db.rpc('process_whatsapp_coexistence_event', {
-    p_limit: 25,
+    p_limit: limit,
+    p_max_priority: maxPriority,
   });
   if (error) throw new Error('Coexistence processing failed.');
 }

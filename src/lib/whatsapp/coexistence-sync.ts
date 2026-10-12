@@ -1,12 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { decrypt } from './encryption';
-import { requestCoexistenceSync } from './embedded-signup';
+import { requestCoexistenceSync, SignupError } from './embedded-signup';
 
 /** Intent is committed before the one-time Meta call. An uncertain outcome is
  * never retried automatically, even after a process crash or reconnection. */
 export async function resumeCoexistenceSync(
   db: SupabaseClient,
-  connectionId: string
+  connectionId: string,
+  deadline = Infinity
 ) {
   const { data: config, error } = await db
     .from('whatsapp_config')
@@ -33,16 +34,40 @@ export async function resumeCoexistenceSync(
       'Coexistence credentials could not be validated. No synchronization request was reserved.'
     );
   }
-  let accepted = !['smb_app_state_sync', 'history'].some(
-    (type) => config.coexistence_state?.[type]?.state === 'unconfirmed'
-  );
+  let accepted = true;
   for (const type of ['smb_app_state_sync', 'history'] as const) {
+    // Leave intent missing when there is insufficient runtime for the 15s
+    // Graph timeout plus persistence. Cron can reserve it on a fresh run.
+    if (Date.now() + 20_000 > deadline) {
+      accepted = false;
+      continue;
+    }
     const { data: claimed, error: claimError } = await db.rpc(
       'begin_whatsapp_coexistence_sync',
       { p_connection: connectionId, p_type: type }
     );
     if (claimError) throw new Error('Could not reserve synchronization.');
-    if (!claimed) continue;
+    if (!claimed) {
+      const { data: current, error } = await db
+        .from('whatsapp_config')
+        .select('coexistence_state')
+        .eq('id', connectionId)
+        .single();
+      const state = current?.coexistence_state?.[type]?.state;
+      if (
+        error ||
+        ![
+          'accepted',
+          'received',
+          'syncing',
+          'complete',
+          'declined',
+          'partial',
+        ].includes(state)
+      )
+        accepted = false;
+      continue;
+    }
     try {
       const requestId = await requestCoexistenceSync(
         config.phone_number_id,
@@ -54,8 +79,19 @@ export async function resumeCoexistenceSync(
         { p_connection: connectionId, p_type: type, p_request_id: requestId }
       );
       if (saveError) throw new Error('Could not save sync acceptance.');
-    } catch {
+    } catch (error) {
       accepted = false;
+      if (
+        error instanceof SignupError &&
+        error.status >= 400 &&
+        error.status < 500
+      ) {
+        await db.rpc('fail_whatsapp_coexistence_sync', {
+          p_connection: connectionId,
+          p_type: type,
+          p_code: error.meta?.code ?? null,
+        });
+      }
       // Process the other independent sync type; leave unknown intent visible.
       // No reset-to-pending on timeouts, transport, 5xx or post-acceptance failure.
     }

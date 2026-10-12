@@ -236,7 +236,7 @@ describe('documented Coexistence payloads', () => {
     await drainCoexistenceWebhook({ rpc } as unknown as SupabaseClient);
     expect(rpc).toHaveBeenCalledExactlyOnceWith(
       'process_whatsapp_coexistence_event',
-      { p_limit: 25 }
+      { p_limit: 5, p_max_priority: 3 }
     );
     rpc.mockClear().mockResolvedValue({ data: false, error: null });
     await drainCoexistenceWebhook({ rpc } as unknown as SupabaseClient);
@@ -266,25 +266,27 @@ it('intercepts only supported Coexistence account updates', async () => {
   });
   expect(rpc).not.toHaveBeenCalled();
 });
-it('logs only a structured count when lifecycle identity is unresolved', async () => {
+it('retains unresolved identity for the durable worker to retry', async () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   try {
     const rpc = vi.fn().mockResolvedValue({ data: 1, error: null });
-    await captureCoexistenceWebhook({ rpc } as unknown as SupabaseClient, {
-      entry: [
-        {
-          id: 'private-waba',
-          time: 1739230955,
-          changes: [
-            { field: 'account_update', value: { event: 'ACCOUNT_OFFBOARDED' } },
-          ],
-        },
-      ],
-    });
-    expect(warn).toHaveBeenCalledExactlyOnceWith(
-      '[webhook] Coexistence lifecycle event unresolved',
-      { reason: 'ambiguous_phone_identity', count: 1 }
-    );
+    await expect(
+      captureCoexistenceWebhook({ rpc } as unknown as SupabaseClient, {
+        entry: [
+          {
+            id: 'private-waba',
+            time: 1739230955,
+            changes: [
+              {
+                field: 'account_update',
+                value: { event: 'ACCOUNT_OFFBOARDED' },
+              },
+            ],
+          },
+        ],
+      })
+    ).rejects.toThrow('coexistence_routing_unresolved');
+    expect(warn).not.toHaveBeenCalled();
     expect(JSON.stringify(warn.mock.calls)).not.toContain('private-waba');
   } finally {
     warn.mockRestore();

@@ -18,7 +18,10 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
+import {
+  sendTemplateMessage,
+  MetaSendPolicyError,
+} from '@/lib/whatsapp/meta-api';
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
@@ -447,6 +450,21 @@ export async function deliverBroadcast(
       sentMessageId = result.messageId;
       lastError = null;
     } catch (error) {
+      if (error instanceof MetaSendPolicyError) {
+        // No HTTP request occurred. Return this recipient to the existing
+        // pending continuation and stop prepared work after an offboard/quota.
+        const { error: deferError } = await db
+          .from('broadcast_recipients')
+          .update({ status: 'pending', error_message: error.message })
+          .eq('id', identity.recipientId)
+          .eq('broadcast_id', identity.broadcastId)
+          .eq('status', 'failed')
+          .eq('error_message', BROADCAST_DELIVERY_UNCONFIRMED)
+          .is('whatsapp_message_id', null);
+        if (deferError)
+          throw new Error('Could not preserve deferred recipient.');
+        break;
+      }
       lastError = broadcastSendFailure(error);
     }
 

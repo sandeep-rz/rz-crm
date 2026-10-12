@@ -48,7 +48,7 @@ import { validateTemplateActions } from './validate';
 import { AutomationTemplateSendError } from './template-send-error';
 import { WhatsAppConnectionError } from '@/lib/whatsapp/connection-resolver';
 import { SendMessageError } from '@/lib/whatsapp/send-message';
-import { MetaApiError } from '@/lib/whatsapp/meta-api';
+import { MetaApiError, MetaSendPolicyError } from '@/lib/whatsapp/meta-api';
 import { TemplatePreparationError } from '@/lib/message-preparation/errors';
 
 // ------------------------------------------------------------
@@ -644,10 +644,12 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
             : String(err);
       if (
         (err instanceof TemplatePreparationError ||
-          err instanceof AutomationTemplateSendError) &&
+          err instanceof AutomationTemplateSendError ||
+          err instanceof MetaSendPolicyError) &&
         args.failure
       )
-        args.failure.retryable = err.retryable;
+        args.failure.retryable =
+          err instanceof MetaSendPolicyError ? true : err.retryable;
       results.push({
         step_id: step.id,
         step_type: step.step_type,
@@ -735,7 +737,8 @@ export async function executeAutomationStep(
       !accepted &&
       (error instanceof TemplatePreparationError ||
         (error instanceof AutomationTemplateSendError &&
-          error.failedBeforeMetaRequest))
+          error.failedBeforeMetaRequest) ||
+        error instanceof MetaSendPolicyError)
     )
       await record(null);
     throw error;
@@ -836,12 +839,23 @@ async function executeAction(
         if (error instanceof WhatsAppConnectionError)
           throw new AutomationTemplateSendError(
             `template_connection_${error.code}`,
-            error.status >= 500 && error.code !== 'invalid_credentials'
+            (error.status >= 500 || error.status === 409) &&
+              error.code !== 'invalid_credentials',
+            true
           );
         if (error instanceof SendMessageError)
           throw new AutomationTemplateSendError(
             `template_target_${error.code}`,
-            error.status >= 500
+            error.status >= 500 ||
+              error.status === 429 ||
+              error.code === 'whatsapp_disconnected',
+            error.failedBeforeMetaRequest
+          );
+        if (error instanceof MetaSendPolicyError)
+          throw new AutomationTemplateSendError(
+            `whatsapp_${error.reason}`,
+            true,
+            true
           );
         if (error instanceof MetaApiError)
           throw new AutomationTemplateSendError(

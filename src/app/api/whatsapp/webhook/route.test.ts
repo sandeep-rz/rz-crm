@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { processWebhook } from '@/lib/whatsapp/webhook-processor';
 
 // Shared, hoisted state the module mocks close over. Reset per test.
 const h = vi.hoisted(() => ({
@@ -11,6 +12,11 @@ const h = vi.hoisted(() => ({
     // returns the row; a replayed delivery conflicts and returns [].
     messageUpsertResult: [{ id: 'msg-1' }] as { id: string }[],
     priorCustomerMsgCount: 0,
+    deliveryOwned: false,
+    historyPromoted: false,
+    receiptContext: null as Record<string, unknown> | null,
+    failInbox: false,
+    statusResult: null as Record<string, unknown> | null,
     /** Row `lookupInternalIdByMetaId` resolves for a `context.id`. */
     replyContextParent: null as { id: string } | null,
     conversation: { id: 'conv-1', unread_count: 0, account_id: 'acc-1' },
@@ -44,6 +50,20 @@ const h = vi.hoisted(() => ({
   },
 }));
 
+vi.mock('@/lib/whatsapp/webhook-runtime', () => ({
+  captureWhatsAppDelivery: vi.fn(async (_db, body) => {
+    (h.state as unknown as { payload: unknown }).payload = body;
+  }),
+  runWhatsAppWorker: vi.fn(async () => {
+    await processWebhook((h.state as unknown as { payload: never }).payload);
+  }),
+  deliveryStage: async (
+    _db: unknown,
+    _receipt: unknown,
+    _stage: unknown,
+    action: () => Promise<unknown>
+  ) => action(),
+}));
 vi.mock('next/server', () => ({
   after: (cb: () => Promise<void> | void) => {
     h.state.afterCallbacks.push(cb);
@@ -103,9 +123,11 @@ vi.mock('@supabase/supabase-js', () => ({
             select: () => ({
               eq: () => ({
                 eq: () => ({
-                  in: () => ({
-                    order: () => ({
-                      limit: () => Promise.resolve({ data: [], error: null }),
+                  eq: () => ({
+                    in: () => ({
+                      order: () => ({
+                        limit: () => Promise.resolve({ data: [], error: null }),
+                      }),
                     }),
                   }),
                 }),
@@ -184,6 +206,14 @@ vi.mock('@supabase/supabase-js', () => ({
                   {
                     eq: () => ({
                       eq: () => ({
+                        eq: () => ({
+                          maybeSingle: async () => ({
+                            data: h.state.deliveryOwned
+                              ? { id: 'msg-1' }
+                              : null,
+                            error: null,
+                          }),
+                        }),
                         maybeSingle: () =>
                           Promise.resolve({
                             data: h.state.replyContextParent,
@@ -199,7 +229,17 @@ vi.mock('@supabase/supabase-js', () => ({
             // Status webhook mirror (#535): update(...).eq('message_id', ...)
             update: (patch: Record<string, unknown>) => {
               h.state.messageUpdates.push(patch);
-              return { eq: () => Promise.resolve({ error: null }) };
+              const result = Promise.resolve({
+                data: h.state.historyPromoted ? [{ id: 'msg-1' }] : [],
+                error: null,
+              });
+              const q = {
+                eq: () => q,
+                in: () => q,
+                select: () => result,
+                then: result.then.bind(result),
+              };
+              return q;
             },
             // Idempotent insert: upsert(...).select('id')
             upsert: (row: Record<string, unknown>, options: unknown) => {
@@ -219,6 +259,14 @@ vi.mock('@supabase/supabase-js', () => ({
     },
     rpc: (name: string, args: Record<string, unknown>) => {
       h.state.rpcCalls.push({ name, args });
+      if (name === 'apply_whatsapp_status')
+        return Promise.resolve({ data: h.state.statusResult, error: null });
+      if (name === 'whatsapp_delivery_context') {
+        h.state.receiptContext ??= args.p_context as Record<string, unknown>;
+        return Promise.resolve({ data: h.state.receiptContext, error: null });
+      }
+      if (name === 'apply_whatsapp_inbound' && h.state.failInbox)
+        return Promise.resolve({ data: null, error: { code: 'down' } });
       return Promise.resolve({ data: null, error: null });
     },
     // Service-role Storage, used by the inbound-media mirror (#466).
@@ -311,7 +359,11 @@ function inboundRequest(
           {
             field: 'messages',
             value: {
-              metadata: { phone_number_id: 'pn-1' },
+              messaging_product: 'whatsapp',
+              metadata: {
+                phone_number_id: 'pn-1',
+                display_phone_number: '15551234567',
+              },
               contacts,
               messages: [message],
             },
@@ -345,7 +397,11 @@ async function runStatusWebhook(status: Record<string, unknown>) {
           {
             field: 'messages',
             value: {
-              metadata: { phone_number_id: 'pn-1' },
+              messaging_product: 'whatsapp',
+              metadata: {
+                phone_number_id: 'pn-1',
+                display_phone_number: '15551234567',
+              },
               statuses: [status],
             },
           },
@@ -365,6 +421,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.state.messageUpsertResult = [{ id: 'msg-1' }];
   h.state.priorCustomerMsgCount = 0;
+  h.state.deliveryOwned = false;
+  h.state.historyPromoted = false;
+  h.state.receiptContext = null;
+  h.state.failInbox = false;
   h.state.replyContextParent = null;
   h.state.conversation = { id: 'conv-1', unread_count: 0, account_id: 'acc-1' };
   h.state.upsertCalls = [];
@@ -380,6 +440,7 @@ beforeEach(() => {
   h.state.contactUpdates = [];
   h.state.messageUpdates = [];
   h.state.broadcastRecipient = null;
+  h.state.statusResult = null;
   h.state.recipientUpdates = [];
   mockFindExistingContact.mockResolvedValue({
     id: 'contact-1',
@@ -1020,4 +1081,172 @@ describe("status webhook: failed statuses keep Meta's reason (#535)", () => {
     expect(h.state.recipientUpdates[0]).not.toHaveProperty('error_message');
     expect(h.state.recipientUpdates[0]).not.toHaveProperty('error_code');
   });
+});
+
+it('recovers inbox and fan-out after termination following message insertion', async () => {
+  const payload = JSON.parse(await inboundRequest().text()) as Parameters<
+    typeof processWebhook
+  >[0];
+  const receipt = { id: 7, lease: 'lease' };
+  h.state.failInbox = true;
+  await expect(processWebhook(payload, receipt)).rejects.toThrow(
+    'inbox_write_failed'
+  );
+  expect(h.dispatchInboundToFlows).not.toHaveBeenCalled();
+  h.state.failInbox = false;
+  h.state.messageUpsertResult = [];
+  h.state.deliveryOwned = true;
+  h.state.priorCustomerMsgCount = 1;
+  await processWebhook(payload, receipt);
+  expect(h.dispatchInboundToFlows).toHaveBeenCalledOnce();
+  expect(
+    h.runAutomationsForTrigger.mock.calls.map((c) => c[0].triggerType)
+  ).toContain('first_inbound_message');
+  expect(h.state.upsertCalls[0].row.inbound_delivery_id).toBe(7);
+});
+
+it('retains location and late reply context when historical content becomes live inbound', async () => {
+  h.state.messageUpsertResult = [];
+  h.state.historyPromoted = true;
+  await runWebhook({
+    ...TEXT_MESSAGE,
+    type: 'location',
+    location: { latitude: 10, longitude: 76, name: 'Arrival' },
+    context: { id: 'unseen-parent' },
+  });
+  expect(h.state.messageUpdates[0]).toMatchObject({
+    content_type: 'location',
+    coexistence_metadata: {
+      context: { id: 'unseen-parent' },
+      location: { latitude: 10, longitude: 76, name: 'Arrival' },
+    },
+  });
+  expect(h.dispatchInboundToFlows).toHaveBeenCalledOnce();
+});
+
+it('returns unmatched delivery statuses to durable retry instead of silently completing', async () => {
+  h.state.statusResult = { matched: false };
+  await expect(
+    processWebhook(
+      {
+        entry: [
+          {
+            id: 'waba',
+            changes: [
+              {
+                field: 'messages',
+                value: {
+                  messaging_product: 'whatsapp',
+                  metadata: {
+                    phone_number_id: 'pn-1',
+                    display_phone_number: '15551234567',
+                  },
+                  statuses: [
+                    {
+                      id: 'early',
+                      status: 'delivered',
+                      timestamp: '1739230955',
+                      recipient_id: '15551234567',
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      { id: 1, lease: 'lease' }
+    )
+  ).rejects.toThrow('status_unmatched');
+  expect(h.dispatchWebhookEvent).not.toHaveBeenCalled();
+});
+it('fans out the persisted status rather than a late regressive provider status', async () => {
+  h.state.statusResult = {
+    matched: true,
+    account_id: 'acc-1',
+    conversation_id: 'conv-1',
+    status: 'read',
+  };
+  await processWebhook(
+    {
+      entry: [
+        {
+          id: 'waba',
+          changes: [
+            {
+              field: 'messages',
+              value: {
+                messaging_product: 'whatsapp',
+                metadata: {
+                  phone_number_id: 'pn-1',
+                  display_phone_number: '15551234567',
+                },
+                statuses: [
+                  {
+                    id: 'late',
+                    status: 'sent',
+                    timestamp: '1739230955',
+                    recipient_id: '15551234567',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    },
+    { id: 1, lease: 'lease' }
+  );
+  expect(h.dispatchWebhookEvent).toHaveBeenCalledWith(
+    expect.anything(),
+    'acc-1',
+    'message.status_updated',
+    expect.objectContaining({ status: 'read' })
+  );
+});
+
+it('accepts a matched broadcast-only status without retrying or emitting an Inbox event', async () => {
+  h.state.statusResult = {
+    matched: true,
+    account_id: 'acc-1',
+    conversation_id: null,
+    status: 'delivered',
+  };
+  await expect(
+    processWebhook(
+      {
+        entry: [
+          {
+            id: 'waba',
+            changes: [
+              {
+                field: 'messages',
+                value: {
+                  messaging_product: 'whatsapp',
+                  metadata: {
+                    phone_number_id: 'pn-1',
+                    display_phone_number: '15551234567',
+                  },
+                  statuses: [
+                    {
+                      id: 'broadcast-only',
+                      status: 'delivered',
+                      timestamp: '1739230955',
+                      recipient_id: '15557654321',
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      { id: 1, lease: 'lease' }
+    )
+  ).resolves.toBeUndefined();
+  expect(h.state.rpcCalls).toContainEqual({
+    name: 'apply_whatsapp_status',
+    args: expect.objectContaining({ p_phone: 'pn-1', p_waba: 'waba' }),
+  });
+  expect(h.dispatchWebhookEvent).not.toHaveBeenCalled();
 });

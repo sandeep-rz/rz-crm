@@ -264,7 +264,9 @@ export function MediaDocumentBubble({
       >
         <FileText className="text-muted-foreground h-5 w-5 shrink-0" />
         <span className="truncate">
-          {message.content_text || t('document')}
+          {message.coexistence_metadata?.filename ||
+            message.content_text ||
+            t('document')}
         </span>
       </a>
       <MediaActionButton

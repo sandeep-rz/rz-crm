@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/accordion';
 import {
   coexistenceSyncLabel,
+  coexistenceHistoryLabel,
   type WhatsAppConnectionSummary,
 } from '@/lib/whatsapp/config-state';
 import {
@@ -106,6 +107,46 @@ export function WhatsAppConfig() {
   const signupChanged = async () => {
     await Promise.all([invalidate(), savedSignups.refresh()]);
   };
+  const syncPollingKey = connections
+    .filter(
+      (c) =>
+        c.onboarding_metadata?.onboarding_mode === 'coexistence' &&
+        (['accepted', 'syncing'].includes(
+          c.coexistence_state?.history?.state ?? ''
+        ) ||
+          (c.coexistence_import?.pending ?? 0) > 0)
+    )
+    .map((c) => c.id)
+    .sort()
+    .join(',');
+  useEffect(() => {
+    if (!accountId || !syncPollingKey) return;
+    let cancelled = false,
+      timer: ReturnType<typeof setTimeout>,
+      delay = 5000;
+    const refresh = async () => {
+      try {
+        if (document.visibilityState !== 'hidden') await invalidate();
+      } catch {
+        /* The capability hook owns the error UI; keep bounded polling. */
+      }
+      if (!cancelled) {
+        delay = Math.min(30000, delay * 1.5);
+        timer = setTimeout(refresh, delay);
+      }
+    };
+    timer = setTimeout(refresh, delay);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [accountId, syncPollingKey, invalidate]);
+  useEffect(() => {
+    if (config) {
+      const latest = connections.find((c) => c.id === config.id);
+      if (latest && latest !== config) setConfig(latest);
+    }
+  }, [connections, config]);
   const [displayName, setDisplayName] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
@@ -918,8 +959,7 @@ export function WhatsAppConfig() {
                   config.coexistence_state?.smb_app_state_sync?.state,
                   true
                 )}{' '}
-                · History:{' '}
-                {coexistenceSyncLabel(config.coexistence_state?.history?.state)}{' '}
+                · History: {coexistenceHistoryLabel(config)}{' '}
                 {config.coexistence_state?.history?.progress !== undefined &&
                   `(${config.coexistence_state.history.progress}%)`}
               </p>
@@ -928,8 +968,8 @@ export function WhatsAppConfig() {
               )}
               {(config.coexistence_import?.failed ?? 0) > 0 && (
                 <p>
-                  Some messages could not be imported. Refresh synchronization
-                  to retry.
+                  Some messages could not be imported. Contact an administrator
+                  to inspect and retry the failed imports.
                 </p>
               )}
               <p className="text-muted-foreground text-xs">

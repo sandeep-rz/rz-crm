@@ -22,6 +22,7 @@ function makeSupabaseStub(
   selectResult: SelectResult = { data: [{ id: 'row-1' }], error: null },
   opts: {
     configRows?: { id: string; account_id: string; user_id: string }[];
+    configError?: { message: string } | null;
     insertError?: { message: string; code?: string } | null;
     retrySelectResult?: SelectResult;
   } = {}
@@ -48,7 +49,7 @@ function makeSupabaseStub(
                 entry.filter = { column, value };
                 return Promise.resolve({
                   data: opts.configRows ?? [],
-                  error: null,
+                  error: opts.configError ?? null,
                 });
               },
             };
@@ -555,4 +556,53 @@ describe('handleTemplateWebhookChange — unknown field', () => {
     );
     expect(calls).toHaveLength(0);
   });
+});
+
+const failingChange = {
+  field: 'message_template_status_update',
+  wabaId: '123',
+  value: {
+    message_template_id: '456',
+    message_template_name: 'test',
+    event: 'APPROVED',
+  },
+};
+it('propagates template update and connection lookup failures for durable retry', async () => {
+  for (const stub of [
+    makeSupabaseStub({ data: null, error: { message: 'db down' } }).stub,
+    makeSupabaseStub(undefined, { configError: { message: 'db down' } }).stub,
+  ]) {
+    await expect(
+      handleTemplateWebhookChange(failingChange, stub)
+    ).rejects.toThrow('template_write_failed');
+  }
+});
+it('propagates failed stub inserts and failed unique-conflict repair updates', async () => {
+  const config = { id: 'connection', account_id: 'account', user_id: 'user' };
+  for (const opts of [
+    { insertError: { message: 'db down' } },
+    {
+      insertError: { message: 'race', code: '23505' },
+      retrySelectResult: { data: null, error: { message: 'db down' } },
+    },
+  ]) {
+    const { stub } = makeSupabaseStub(
+      { data: [], error: null },
+      { configRows: [config], ...opts }
+    );
+    await expect(
+      handleTemplateWebhookChange(failingChange, stub)
+    ).rejects.toThrow('template_write_failed');
+  }
+});
+it('retries a transient template update without inserting duplicate stubs', async () => {
+  const { stub, calls } = makeSupabaseStub(
+    { data: null, error: { message: 'db down' } },
+    { retrySelectResult: { data: [{ id: 'existing' }], error: null } }
+  );
+  await expect(
+    handleTemplateWebhookChange(failingChange, stub)
+  ).rejects.toThrow();
+  await handleTemplateWebhookChange(failingChange, stub);
+  expect(calls.filter((c) => c.insert)).toHaveLength(0);
 });

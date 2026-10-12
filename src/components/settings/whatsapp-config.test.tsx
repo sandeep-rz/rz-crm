@@ -236,8 +236,10 @@ it('changing inbound media retention invalidates local configuration', async () 
 it('renders a single signup entry point when no numbers are connected', async () => {
   h.connections = [];
   await act(() => root.render(<WhatsAppConfig />));
-  const connectButtons = [...host.querySelectorAll('button')].filter(
-    (button) => button.textContent === 'Connect WhatsApp'
+  const connectButtons = [...host.querySelectorAll('button')].filter((button) =>
+    ['Connect WhatsApp', 'Preparing…', 'Continue with Facebook'].includes(
+      button.textContent ?? ''
+    )
   );
   expect(connectButtons).toHaveLength(1);
   // The old empty-state component exposes a separate Connect button in this mock.
@@ -251,11 +253,48 @@ it('renders a single signup entry point when no numbers are connected', async ()
 
 it.each([
   ['unconfirmed', 'Meta has not confirmed the request; contact Meta support'],
-  ['deadline_expired', 'Sharing window expired; reconnect to start again'],
+  [
+    'deadline_expired',
+    'Sharing window expired; review the supported recovery path with Meta',
+  ],
   ['declined', 'Sharing declined'],
   ['complete', 'Complete'],
   ['received', 'Contact updates received'],
   ['accepted', 'Waiting for contact updates'],
 ])('shows a useful contact sync status for %s', (state, label) => {
   expect(coexistenceSyncLabel(state, true)).toBe(label);
+});
+
+it('backs off active sync polling across fresh connection snapshots and stops on completion', async () => {
+  vi.useFakeTimers();
+  try {
+    h.connections = [
+      {
+        ...row(),
+        onboarding_metadata: {
+          method: 'embedded_signup',
+          onboarding_mode: 'coexistence',
+        },
+        coexistence_state: { history: { state: 'accepted' } },
+      },
+    ];
+    await act(() => root.render(<WhatsAppConfig />));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(h.invalidate).toHaveBeenCalledTimes(1);
+    h.connections = h.connections.map((c) => ({ ...c }));
+    await act(() => root.render(<WhatsAppConfig />));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(h.invalidate).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(2500));
+    expect(h.invalidate).toHaveBeenCalledTimes(2);
+    h.connections = h.connections.map((c) => ({
+      ...c,
+      coexistence_state: { history: { state: 'complete' } },
+    }));
+    await act(() => root.render(<WhatsAppConfig />));
+    await act(() => vi.advanceTimersByTimeAsync(30000));
+    expect(h.invalidate).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
 });

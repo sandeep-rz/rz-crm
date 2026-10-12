@@ -104,11 +104,7 @@ function signupSecret() {
     );
   return secret;
 }
-export async function exchangeSignupCode(
-  code: string,
-  context: SignupSessionContext,
-  mode: SignupMode = 'cloud_api'
-) {
+export async function exchangeSignupAuthorization(code: string) {
   const secret = signupSecret();
   let exchanged;
   try {
@@ -139,14 +135,17 @@ export async function exchangeSignupCode(
       'Facebook did not return a business access token. Start signup again.'
     );
   const token = exchanged.access_token as string;
-  return validateSignupToken(token, context, mode);
+  return validateSignupAuthorization(token);
 }
-
-export async function validateSignupToken(
-  token: string,
+export async function exchangeSignupCode(
+  code: string,
   context: SignupSessionContext,
   mode: SignupMode = 'cloud_api'
 ) {
+  const authorized = await exchangeSignupAuthorization(code);
+  return validateSignupToken(authorized.token, context, mode, authorized);
+}
+export async function validateSignupAuthorization(token: string) {
   const { data } = await graph(
     `debug_token?input_token=${encodeURIComponent(token)}`,
     `${embeddedSignupConfig.appId}|${signupSecret()}`
@@ -166,6 +165,27 @@ export async function validateSignupToken(
       400,
       'Facebook authorization is invalid or missing required WhatsApp permissions. Start signup again.'
     );
+  return {
+    token,
+    encryptedToken: encrypt(token),
+    expiresAt: data.expires_at
+      ? new Date(data.expires_at * 1000).toISOString()
+      : null,
+  };
+}
+
+export async function validateSignupToken(
+  token: string,
+  context: SignupSessionContext,
+  mode: SignupMode = 'cloud_api',
+  existingAuthorization?: {
+    token: string;
+    encryptedToken: string;
+    expiresAt: string | null;
+  }
+) {
+  const authorization =
+    existingAuthorization ?? (await validateSignupAuthorization(token));
   const waba = await graph(`${context.waba_id}?fields=id,name`, token);
   const numbers = await listWabaPhoneNumbers({
     wabaId: context.waba_id,
@@ -196,13 +216,9 @@ export async function validateSignupToken(
     );
   return {
     context: { waba_id: context.waba_id, phone_number_id: phone.id },
-    token,
-    encryptedToken: encrypt(token),
+    ...authorization,
     wabaName: String(waba.name || context.waba_id).slice(0, 200),
     displayPhone: phone.display_phone_number,
-    expiresAt: data.expires_at
-      ? new Date(data.expires_at * 1000).toISOString()
-      : null,
   };
 }
 export async function activateSignup(

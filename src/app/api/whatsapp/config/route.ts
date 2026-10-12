@@ -158,7 +158,12 @@ export async function GET(request: Request) {
         'whatsapp_coexistence_import_summary',
         { p_account: accountId }
       );
-      if (!summaryError) importSummary = data ?? [];
+      if (summaryError)
+        return NextResponse.json(
+          { error: 'Failed to fetch import progress' },
+          { status: 503 }
+        );
+      importSummary = data ?? [];
     }
     const connections = (configs ?? []).map((row) => ({
       id: row.id,
@@ -396,13 +401,32 @@ export async function POST(request: Request) {
     let existingQuery = supabase
       .from('whatsapp_config')
       .select(
-        'id, registered_at, phone_number_id, verify_token, onboarding_metadata'
+        'id, registered_at, phone_number_id, waba_id, verify_token, onboarding_metadata'
       )
       .eq('account_id', accountId);
     existingQuery = connectionId
       ? existingQuery.eq('id', connectionId)
       : existingQuery.eq('phone_number_id', phone_number_id);
-    const { data: existing } = await existingQuery.maybeSingle();
+    const { data: existing, error: existingError } =
+      await existingQuery.maybeSingle();
+    if (existingError)
+      return NextResponse.json(
+        { error: 'Failed to validate configuration' },
+        { status: 500 }
+      );
+    if (
+      existing?.onboarding_metadata?.onboarding_mode === 'coexistence' &&
+      (existing.phone_number_id !== phone_number_id ||
+        existing.waba_id !== (waba_id || null))
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'A WhatsApp Business App connection must keep its phone and business account identity. Use Embedded Signup to connect another number.',
+        },
+        { status: 409 }
+      );
+    }
 
     if (connectionId && !existing) {
       return NextResponse.json(

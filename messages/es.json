@@ -1432,6 +1432,7 @@
       "noNodeDesc": "Selecciona un nodo en el lienzo para editar su configuración.",
       "editorView": "Vista del editor",
       "form": {
+        "bodyTextPlaceholder": "Usa '{{' para insertar variables",
         "advancesTo": "Avanza a",
         "textToCustomer": "Texto enviado al cliente",
         "promptToCustomer": "Pregunta enviada al cliente",
@@ -1714,6 +1715,9 @@
       }
     },
     "templates": {
+      "cardPreview": "Vista previa del mensaje",
+      "variablesConfigured": "Variables configuradas",
+      "needsVariableMapping": "Necesita asignación de variables",
       "title": "Plantillas de mensaje",
       "description": "Crea plantillas y envíalas a Meta para su aprobación. Usa \"Sincronizar desde Meta\" para traer plantillas aprobadas en otro lugar.",
       "syncFromMeta": "Sincronizar desde Meta",
@@ -1770,7 +1774,7 @@
       "videoHint": " MP4 o 3GPP, ≤16 MB, ≤60 segundos recomendado.",
       "documentHint": " PDF, Word, PowerPoint, Excel o texto, ≤100 MB por enlace (≤16 MB si se sube aquí).",
       "bodyText": "Texto del cuerpo",
-      "bodyPlaceholder": "Hola {{1}}, tu pedido {{2}} está confirmado.",
+      "bodyPlaceholder": "Usa '{{' para insertar variables",
       "bodyHint": "Usa {{1}}, {{2}} para las variables (deben ser contiguas empezando en {{1}}).",
       "sampleValues": "Valores de ejemplo (Meta los usa para revisar tu plantilla)",
       "sampleAria": "Valor de ejemplo para la variable del cuerpo {var}",

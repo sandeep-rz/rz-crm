@@ -1423,6 +1423,7 @@
       "noNodeDesc": "캔버스에서 노드를 선택해 설정을 편집하세요.",
       "editorView": "편집기 보기",
       "form": {
+        "bodyTextPlaceholder": "변수를 삽입하려면 '{{'를 사용하세요",
         "advancesTo": "다음 진행",
         "textToCustomer": "고객에게 전송되는 텍스트",
         "promptToCustomer": "고객에게 전송되는 질문",
@@ -1705,6 +1706,9 @@
       }
     },
     "templates": {
+      "cardPreview": "메시지 미리보기",
+      "variablesConfigured": "변수 설정 완료",
+      "needsVariableMapping": "변수 매핑 필요",
       "title": "메시지 템플릿",
       "description": "템플릿을 만들어 Meta에 승인을 요청하세요. 다른 곳에서 승인된 템플릿을 가져오려면 \"Meta에서 동기화\"를 사용하세요.",
       "syncFromMeta": "Meta에서 동기화",
@@ -1766,7 +1770,7 @@
       "documentHint": " PDF, Word, PowerPoint, Excel 또는 텍스트, 링크는 100MB 이하(여기서 업로드 시 16MB 이하).",
 
       "bodyText": "본문 텍스트",
-      "bodyPlaceholder": "안녕하세요 {{1}}님, 주문 {{2}}이(가) 확정되었습니다.",
+      "bodyPlaceholder": "변수를 삽입하려면 '{{'를 사용하세요",
       "sampleValues": "샘플 값 (Meta가 템플릿 검토에 사용합니다)",
       "bodyHint": "변수에는 {{1}}, {{2}}를 사용하세요 ({{1}}부터 연속되어야 합니다).",
       "sampleAria": "본문 변수 {var}의 샘플 값",

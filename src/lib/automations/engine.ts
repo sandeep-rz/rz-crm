@@ -315,7 +315,7 @@ export async function resumePendingExecution(pending: {
     throw new AutomationTemplateSendError('unsafe_to_retry', false);
   }
 
-  await executeStepsFrom({
+  await runResumedSteps({
     automation: automation as Automation,
     contactId: pending.contact_id,
     context,
@@ -512,7 +512,9 @@ interface ExecuteArgs {
   onMetaAccepted?: (messageId: string) => Promise<void>;
 }
 
-async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
+type ScopeOutcome = 'completed' | 'suspended' | 'failed';
+
+async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeOutcome> {
   const db = supabaseAdmin();
 
   const baseQuery = db
@@ -544,8 +546,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
     if (args.parentStepId === null && args.logId) {
       await finalizeLog(args.logId, 'success', null, args.triggerJobExecution);
     }
-    await recordWaitContinuationCompleted(args);
-    return;
+    return 'completed';
   }
 
   const results: AutomationLogStepResult[] = [];
@@ -558,36 +559,37 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
     if (step.step_type === 'wait') {
       const cfg = step.step_config as WaitStepConfig;
       const ms = waitMs(cfg);
-      await db.from('automation_pending_executions').insert({
-        automation_id: args.automation.id,
-        // Tenancy: account_id required NOT NULL post-017.
-        account_id: args.automation.account_id,
-        user_id: args.automation.user_id,
-        contact_id: args.contactId,
-        log_id: args.logId,
-        parent_step_id: args.parentStepId,
-        branch: args.branch,
-        next_step_position: step.position + 1,
-        context: args.context,
-        run_at: new Date(Date.now() + ms).toISOString(),
-        status: 'pending',
-      });
+      const { error: parkError } = await db
+        .from('automation_pending_executions')
+        .insert({
+          automation_id: args.automation.id,
+          // Tenancy: account_id required NOT NULL post-017.
+          account_id: args.automation.account_id,
+          user_id: args.automation.user_id,
+          contact_id: args.contactId,
+          log_id: args.logId,
+          parent_step_id: args.parentStepId,
+          branch: args.branch,
+          next_step_position: step.position + 1,
+          context: args.context,
+          run_at: new Date(Date.now() + ms).toISOString(),
+          status: 'pending',
+        });
+      if (parkError) throw new Error('could not persist automation wait');
       results.push({
         step_id: step.id,
         step_type: step.step_type,
         status: 'success',
         detail: `waiting ${cfg.amount} ${cfg.unit}`,
       });
-      status = 'partial';
       await appendResults(
         args.logId,
         results,
-        status,
+        args.parentStepId === null ? 'partial' : null,
         errorMessage,
         args.triggerJobExecution
       );
-      await recordWaitContinuationCompleted(args);
-      return;
+      return 'suspended';
     }
 
     try {
@@ -602,7 +604,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
         });
         // Recurse into the chosen branch at position 0 (children use their
         // own ordering within the branch scope).
-        await executeStepsFrom({
+        const branchOutcome = await executeStepsFrom({
           ...args,
           parentStepId: step.id,
           branch: taken ? 'yes' : 'no',
@@ -610,7 +612,20 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
           logId: args.logId,
           continuationId: null,
         });
-        if (args.failure?.retryable !== undefined) {
+        if (branchOutcome === 'suspended') {
+          await appendResults(
+            args.logId,
+            results,
+            args.parentStepId === null ? 'partial' : null,
+            errorMessage,
+            args.triggerJobExecution
+          );
+          return 'suspended';
+        }
+        if (
+          branchOutcome === 'failed' ||
+          args.failure?.retryable !== undefined
+        ) {
           status = 'failed';
           break;
         }
@@ -677,6 +692,48 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<void> {
       results,
       null,
       errorMessage,
+      args.triggerJobExecution
+    );
+  }
+  return status === 'failed' ? 'failed' : 'completed';
+}
+
+/** Resume the saved scope, then continue after each enclosing condition.
+ * Keep the completion marker and retry evidence attached to the entire segment,
+ * including outer scopes, so a recovered lease cannot replay their sends.
+ */
+async function runResumedSteps(args: ExecuteArgs): Promise<void> {
+  let scope = args;
+  let outcome = await executeStepsFrom(scope);
+  const visited = new Set<string>();
+  while (outcome === 'completed' && scope.parentStepId !== null) {
+    const owner = scope.parentStepId;
+    if (visited.has(owner)) throw new Error('automation wait parent cycle');
+    visited.add(owner);
+    const { data: condition, error } = await supabaseAdmin()
+      .from('automation_steps')
+      .select('id, step_type, parent_step_id, branch, position')
+      .eq('id', owner)
+      .eq('automation_id', args.automation.id)
+      .maybeSingle();
+    if (error || !condition || condition.step_type !== 'condition') {
+      throw new Error('automation wait parent condition is unavailable');
+    }
+    scope = {
+      ...scope,
+      parentStepId: condition.parent_step_id ?? null,
+      branch: condition.branch ?? null,
+      startPosition: condition.position + 1,
+    };
+    outcome = await executeStepsFrom(scope);
+  }
+  if (outcome !== 'completed' && scope.parentStepId !== null) {
+    // Nested scopes append step results but do not own the log's final status.
+    await appendResults(
+      args.logId,
+      [],
+      outcome === 'suspended' ? 'partial' : 'failed',
+      null,
       args.triggerJobExecution
     );
   }

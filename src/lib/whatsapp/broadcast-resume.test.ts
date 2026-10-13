@@ -111,6 +111,7 @@ describe('releaseBroadcastDelivery', () => {
 interface PlanFixture {
   broadcast?: Record<string, unknown> | null;
   recipients?: Record<string, unknown>[];
+  maxRows?: number;
   config?: Record<string, unknown> | null;
   templates?: Record<string, unknown>[];
 }
@@ -118,6 +119,8 @@ interface PlanFixture {
 interface PlanWrites {
   statusFilter?: unknown;
   failedIds?: unknown;
+  failedChunks?: unknown[][];
+  ranges?: [number, number][];
   failedUpdate?: Record<string, unknown>;
 }
 
@@ -125,6 +128,7 @@ function planDb(fx: PlanFixture, writes: PlanWrites = {}): SupabaseClient {
   return {
     from(table: string) {
       const predicates: Array<(row: Record<string, unknown>) => boolean> = [];
+      let window: [number, number] | null = null;
       const b: Record<string, unknown> = {
         select: () => b,
         is: (key: string) => {
@@ -142,9 +146,17 @@ function planDb(fx: PlanFixture, writes: PlanWrites = {}): SupabaseClient {
         },
         eq: () => b,
         order: () => b,
+        range: (from: number, to: number) => {
+          window = [from, to];
+          (writes.ranges ??= []).push(window);
+          return b;
+        },
         in: (col: string, vals: unknown) => {
           if (col === 'status') writes.statusFilter = vals;
-          if (col === 'id') writes.failedIds = vals;
+          if (col === 'id') {
+            writes.failedIds = vals;
+            (writes.failedChunks ??= []).push(vals as unknown[]);
+          }
           return b;
         },
         update: (row: Record<string, unknown>) => {
@@ -177,12 +189,25 @@ function planDb(fx: PlanFixture, writes: PlanWrites = {}): SupabaseClient {
           data: fx.config === undefined ? null : fx.config,
           error: null,
         }),
-        then: (resolve: (r: { data: unknown[]; error: null }) => unknown) => {
+        then: (
+          resolve: (r: {
+            data: unknown[];
+            error: null;
+            count?: number;
+          }) => unknown
+        ) => {
           if (table === 'broadcast_recipients') {
+            const rows = (fx.recipients ?? []).filter((row) =>
+              predicates.every((test) => test(row))
+            );
             return resolve({
-              data: (fx.recipients ?? []).filter((row) =>
-                predicates.every((test) => test(row))
-              ),
+              data: window
+                ? rows.slice(
+                    window[0],
+                    Math.min(window[1] + 1, window[0] + (fx.maxRows ?? 1000))
+                  )
+                : rows,
+              count: rows.length,
               error: null,
             });
           }
@@ -375,6 +400,56 @@ describe('planBroadcastResume', () => {
     expect(plan.planned).toHaveLength(RESUME_MAX_PER_REQUEST);
     // Surfaced to the caller rather than silently dropped.
     expect(remaining).toBe(25);
+  });
+
+  it.each(['pending', 'failed'] as const)(
+    'scans past a full page of invalid phones in %s scope',
+    async (scope) => {
+      const invalid = Array.from({ length: 1200 }, (_, i) =>
+        recipient(`bad-${i}`, 'invalid')
+      );
+      const good = Array.from({ length: 1300 }, (_, i) =>
+        recipient(`good-${i}`, '+1555000' + String(i).padStart(4, '0'))
+      );
+      const writes: PlanWrites = {};
+      const { plan, remaining, unsendable } = await planBroadcastResume(
+        planDb(
+          {
+            broadcast: BROADCAST,
+            config: CONFIG,
+            recipients: [...invalid, ...good],
+          },
+          writes
+        ),
+        'acct-1',
+        'bc-1',
+        scope
+      );
+      expect(plan.planned).toHaveLength(1000);
+      expect(remaining).toBe(300);
+      expect(unsendable).toBe(1200);
+      expect(writes.failedChunks?.flat()).toHaveLength(1200);
+      expect(writes.failedChunks?.every((ids) => ids.length <= 100)).toBe(true);
+    }
+  );
+
+  it('fills a bounded pass when the server row cap is lower than our page size', async () => {
+    const rows = Array.from({ length: 1400 }, (_, i) =>
+      recipient(`r-${i}`, '+1555000' + String(i).padStart(4, '0'))
+    );
+    const { plan, remaining } = await planBroadcastResume(
+      planDb({
+        broadcast: BROADCAST,
+        config: CONFIG,
+        recipients: rows,
+        maxRows: 250,
+      }),
+      'acct-1',
+      'bc-1',
+      'pending'
+    );
+    expect(plan.planned).toHaveLength(1000);
+    expect(remaining).toBe(400);
   });
 
   it('404s a broadcast that is not on this account', async () => {

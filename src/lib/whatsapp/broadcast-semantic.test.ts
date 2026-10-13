@@ -124,6 +124,7 @@ const db = {
     const q = {
       select: () => q,
       order: () => q,
+      range: () => q,
       limit: () => q,
       eq: (key: string, value: unknown) => {
         filters.push((row) => row[key] === value);

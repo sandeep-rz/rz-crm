@@ -20,6 +20,7 @@ const db = {
     reads.push(table);
     const filters: Array<(row: Row) => boolean> = [];
     let patch: Row | undefined;
+    let window: [number, number] | null = null;
     const response = () => {
       const rows = (tables[table] ?? []).filter((v) =>
         filters.every((f) => f(v))
@@ -28,10 +29,18 @@ const db = {
         rows.forEach((v) => Object.assign(v, patch));
         patch = undefined;
       }
-      return { data: rows, error: null };
+      return {
+        data: window ? rows.slice(window[0], window[1] + 1) : rows,
+        error: null,
+      };
     };
     const q = {
       select: () => q,
+      order: () => q,
+      range: (from: number, to: number) => {
+        window = [from, to];
+        return q;
+      },
       eq: (key: string, value: unknown) => {
         filters.push((v) => v[key] === value);
         return q;

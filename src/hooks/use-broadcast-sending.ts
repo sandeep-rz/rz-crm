@@ -5,29 +5,23 @@ import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { BATCH_SEND_ATTEMPTS, batchRetryDelayMs } from '@/lib/broadcast-retry';
 import { normalizeKey } from '@/lib/contacts/dedupe';
-import { Contact, MessageTemplate } from '@/types';
+import { BroadcastRecipient, Contact, MessageTemplate } from '@/types';
+import {
+  resolveAudienceContacts,
+  type AudienceConfig,
+} from '@/lib/broadcast-audience';
+import { fetchAllInChunks, fetchAllPages } from '@/lib/supabase/paged-query';
 import {
   frozenTemplateParams,
   type BroadcastVariableMappings,
   type LegacyBroadcastVariableMapping,
 } from '@/lib/broadcast-message-variables';
 
-export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
-
-export interface CustomFieldFilter {
-  fieldId: string;
-  operator: CustomFieldOperator;
-  value: string;
-}
-
-export interface AudienceConfig {
-  type: 'all' | 'tags' | 'custom_field' | 'csv';
-  tagIds?: string[];
-  customField?: CustomFieldFilter;
-  csvContacts?: { phone: string; name?: string }[];
-  /** Contacts carrying any of these tags are subtracted from the result. */
-  excludeTagIds?: string[];
-}
+export type {
+  AudienceConfig,
+  CustomFieldFilter,
+  CustomFieldOperator,
+} from '@/lib/broadcast-audience';
 
 /**
  * Variable mapping — each template placeholder (by key, usually "1",
@@ -144,23 +138,21 @@ async function fetchCustomValueIndex(
   contactIds: string[]
 ): Promise<CustomValueIndex> {
   const index: CustomValueIndex = new Map();
-  if (contactIds.length === 0) return index;
-
-  // Supabase PostgREST caps the .in(...) IN-clause roughly at 1000
-  // values. Page through to stay safe.
-  const PAGE = 500;
-  for (let i = 0; i < contactIds.length; i += PAGE) {
-    const slice = contactIds.slice(i, i + PAGE);
-    const { data } = await supabase
+  const rows = await fetchAllInChunks<
+    { contact_id: string; custom_field_id: string; value: string | null },
+    string
+  >(contactIds, (slice, from, to) =>
+    supabase
       .from('contact_custom_values')
       .select('contact_id, custom_field_id, value')
-      .in('contact_id', slice);
-
-    for (const row of data ?? []) {
-      const bucket = index.get(row.contact_id) ?? new Map<string, string>();
-      bucket.set(row.custom_field_id, row.value ?? '');
-      index.set(row.contact_id, bucket);
-    }
+      .in('contact_id', slice)
+      .order('id')
+      .range(from, to)
+  );
+  for (const row of rows) {
+    const bucket = index.get(row.contact_id) ?? new Map<string, string>();
+    bucket.set(row.custom_field_id, row.value ?? '');
+    index.set(row.contact_id, bucket);
   }
   return index;
 }
@@ -175,80 +167,9 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       throw new Error('Your profile is not linked to an account.');
     }
     const supabase = createClient();
-
-    let contacts: Contact[] = [];
-
-    if (audience.type === 'all') {
-      const { data, error } = await supabase
-        .from('contacts')
-        .select('*')
-        .eq('account_id', accountId);
-      if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-      contacts = data ?? [];
-    } else if (
-      audience.type === 'tags' &&
-      audience.tagIds &&
-      audience.tagIds.length > 0
-    ) {
-      const { data: ownedTags, error: ownedTagError } = await supabase
-        .from('tags')
-        .select('id')
-        .eq('account_id', accountId)
-        .in('id', audience.tagIds);
-      if (ownedTagError) {
-        throw new Error(`Failed to validate tags: ${ownedTagError.message}`);
-      }
-      const ownedTagIds = (ownedTags ?? []).map((tag) => tag.id);
-      if (ownedTagIds.length === 0) return [];
-      const { data: contactTags, error: tagError } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', ownedTagIds);
-
-      if (tagError)
-        throw new Error(`Failed to fetch contact tags: ${tagError.message}`);
-
-      if (contactTags && contactTags.length > 0) {
-        const uniqueContactIds = [
-          ...new Set(contactTags.map((ct) => ct.contact_id)),
-        ];
-        const { data, error } = await supabase
-          .from('contacts')
-          .select('*')
-          .eq('account_id', accountId)
-          .in('id', uniqueContactIds);
-        if (error)
-          throw new Error(`Failed to fetch contacts: ${error.message}`);
-        contacts = data ?? [];
-      }
-    } else if (audience.type === 'custom_field' && audience.customField) {
-      contacts = await resolveCustomFieldAudience(
-        supabase,
-        audience.customField
-      );
-    } else if (audience.type === 'csv' && audience.csvContacts) {
-      contacts = await upsertCsvContacts(supabase, audience.csvContacts);
-    }
-
-    // Apply exclude tags (works across all contact-derived audience
-    // types). CSV contacts are synthetic so exclusion doesn't apply.
-    if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-      const { data: ownedExcludeTags } = await supabase
-        .from('tags')
-        .select('id')
-        .eq('account_id', accountId)
-        .in('id', audience.excludeTagIds);
-      const ownedExcludeTagIds = (ownedExcludeTags ?? []).map((tag) => tag.id);
-      if (ownedExcludeTagIds.length === 0) return contacts;
-      const { data: excludeRows } = await supabase
-        .from('contact_tags')
-        .select('contact_id')
-        .in('tag_id', ownedExcludeTagIds);
-      const excludedIds = new Set((excludeRows ?? []).map((r) => r.contact_id));
-      contacts = contacts.filter((c) => !excludedIds.has(c.id));
-    }
-
-    return contacts;
+    return resolveAudienceContacts(supabase, audience, accountId, (rows) =>
+      upsertCsvContacts(supabase, rows)
+    );
   }
 
   /**
@@ -294,18 +215,18 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     }
     const keys = [...uniqueByKey.keys()];
 
-    // Single round-trip lookup of the contacts already in this ACCOUNT.
-    // Scoping to `user_id` missed rows a teammate created on a shared
-    // account, so those numbers looked new and their inserts collided
-    // with the account-wide unique index.
-    const { data: existing, error: lookupErr } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('account_id', accountId)
-      .in('phone_normalized', keys);
-    if (lookupErr) {
-      throw new Error(`Failed to look up CSV contacts: ${lookupErr.message}`);
-    }
+    // Chunk normalized numbers and page matches within the active workspace.
+    const existing = await fetchAllInChunks<Contact, string>(
+      keys,
+      (slice, from, to) =>
+        supabase
+          .from('contacts')
+          .select('*')
+          .eq('account_id', accountId)
+          .in('phone_normalized', slice)
+          .order('id')
+          .range(from, to)
+    );
 
     const byKey = new Map<string, Contact>();
     for (const c of (existing ?? []) as Contact[]) {
@@ -345,52 +266,6 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     return keys
       .map((k) => byKey.get(k))
       .filter((c): c is Contact => Boolean(c));
-  }
-
-  async function resolveCustomFieldAudience(
-    supabase: ReturnType<typeof createClient>,
-    filter: CustomFieldFilter
-  ): Promise<Contact[]> {
-    const { fieldId, operator, value } = filter;
-
-    const { data: ownedField, error: fieldError } = await supabase
-      .from('custom_fields')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('id', fieldId)
-      .maybeSingle();
-    if (fieldError) {
-      throw new Error(`Custom-field validation failed: ${fieldError.message}`);
-    }
-    if (!ownedField) return [];
-
-    // Build the WHERE clause for the operator. PostgREST supports
-    // eq/neq/ilike via the query builder — use ilike with wildcards
-    // for "contains" so the match is case-insensitive.
-    let query = supabase
-      .from('contact_custom_values')
-      .select('contact_id')
-      .eq('custom_field_id', fieldId);
-
-    if (operator === 'is') query = query.eq('value', value);
-    else if (operator === 'is_not') query = query.neq('value', value);
-    else if (operator === 'contains')
-      query = query.ilike('value', `%${value}%`);
-
-    const { data: matches, error: matchErr } = await query;
-    if (matchErr)
-      throw new Error(`Custom-field filter failed: ${matchErr.message}`);
-
-    const contactIds = [...new Set((matches ?? []).map((m) => m.contact_id))];
-    if (contactIds.length === 0) return [];
-
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('account_id', accountId)
-      .in('id', contactIds);
-    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-    return data ?? [];
   }
 
   async function createAndSendBroadcast(
@@ -597,14 +472,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       // ── Step 4: Fetch recipients back (joined contact) ────────────
       setProgress(30);
-      const { data: recipients, error: recipientsFetchError } = await supabase
-        .from('broadcast_recipients')
-        .select('*, contact:contacts(*)')
-        .eq('broadcast_id', broadcast.id);
-
-      if (recipientsFetchError || !recipients) {
-        throw new Error('Failed to fetch broadcast recipients');
-      }
+      const recipients = await fetchAllPages<BroadcastRecipient>((from, to) =>
+        supabase
+          .from('broadcast_recipients')
+          .select('*, contact:contacts(*)')
+          .eq('broadcast_id', broadcast.id)
+          .order('id')
+          .range(from, to)
+      );
 
       const pendingRecipients = recipients.filter(
         (recipient) => recipient.status === 'pending'

@@ -87,6 +87,43 @@ BEGIN
     RAISE EXCEPTION 'WhatsApp worker security boundary is missing (migration 79)';
   END IF;
 
+  -- Scoped Storage metadata access must not expose object listings to anon.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects'
+      AND cmd IN ('SELECT', 'ALL')
+      AND roles && ARRAY['public', 'anon']::name[]
+      AND (qual LIKE '%avatars%' OR qual LIKE '%flow-media%' OR qual LIKE '%chat-media%')
+  ) OR (SELECT COUNT(*) FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects' AND cmd = 'SELECT'
+      AND roles = ARRAY['authenticated']::name[]
+      AND policyname IN ('Users can read their own avatar', 'Members can read flow media', 'Members can read chat media')
+  ) <> 3 THEN
+    RAISE EXCEPTION 'scoped storage SELECT policies are missing or exposed to anon';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM unnest(ARRAY[
+      'public._bcast_bump(uuid,text,integer)',
+      'public.recompute_broadcast_counts(uuid)',
+      'public.claim_ai_reply_slot(uuid,integer)',
+      'public.record_webhook_failure(uuid,integer)'
+    ]::regprocedure[]) AS f(fn)
+    WHERE has_function_privilege('anon', f.fn, 'EXECUTE')
+      OR has_function_privilege('authenticated', f.fn, 'EXECUTE')
+      OR NOT has_function_privilege('service_role', f.fn, 'EXECUTE')
+  ) OR EXISTS (
+    SELECT 1 FROM unnest(ARRAY[
+      'public.merge_duplicate_contacts()',
+      'public.merge_duplicate_conversations()'
+    ]::regprocedure[]) AS f(fn)
+    WHERE has_function_privilege('anon', f.fn, 'EXECUTE')
+      OR has_function_privilege('authenticated', f.fn, 'EXECUTE')
+      OR has_function_privilege('service_role', f.fn, 'EXECUTE')
+  ) THEN
+    RAISE EXCEPTION 'internal function grants do not preserve the RZ runtime/dedupe boundary';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

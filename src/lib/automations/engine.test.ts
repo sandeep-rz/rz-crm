@@ -17,6 +17,8 @@ const h = vi.hoisted(() => ({
     completionRpcError: null as { message: string } | null,
     rpcCalls: [] as { name: string; args: unknown }[],
     metaSendCalls: [] as Record<string, unknown>[],
+    scopedSteps: false,
+    stepQueries: [] as [string, string, unknown][][],
     stepQueryFilters: [] as [string, string, unknown][],
     automations: [] as Record<string, unknown>[],
     steps: [] as Record<string, unknown>[],
@@ -130,8 +132,32 @@ vi.mock('./admin-client', () => {
       };
     }
     if (table === 'automation_steps') {
+      const lookup = ops.filters.find(
+        ([kind, key]) => kind === 'eq' && key === 'id'
+      );
+      if (lookup)
+        return {
+          data: state.steps.find((row) => row.id === lookup[2]) ?? null,
+          error: null,
+        };
       state.stepQueryFilters = [...ops.filters];
-      return { data: state.steps, error: null };
+      state.stepQueries.push([...ops.filters]);
+      const rows = state.scopedSteps
+        ? state.steps.filter((row) =>
+            ops.filters.every(([kind, key, value]) =>
+              kind === 'gte'
+                ? Number(row[key]) >= Number(value)
+                : kind === 'is'
+                  ? row[key] == null
+                  : row[key] === value
+            )
+          )
+        : state.steps;
+      return { data: rows, error: null };
+    }
+    if (table === 'automation_pending_executions' && type === 'insert') {
+      state.insertCalls.push({ table, payload: ops.payload });
+      return { data: null, error: null };
     }
     if (table === 'automation_pending_executions' && type === 'update') {
       state.updateCalls.push({ table, filters: ops.filters });
@@ -243,6 +269,8 @@ beforeEach(() => {
   h.state.rpcCalls = [];
   h.state.metaSendCalls = [];
   h.state.stepQueryFilters = [];
+  h.state.scopedSteps = false;
+  h.state.stepQueries = [];
   h.state.automations = [];
   h.state.steps = [];
   h.state.fromCalls = [];
@@ -651,7 +679,20 @@ describe('Wait continuation replay safety', () => {
   });
 
   it('resumes the saved branch and position before recording completion', async () => {
-    configure(updateStep());
+    configure({
+      ...updateStep(),
+      position: 3,
+      parent_step_id: 'condition-1',
+      branch: 'yes',
+    });
+    h.state.scopedSteps = true;
+    h.state.steps.push({
+      id: 'condition-1',
+      automation_id: 'a1',
+      step_type: 'condition',
+      position: 0,
+      parent_step_id: null,
+    });
 
     await resumePendingExecution(
       pending({
@@ -661,7 +702,7 @@ describe('Wait continuation replay safety', () => {
       })
     );
 
-    expect(h.state.stepQueryFilters).toEqual(
+    expect(h.state.stepQueries).toContainEqual(
       expect.arrayContaining([
         ['eq', 'automation_id', 'a1'],
         ['gte', 'position', 3],
@@ -1311,6 +1352,176 @@ describe('triggerMatches — keyword_match', () => {
     ).toBe(false);
     expect(on(automation({ keywords: ['hi'], match_type: 'word' }), '')).toBe(
       false
+    );
+  });
+});
+
+describe('nested time wait ordering', () => {
+  const step = (
+    id: string,
+    type: string,
+    position: number,
+    parent: string | null = null,
+    config: Record<string, unknown> = {}
+  ) => ({
+    id,
+    automation_id: 'a1',
+    step_type: type,
+    position,
+    parent_step_id: parent,
+    branch: parent ? 'yes' : null,
+    step_config: config,
+  });
+  const pending = (parent = 'condition-1') => ({
+    id: 'pending-nested',
+    automation_id: 'a1',
+    account_id: ACCOUNT,
+    user_id: 'u1',
+    contact_id: 'c1',
+    log_id: 'log1',
+    parent_step_id: parent,
+    branch: 'yes' as const,
+    next_step_position: 1,
+    context: { conversation_id: 'conv1' },
+  });
+  const say = (id: string, pos: number, parent: string | null = null) =>
+    step(id, 'send_message', pos, parent, { text: id });
+  const wait = (id: string, pos: number, parent: string | null = null) =>
+    step(id, 'wait', pos, parent, { amount: 1, unit: 'minutes' });
+  beforeEach(() => {
+    h.state.scopedSteps = true;
+    h.state.owned = { id: 'c1' };
+    h.state.ownedConversation = { id: 'conv1' };
+    h.state.automations = [automationWithUpdateStep()];
+  });
+  it('suspends enclosing scopes and sends branch then root steps only after resume', async () => {
+    h.state.steps = [
+      step('condition-1', 'condition', 0, null, {
+        subject: 'message_content',
+        value: 'hi',
+      }),
+      wait('wait1', 0, 'condition-1'),
+      say('inside', 1, 'condition-1'),
+      say('outside', 1),
+    ];
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { message_text: 'hi', conversation_id: 'conv1' },
+    });
+    expect(h.state.metaSendCalls).toEqual([]);
+    expect(h.state.insertCalls).toContainEqual(
+      expect.objectContaining({
+        table: 'automation_pending_executions',
+        payload: expect.objectContaining({
+          parent_step_id: 'condition-1',
+          next_step_position: 1,
+        }),
+      })
+    );
+    await resumePendingExecution(pending());
+    expect(h.state.metaSendCalls.map((c) => c.text)).toEqual([
+      'inside',
+      'outside',
+    ]);
+    expect(
+      h.state.rpcCalls.filter(
+        (c) => c.name === 'complete_automation_wait_continuation'
+      )
+    ).toHaveLength(1);
+  });
+  it('climbs through multiple conditions in order', async () => {
+    h.state.steps = [
+      step('condition-1', 'condition', 0),
+      step('condition-2', 'condition', 0, 'condition-1'),
+      say('inner', 1, 'condition-2'),
+      say('middle', 1, 'condition-1'),
+      say('root', 1),
+    ];
+    await resumePendingExecution(pending('condition-2'));
+    expect(h.state.metaSendCalls.map((c) => c.text)).toEqual([
+      'inner',
+      'middle',
+      'root',
+    ]);
+  });
+  it('stops at a second wait while climbing and completes only the old segment', async () => {
+    h.state.steps = [
+      step('condition-1', 'condition', 0),
+      say('inside', 1, 'condition-1'),
+      wait('wait2', 1),
+      say('outside', 2),
+    ];
+    await resumePendingExecution(pending());
+    expect(h.state.metaSendCalls.map((c) => c.text)).toEqual(['inside']);
+    expect(h.state.insertCalls).toContainEqual(
+      expect.objectContaining({
+        table: 'automation_pending_executions',
+        payload: expect.objectContaining({
+          parent_step_id: null,
+          next_step_position: 2,
+        }),
+      })
+    );
+    expect(
+      h.state.rpcCalls.filter(
+        (c) => c.name === 'complete_automation_wait_continuation'
+      )
+    ).toHaveLength(1);
+    h.state.completedWaitIds = ['pending-nested'];
+    await resumePendingExecution(pending());
+    expect(h.state.metaSendCalls).toHaveLength(1);
+    expect(
+      h.state.insertCalls.filter(
+        (c) => c.table === 'automation_pending_executions'
+      )
+    ).toHaveLength(1);
+  });
+  it('does not run outer steps after an inner send failure', async () => {
+    h.state.steps = [
+      step('condition-1', 'condition', 0),
+      say('inside', 1, 'condition-1'),
+      say('outside', 1),
+    ];
+    const { engineSendText } = await import('./meta-send');
+    vi.mocked(engineSendText).mockRejectedValueOnce(
+      new Error('delivery unknown')
+    );
+    await resumePendingExecution(pending());
+    expect(h.state.metaSendCalls).toEqual([]);
+    expect(h.state.logUpdates.at(-1)).toMatchObject({ status: 'failed' });
+  });
+  it('fails closed when a parent was deleted rather than declaring success', async () => {
+    h.state.steps = [];
+    await expect(resumePendingExecution(pending())).rejects.toThrow(
+      'parent condition is unavailable'
+    );
+    expect(
+      h.state.rpcCalls.filter(
+        (c) => c.name === 'complete_automation_wait_continuation'
+      )
+    ).toHaveLength(0);
+  });
+  it('retains the old pending-row acceptance marker through outer scopes', async () => {
+    h.state.steps = [step('condition-1', 'condition', 0), say('outside', 1)];
+    const { engineSendText } = await import('./meta-send');
+    vi.mocked(engineSendText).mockImplementationOnce(async (input) => {
+      await input.onBeforeMeta?.();
+      await input.onMetaAccepted?.('outer-wamid');
+      return { whatsapp_message_id: 'outer-wamid' };
+    });
+    await resumePendingExecution(pending());
+    expect(h.state.rpcCalls).toContainEqual(
+      expect.objectContaining({
+        name: 'record_automation_retry_safety',
+        args: expect.objectContaining({
+          p_pending_execution_id: 'pending-nested',
+          p_safety: expect.objectContaining({
+            provider_message_id: 'outer-wamid',
+          }),
+        }),
+      })
     );
   });
 });

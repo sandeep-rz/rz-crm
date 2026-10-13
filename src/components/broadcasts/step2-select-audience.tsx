@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { countAudience } from '@/lib/broadcast-audience';
 import { parseBroadcastCsv } from '@/lib/broadcast-csv';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -116,17 +117,6 @@ export function Step2SelectAudience({
   // Only meaningful while the rows it produced are still in play —
   // picking another audience type wipes `csvContacts`.
   const csvFileName = csvCount > 0 ? pickedCsvName : null;
-  const activeTagIds = useMemo(
-    () => new Set(tags.map((tag) => tag.id)),
-    [tags]
-  );
-  const activeCustomFieldIds = useMemo(
-    () => new Set(customFields.map((field) => field.id)),
-    [customFields]
-  );
-
-  // Tags are used both by the primary "Filter by Tags" audience type
-  // AND by the exclude-list below — so always load once on mount.
   useEffect(() => {
     async function fetchTags() {
       if (!accountId) {
@@ -176,124 +166,17 @@ export function Step2SelectAudience({
         setEstimatedCount(null);
         return;
       }
-      const supabase = createClient();
-
-      const scopeContactIds = async (ids: Iterable<string>) => {
-        const unique = [...new Set(ids)];
-        if (unique.length === 0) return new Set<string>();
-        const { data } = await supabase
-          .from('contacts')
-          .select('id')
-          .eq('account_id', accountId)
-          .in('id', unique);
-        return new Set((data ?? []).map((row) => row.id));
-      };
-
-      // Base query — produces the superset before exclude is applied.
-      let baseIds: Set<string> | null = null; // null means "all contacts"
-
-      if (audience.type === 'all') {
-        // Handled below — full-table count adjusted by excludes.
-      } else if (
-        audience.type === 'tags' &&
-        audience.tagIds &&
-        audience.tagIds.length > 0
-      ) {
-        const tagIds = audience.tagIds.filter((id) => activeTagIds.has(id));
-        if (tagIds.length === 0) {
-          setEstimatedCount(0);
-          return;
-        }
-        const { data } = await supabase
-          .from('contact_tags')
-          .select('contact_id')
-          .in('tag_id', tagIds);
-        baseIds = await scopeContactIds(
-          (data ?? []).map((row) => row.contact_id)
-        );
-      } else if (
-        audience.type === 'custom_field' &&
-        audience.customField?.fieldId &&
-        audience.customField.value
-      ) {
-        const { fieldId, operator, value } = audience.customField;
-        if (!activeCustomFieldIds.has(fieldId)) {
-          setEstimatedCount(0);
-          return;
-        }
-        let q = supabase
-          .from('contact_custom_values')
-          .select('contact_id')
-          .eq('custom_field_id', fieldId);
-        if (operator === 'is') q = q.eq('value', value);
-        else if (operator === 'is_not') q = q.neq('value', value);
-        else q = q.ilike('value', `%${value}%`);
-        const { data } = await q;
-        baseIds = await scopeContactIds(
-          (data ?? []).map((row) => row.contact_id)
-        );
-      } else if (
-        audience.type === 'csv' &&
-        audience.csvContacts &&
-        audience.csvContacts.length > 0
-      ) {
-        setEstimatedCount(audience.csvContacts.length);
-        return;
-      } else {
-        // Partially-configured audience — wait for the user to finish.
-        setEstimatedCount(null);
-        return;
-      }
-
-      // Apply exclude tags
-      let excludeSet: Set<string> | null = null;
-      if (audience.excludeTagIds && audience.excludeTagIds.length > 0) {
-        const tagIds = audience.excludeTagIds.filter((id) =>
-          activeTagIds.has(id)
-        );
-        if (tagIds.length === 0) {
-          excludeSet = new Set();
-        } else {
-          const { data: excludeRows } = await supabase
-            .from('contact_tags')
-            .select('contact_id')
-            .in('tag_id', tagIds);
-          excludeSet = await scopeContactIds(
-            (excludeRows ?? []).map((row) => row.contact_id)
-          );
-        }
-      }
-
-      if (baseIds) {
-        const effective = [...baseIds].filter((id) => !excludeSet?.has(id));
-        setEstimatedCount(effective.length);
-      } else {
-        // "All" — fetch the total, then subtract exclude set if any.
-        const { count } = await supabase
-          .from('contacts')
-          .select('*', { count: 'exact', head: true })
-          .eq('account_id', accountId);
-        const total = count ?? 0;
-        setEstimatedCount(
-          excludeSet ? Math.max(0, total - excludeSet.size) : total
-        );
-      }
+      setEstimatedCount(
+        await countAudience(createClient(), audience, accountId)
+      );
+    } catch {
+      setEstimatedCount(null);
     } finally {
       setLoadingCount(false);
     }
-  }, [
-    audience.type,
-    audience.tagIds,
-    audience.customField,
-    audience.csvContacts,
-    audience.excludeTagIds,
-    accountId,
-    activeTagIds,
-    activeCustomFieldIds,
-  ]);
+  }, [audience, accountId]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchEstimatedCount();
   }, [fetchEstimatedCount]);
 

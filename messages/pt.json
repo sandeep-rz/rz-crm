@@ -1432,6 +1432,7 @@
       "noNodeDesc": "Selecione um nó no canvas para editar sua configuração.",
       "editorView": "Visualização do editor",
       "form": {
+        "bodyTextPlaceholder": "Use '{{' para inserir variáveis",
         "advancesTo": "Avança para",
         "textToCustomer": "Texto enviado ao cliente",
         "promptToCustomer": "Pergunta enviada ao cliente",
@@ -1714,6 +1715,9 @@
       }
     },
     "templates": {
+      "cardPreview": "Prévia da mensagem",
+      "variablesConfigured": "Variáveis configuradas",
+      "needsVariableMapping": "Precisa mapear variáveis",
       "title": "Modelos de mensagem",
       "description": "Crie modelos e envie-os à Meta para aprovação. Use \"Sincronizar da Meta\" para importar modelos aprovados em outro lugar.",
       "syncFromMeta": "Sincronizar da Meta",
@@ -1770,7 +1774,7 @@
       "videoHint": " MP4 ou 3GPP, ≤16 MB, ≤60 segundos recomendado.",
       "documentHint": " PDF, Word, PowerPoint, Excel ou texto, ≤100 MB via link (≤16 MB quando enviado aqui).",
       "bodyText": "Texto do corpo",
-      "bodyPlaceholder": "Olá {{1}}, seu pedido {{2}} foi confirmado.",
+      "bodyPlaceholder": "Use '{{' para inserir variáveis",
       "bodyHint": "Use {{1}}, {{2}} para variáveis (devem ser contíguas, começando em {{1}}).",
       "sampleValues": "Valores de exemplo (a Meta os usa para analisar seu modelo)",
       "sampleAria": "Valor de exemplo para a variável do corpo {var}",

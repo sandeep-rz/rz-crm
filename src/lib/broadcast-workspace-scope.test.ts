@@ -42,10 +42,9 @@ describe('Broadcast active-workspace query guardrails', () => {
     expect(step2).toMatch(
       /from\('custom_fields'\)[\s\S]*?select\('\*'\)[\s\S]*?eq\('account_id', accountId\)/
     );
-    expect(step2).toMatch(
-      /from\('contacts'\)[\s\S]*?select\('\*', \{ count: 'exact', head: true \}\)[\s\S]*?eq\('account_id', accountId\)/
+    expect(step2).toContain(
+      'countAudience(createClient(), audience, accountId)'
     );
-    expect(step2).toContain('scopeContactIds');
   });
 
   it('scopes Step 3 custom-field options to the active account', () => {
@@ -55,26 +54,15 @@ describe('Broadcast active-workspace query guardrails', () => {
   });
 
   it('scopes Step 4 reach estimates to active-account tags and contacts', () => {
-    expect(step4).toMatch(
-      /from\('tags'\)[\s\S]*?eq\('account_id', accountId\)[\s\S]*?in\('id', audience\.tagIds\)/
-    );
-    expect(step4).toMatch(
-      /from\('contacts'\)[\s\S]*?eq\('account_id', accountId\)/
+    expect(step4).toContain(
+      'countAudience(createClient(), audience, accountId)'
     );
   });
 
   it('scopes final audiences and validates tag/custom-field ownership', () => {
-    expect(
-      sending.match(/\.eq\('account_id', accountId\)/g)?.length
-    ).toBeGreaterThanOrEqual(7);
+    expect(sending).toContain('resolveAudienceContacts');
     expect(sending).toMatch(
-      /from\('tags'\)[\s\S]*?eq\('account_id', accountId\)[\s\S]*?in\('id', audience\.tagIds\)/
-    );
-    expect(sending).toMatch(
-      /from\('custom_fields'\)[\s\S]*?eq\('account_id', accountId\)[\s\S]*?eq\('id', fieldId\)/
-    );
-    expect(sending).toMatch(
-      /from\('contacts'\)[\s\S]*?eq\('account_id', accountId\)[\s\S]*?in\('id', contactIds\)/
+      /resolveAudienceContacts\([\s\S]*?audience,[\s\S]*?accountId,/
     );
   });
 

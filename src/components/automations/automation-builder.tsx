@@ -1,5 +1,6 @@
 'use client';
 
+import { TimePicker, TimeRangePicker } from '@/components/ui/time-picker';
 import { validateTemplateActions } from '@/lib/automations/validate';
 
 import type {
@@ -1332,16 +1333,13 @@ function PmsTriggerConfigFields({
             />
           )}
           <FieldBlock label={t('pms.sendAt')}>
-            <Input
-              type="time"
+            <TimePicker
+              label={t('pms.sendAt')}
               value={config.local_time ?? ''}
-              onChange={(event) =>
-                setOptionalField('local_time', event.target.value)
-              }
-              aria-describedby={
+              onChange={(value) => setOptionalField('local_time', value)}
+              describedBy={
                 !config.local_time ? 'pms-send-time-help' : undefined
               }
-              className="bg-muted text-foreground"
             />
             {!config.local_time && (
               <p
@@ -2251,22 +2249,27 @@ function StepEditor({
               </option>
             </select>
           </FieldBlock>
-          <FieldBlock label={t('config.operandLabel')}>
-            <Input
-              placeholder={
-                cfg.subject === 'time_of_day'
-                  ? t('config.placeholderTime')
-                  : cfg.subject === 'contact_field'
+          {cfg.subject === 'time_of_day' ? (
+            <TimeRangePicker
+              value={(cfg.operand as string) ?? ''}
+              onChange={(operand) => set({ operand })}
+            />
+          ) : (
+            <FieldBlock label={t('config.operandLabel')}>
+              <Input
+                placeholder={
+                  cfg.subject === 'contact_field'
                     ? t('config.placeholderContact')
                     : cfg.subject === 'tag_presence'
                       ? t('config.placeholderTag')
                       : ''
-              }
-              value={(cfg.operand as string) ?? ''}
-              onChange={(e) => set({ operand: e.target.value })}
-              className="bg-muted text-foreground"
-            />
-          </FieldBlock>
+                }
+                value={(cfg.operand as string) ?? ''}
+                onChange={(e) => set({ operand: e.target.value })}
+                className="bg-muted text-foreground"
+              />
+            </FieldBlock>
+          )}
           {(cfg.subject === 'contact_field' ||
             cfg.subject === 'message_content') && (
             <FieldBlock label={t('config.valueLabel')}>

@@ -234,6 +234,18 @@ function validateOne(
           message: 'condition operand is required',
         });
       }
+      if (
+        c.subject === 'time_of_day' &&
+        nonEmpty(c.operand) &&
+        !/^(?:[01]\d|2[0-3]):[0-5]\d\s*[-–—]\s*(?:[01]\d|2[0-3]):[0-5]\d$/.test(
+          String(c.operand).trim()
+        )
+      ) {
+        issues.push({
+          path: `${path}.operand`,
+          message: 'Select both start and end times',
+        });
+      }
       break;
     case 'send_webhook':
       if (!nonEmpty(c.url)) {

@@ -448,3 +448,32 @@ describe('PMS property timezone activation validation', () => {
     ).resolves.toEqual([]);
   });
 });
+
+describe('time picker ranges on activation', () => {
+  it.each(['18:00-', '-09:00', '25:00-09:00'])(
+    'rejects incomplete or invalid selections: %s',
+    (operand) => {
+      expect(
+        validateStepsForActivation([
+          {
+            step_type: 'condition',
+            step_config: { subject: 'time_of_day', operand },
+          },
+        ])
+      ).toContainEqual(expect.objectContaining({ path: 'steps[0].operand' }));
+    }
+  );
+  it.each(['18:00-09:00', '18:07–09:13'])(
+    'accepts overnight ranges and existing saved values: %s',
+    (operand) => {
+      expect(
+        validateStepsForActivation([
+          {
+            step_type: 'condition',
+            step_config: { subject: 'time_of_day', operand },
+          },
+        ])
+      ).toEqual([]);
+    }
+  );
+});

@@ -2337,5 +2337,13 @@
   },
   "DashboardShell": {
     "loading": "Cargando..."
+  },
+  "TimePicker": {
+    "from": "Desde",
+    "to": "Hasta",
+    "overnight": "Termina al día siguiente.",
+    "sameTime": "Elige horas de inicio y fin diferentes.",
+    "chooseTime": "Seleccionar hora…",
+    "noTimes": "No hay horas coincidentes"
   }
 }

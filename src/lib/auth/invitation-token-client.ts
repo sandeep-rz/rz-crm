@@ -16,16 +16,20 @@ export async function hashInviteTokenForSignup(token: string): Promise<string> {
 
 export interface SignupMetadata {
   full_name: string;
+  default_timezone?: string;
+  default_currency?: string;
   crm_invite_token_hash?: string;
 }
 
 /** Build auth metadata without ever including the plaintext invite token. */
 export async function buildSignupMetadata(
   fullName: string,
-  inviteToken: string | null
+  inviteToken: string | null,
+  defaults?: { default_timezone: string; default_currency: string }
 ): Promise<SignupMetadata> {
   return {
     full_name: fullName,
+    ...defaults,
     ...(inviteToken
       ? { crm_invite_token_hash: await hashInviteTokenForSignup(inviteToken) }
       : {}),

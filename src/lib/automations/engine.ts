@@ -25,6 +25,7 @@ import {
   type RetrySafety,
 } from './retry-safety';
 import { supabaseAdmin } from './admin-client';
+import { isWithinTimeWindow } from './time-window';
 import {
   addContactTagIfAbsent,
   removeContactTag,
@@ -1363,19 +1364,24 @@ async function evaluateCondition(
       return text.toLowerCase().includes((cfg.value ?? '').toLowerCase());
     }
     case 'time_of_day': {
-      // operand form "HH:mm-HH:mm" — true if now is within that window
-      // (supports over-midnight ranges like "18:00-09:00").
-      const [from, to] = (cfg.operand ?? '').split('-');
-      if (!from || !to) return false;
-      const now = new Date();
-      const mins = now.getHours() * 60 + now.getMinutes();
-      const parse = (s: string) => {
-        const [h, m] = s.split(':').map(Number);
-        return (h || 0) * 60 + (m || 0);
-      };
-      const f = parse(from);
-      const t = parse(to);
-      return f <= t ? mins >= f && mins < t : mins >= f || mins < t;
+      let timezone: string | null;
+      if (args.context.reservation) {
+        // Reservation conditions use the property's zone, never the workspace.
+        timezone = args.context.reservation.property_timezone;
+      } else {
+        // Read when executing, including resumed waits, so a Settings change
+        // applies without rewriting saved automations or pending jobs.
+        const { data: account, error } = await db
+          .from('accounts')
+          .select('default_timezone')
+          .eq('id', args.automation.account_id)
+          .maybeSingle();
+        if (error || !account)
+          throw new Error('Automation timezone lookup failed');
+        timezone = account.default_timezone;
+      }
+      if (!timezone) throw new Error('Automation timezone is not configured');
+      return isWithinTimeWindow(cfg.operand ?? '', timezone);
     }
     case 'property':
       return Boolean(

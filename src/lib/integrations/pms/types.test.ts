@@ -73,3 +73,32 @@ describe('Rukiye Zara provisioning retired fields', () => {
     ).toBe(false);
   });
 });
+
+describe('owner workspace defaults', () => {
+  it('preserves owner timezone independently from property timezone', () => {
+    expect(
+      validateProvisionRequest({
+        ...request,
+        owner: { ...request.owner, timezone: 'Europe/London', currency: 'GBP' },
+        property: { ...request.property, timezone: 'Asia/Kolkata' },
+      })
+    ).toMatchObject({
+      success: true,
+      data: {
+        owner: { timezone: 'Europe/London', currency: 'GBP' },
+        property: { timezone: 'Asia/Kolkata' },
+      },
+    });
+  });
+  it.each([{ timezone: 'invalid' }, { currency: 'invalid' }])(
+    'rejects invalid owner defaults',
+    (defaults) => {
+      expect(
+        validateProvisionRequest({
+          ...request,
+          owner: { ...request.owner, ...defaults },
+        }).success
+      ).toBe(false);
+    }
+  );
+});

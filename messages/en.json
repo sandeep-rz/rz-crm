@@ -1969,7 +1969,7 @@
       "templates": "Templates",
       "quick-replies": "Quick replies",
       "fields": "Fields & tags",
-      "deals": "Deals & currency",
+      "deals": "Deals, currency & timezone",
       "members": "Team members",
       "api": "API keys"
     },
@@ -2108,16 +2108,20 @@
       "networkError": "Could not reach the server"
     },
     "deals": {
-      "title": "Deals & currency",
-      "description": "The currency used for new deals and for pipeline and dashboard totals.",
+      "title": "Deals, currency & timezone",
+      "description": "Default currency and timezone for this workspace.",
       "defaultCurrency": "Default currency",
       "defaultCurrencyDesc": "New deals default to this currency, and pipeline and dashboard totals are shown in it. Existing deals keep the currency they were saved with.",
       "currencyLabel": "Currency",
-      "adminOnlyHint": "Only account admins can change the default currency.",
+      "adminOnlyHint": "Only account admins can change currency and timezone.",
       "save": "Save",
       "saving": "Saving...",
-      "saveFailed": "Failed to save default currency",
-      "saveSuccess": "Default currency updated"
+      "saveFailed": "Failed to save workspace defaults",
+      "saveSuccess": "Workspace defaults updated",
+      "timezoneLabel": "Workspace timezone",
+      "timezoneSearch": "Search timezone…",
+      "timezoneNoResults": "No matching timezones",
+      "timezoneDesc": "Shared by everyone in this workspace. You can change it at any time."
     },
     "aiConfig": {
       "title": "Agent setup",

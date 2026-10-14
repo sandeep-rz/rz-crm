@@ -44,6 +44,7 @@ interface AccountSummary {
   /** Default deal currency (ISO-4217). NOT NULL DEFAULT 'USD' in the
    *  DB (migration 021); narrowed to DEFAULT_CURRENCY when absent. */
   default_currency: string;
+  default_timezone: string;
 }
 
 /**
@@ -118,6 +119,7 @@ interface AuthContextValue {
    *  while loading or when no account is resolved, so callers can use
    *  it unconditionally. */
   defaultCurrency: string;
+  defaultTimezone: string;
   /** True if `accountRole === 'owner'`. */
   isOwner: boolean;
   /** True if `accountRole === 'admin'` (does NOT include owner — use canManageMembers for "admin or above"). */
@@ -256,7 +258,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .from('accounts')
             // default_currency added in migration 021; narrowed to the
             // USD fallback below for older schemas where it reads null.
-            .select('id, name, default_currency')
+            .select('id, name, default_currency, default_timezone')
             .eq('id', data.account_id)
             .maybeSingle();
           if (accountErr) {
@@ -271,6 +273,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               id: account.id,
               name: account.name,
               default_currency: account.default_currency ?? DEFAULT_CURRENCY,
+              default_timezone: account.default_timezone ?? 'UTC',
             };
           }
         }
@@ -571,6 +574,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         createWorkspace,
         creatingWorkspace,
         defaultCurrency: account?.default_currency ?? DEFAULT_CURRENCY,
+        defaultTimezone: account?.default_timezone ?? 'UTC',
         accountStatus,
         accountStatusDetail: statusDetail,
         ...derived,
@@ -608,6 +612,7 @@ export function useAuth(): AuthContextValue {
       createWorkspace: async () => {},
       creatingWorkspace: false,
       defaultCurrency: DEFAULT_CURRENCY,
+      defaultTimezone: 'UTC',
       // Outside the provider there is nothing to resolve yet — 'loading'
       // keeps the access alert from firing on, say, the login page.
       accountStatus: 'loading',

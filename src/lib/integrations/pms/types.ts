@@ -1,3 +1,5 @@
+import { isTimezone } from '@/lib/workspace-defaults';
+import { CURRENCIES } from '@/lib/currency';
 export const RUKIYE_ZARA_PROVIDER = 'rukiye_zara' as const;
 
 const UUID_PATTERN =
@@ -18,6 +20,8 @@ export interface RukiyeZaraProvisionRequest {
     external_user_id: string;
     email: string;
     display_name: string;
+    timezone?: string;
+    currency?: string;
   };
   property: {
     external_property_id: string;
@@ -106,7 +110,13 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
   }
 
   if (
-    !hasOnlyKeys(value.owner, ['external_user_id', 'email', 'display_name'])
+    !hasOnlyKeys(value.owner, [
+      'external_user_id',
+      'email',
+      'display_name',
+      'timezone',
+      'currency',
+    ])
   ) {
     return { success: false, message: 'Owner contains unsupported fields.' };
   }
@@ -173,6 +183,23 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
   );
   if (displayName.error) return { success: false, message: displayName.error };
 
+  if (value.owner.timezone !== undefined && !isTimezone(value.owner.timezone)) {
+    return {
+      success: false,
+      message: 'owner.timezone must be a valid IANA timezone.',
+    };
+  }
+  const ownerCurrency = value.owner.currency;
+  if (
+    ownerCurrency !== undefined &&
+    !CURRENCIES.some((c) => c.code === ownerCurrency)
+  ) {
+    return {
+      success: false,
+      message: 'owner.currency must be a supported currency code.',
+    };
+  }
+
   const externalPropertyId = normalizedString(
     value.property.external_property_id,
     'property.external_property_id',
@@ -221,6 +248,12 @@ export function validateProvisionRequest(value: unknown): ValidationResult {
         external_user_id: externalUserId.value!,
         email: normalizedEmail,
         display_name: displayName.value!,
+        ...(typeof value.owner.timezone === 'string'
+          ? { timezone: value.owner.timezone }
+          : {}),
+        ...(typeof value.owner.currency === 'string'
+          ? { currency: value.owner.currency }
+          : {}),
       },
       property: {
         external_property_id: externalPropertyId.value!,

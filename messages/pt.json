@@ -1959,7 +1959,7 @@
       "templates": "Modelos",
       "quick-replies": "Respostas rápidas",
       "fields": "Campos e tags",
-      "deals": "Negócios e moeda",
+      "deals": "Negócios, moeda e fuso horário",
       "members": "Membros da equipe",
       "api": "Chaves de API"
     },
@@ -2096,16 +2096,20 @@
       "networkError": "Não foi possível conectar ao servidor"
     },
     "deals": {
-      "title": "Negócios e moeda",
-      "description": "A moeda usada em novos negócios e nos totais do pipeline e do painel.",
+      "title": "Negócios, moeda e fuso horário",
+      "description": "Moeda e fuso horário padrão deste espaço de trabalho.",
       "defaultCurrency": "Moeda padrão",
       "defaultCurrencyDesc": "Novos negócios usam esta moeda por padrão, e os totais do pipeline e do painel são exibidos nela. Negócios existentes mantêm a moeda com que foram salvos.",
       "currencyLabel": "Moeda",
-      "adminOnlyHint": "Somente administradores da conta podem alterar a moeda padrão.",
+      "adminOnlyHint": "Somente administradores podem alterar moeda e fuso horário.",
       "save": "Salvar",
       "saving": "Salvando...",
-      "saveFailed": "Falha ao salvar a moeda padrão",
-      "saveSuccess": "Moeda padrão atualizada"
+      "saveFailed": "Falha ao salvar preferências",
+      "saveSuccess": "Preferências atualizadas",
+      "timezoneLabel": "Fuso horário do espaço de trabalho",
+      "timezoneSearch": "Pesquisar fuso horário…",
+      "timezoneNoResults": "Nenhum fuso horário encontrado",
+      "timezoneDesc": "Compartilhado por todos neste espaço de trabalho. Pode ser alterado a qualquer momento."
     },
     "aiConfig": {
       "title": "Configuração do agente",

@@ -1,5 +1,7 @@
 'use client';
 
+import { browserWorkspaceDefaults } from '@/lib/workspace-defaults';
+
 import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -82,7 +84,11 @@ function SignupPageInner() {
       // Migration 045 validates this digest against a real pending invite
       // before suppressing personal-workspace bootstrap. Never store the
       // plaintext invitation token in auth user metadata.
-      const metadata = await buildSignupMetadata(fullName, inviteToken);
+      const metadata = await buildSignupMetadata(
+        fullName,
+        inviteToken,
+        browserWorkspaceDefaults()
+      );
 
       const { error } = await supabase.auth.signUp({
         email,

@@ -36,3 +36,13 @@ describe('hashInviteTokenForSignup', () => {
     expect(JSON.stringify(metadata)).not.toContain(token);
   });
 });
+
+it('includes signup preferences without exposing the invitation token', async () => {
+  const defaults = {
+    default_timezone: 'Asia/Kolkata',
+    default_currency: 'INR',
+  };
+  const metadata = await buildSignupMetadata('Owner', 'secret', defaults);
+  expect(metadata).toMatchObject(defaults);
+  expect(JSON.stringify(metadata)).not.toContain('secret');
+});

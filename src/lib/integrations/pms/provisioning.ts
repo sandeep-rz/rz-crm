@@ -1,3 +1,4 @@
+import { workspaceDefaults } from '@/lib/workspace-defaults';
 import { randomBytes } from 'node:crypto';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -33,6 +34,8 @@ export interface PropertyRecord {
 export interface CreateAuthUserInput {
   email: string;
   displayName: string;
+  timezone?: string;
+  currency?: string;
 }
 
 export interface CreateIdentityInput {
@@ -151,6 +154,7 @@ export class SupabasePmsProvisioningStore implements PmsProvisioningStore {
       password,
       email_confirm: true,
       user_metadata: {
+        ...workspaceDefaults(input.timezone, input.currency),
         display_name: input.displayName,
         full_name: input.displayName,
         source: RUKIYE_ZARA_PROVIDER,
@@ -365,6 +369,8 @@ async function resolveIdentity(
     newUserId = await store.createAuthUser({
       email: request.owner.email,
       displayName: request.owner.display_name,
+      ...(request.owner.timezone ? { timezone: request.owner.timezone } : {}),
+      ...(request.owner.currency ? { currency: request.owner.currency } : {}),
     });
   } catch (error) {
     if (error instanceof IdentityClaimRequiredError) {

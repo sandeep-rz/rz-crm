@@ -1,9 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Shared mock state for the service-role client. Lives in a hoisted block
 // so the vi.mock factory below can close over it.
 const h = vi.hoisted(() => ({
   state: {
+    workspaceTimezone: 'Asia/Kolkata' as string | null,
+    timezoneLookupError: false,
+    accountFilters: [] as [string, string, unknown][][],
     owned: null as { id: string } | null,
     ownedCustomField: null as { id: string } | null,
     ownedPipeline: null as { id: string } | null,
@@ -75,8 +78,16 @@ vi.mock('./admin-client', () => {
       return { data: state.ownedStage, error: null };
     if (table === 'account_members')
       return { data: state.membership, error: null };
-    if (table === 'accounts')
-      return { data: { default_currency: 'INR' }, error: null };
+    if (table === 'accounts') {
+      state.accountFilters.push(ops.filters);
+      return {
+        data: {
+          default_currency: 'INR',
+          default_timezone: state.workspaceTimezone,
+        },
+        error: state.timezoneLookupError ? { message: 'lookup failed' } : null,
+      };
+    }
     if (table === 'deals' && type === 'insert') {
       state.insertCalls.push({ table, payload: ops.payload });
       return { data: null, error: null };
@@ -255,6 +266,9 @@ import type { Automation, KeywordMatchTriggerConfig } from '@/types';
 const ACCOUNT = 'acct-1';
 
 beforeEach(() => {
+  h.state.workspaceTimezone = 'Asia/Kolkata';
+  h.state.timezoneLookupError = false;
+  h.state.accountFilters = [];
   h.state.owned = null;
   h.state.ownedCustomField = null;
   h.state.ownedPipeline = null;
@@ -1524,4 +1538,105 @@ describe('nested time wait ordering', () => {
       })
     );
   });
+});
+
+describe('workspace timezone message routing', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-14T08:00:00Z')); // 13:30 IST
+    h.state.scopedSteps = true;
+    h.state.owned = { id: 'c1' };
+    h.state.ownedConversation = { id: 'conv1' };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [
+      {
+        id: 'hours',
+        automation_id: 'a1',
+        step_type: 'condition',
+        position: 0,
+        parent_step_id: null,
+        step_config: { subject: 'time_of_day', operand: '18:00-09:00' },
+      },
+      ...(['yes', 'no'] as const).map((branch) => ({
+        id: branch,
+        automation_id: 'a1',
+        step_type: 'send_message',
+        position: 0,
+        parent_step_id: 'hours',
+        branch,
+        step_config: { text: branch },
+      })),
+    ];
+  });
+  afterEach(() => vi.useRealTimers());
+  const dispatch = () =>
+    runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'new_message_received',
+      contactId: 'c1',
+      context: { conversation_id: 'conv1' },
+    });
+  it('routes using the saved workspace timezone and scopes the read to that account', async () => {
+    await dispatch();
+    expect(h.state.metaSendCalls.map((c) => c.text)).toEqual(['no']);
+    expect(h.state.accountFilters).toContainEqual([['eq', 'id', ACCOUNT]]);
+  });
+  it('picks up a timezone settings change without editing the automation', async () => {
+    h.state.workspaceTimezone = 'Europe/London';
+    await dispatch();
+    expect(h.state.metaSendCalls.map((c) => c.text)).toEqual(['no']); // 09:00 BST
+    h.state.workspaceTimezone = 'America/New_York';
+    await dispatch();
+    expect(h.state.metaSendCalls.map((c) => c.text)).toEqual(['no', 'yes']); // 04:00 EDT
+  });
+  it('reads the current timezone after a wait resumes', async () => {
+    h.state.workspaceTimezone = 'America/New_York';
+    await resumePendingExecution({
+      id: 'wait-timezone',
+      automation_id: 'a1',
+      account_id: ACCOUNT,
+      user_id: 'u1',
+      contact_id: 'c1',
+      log_id: 'log1',
+      parent_step_id: null,
+      branch: null,
+      next_step_position: 0,
+      context: { conversation_id: 'conv1' },
+    });
+    expect(h.state.metaSendCalls.map((c) => c.text)).toEqual(['yes']);
+  });
+  it('uses the PMS property timezone for reservation conditions, without reading workspace preferences', async () => {
+    h.state.workspaceTimezone = 'Asia/Kolkata';
+    h.state.automations[0].trigger_type = 'reservation_confirmed';
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: 'reservation_confirmed',
+      contactId: 'c1',
+      context: {
+        conversation_id: 'conv1',
+        reservation: {
+          property_id: 'property-1',
+          reservation_status: 'confirmed',
+          property_timezone: 'America/New_York',
+          channel: 'direct',
+        } as never,
+      },
+    });
+    expect(h.state.metaSendCalls.map((c) => c.text)).toEqual(['yes']);
+    expect(h.state.accountFilters).toEqual([]);
+  });
+
+  it.each(['error', 'missing', 'invalid'])(
+    'does not send either branch on %s timezone configuration',
+    async (kind) => {
+      h.state.timezoneLookupError = kind === 'error';
+      h.state.workspaceTimezone =
+        kind === 'missing' ? null : kind === 'invalid' ? 'bad' : 'Asia/Kolkata';
+      await dispatch();
+      expect(h.state.metaSendCalls).toEqual([]);
+      expect(h.state.logUpdates.some((log) => log.status === 'failed')).toBe(
+        true
+      );
+    }
+  );
 });

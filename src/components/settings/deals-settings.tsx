@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import TimezoneSelect from 'react-timezone-select';
 import { toast } from 'sonner';
 import { Coins, Loader2 } from 'lucide-react';
 
@@ -20,11 +21,11 @@ import { useTranslations } from 'next-intl';
 import { SettingsPanelHead } from './settings-panel-head';
 
 /**
- * Deals settings — account-wide default currency.
+ * Workspace currency and timezone preferences.
  *
  * One currency per account (issue #218): the chosen code seeds new
  * deals and formats every aggregated total. Existing deals keep their
- * own saved currency. Writes go straight to `accounts.default_currency`;
+ * own saved currency. Both preferences are stored on `accounts`;
  * the `accounts_update` RLS policy (017) already restricts that to
  * admins+, so non-admins see a disabled, read-only control.
  */
@@ -33,12 +34,14 @@ export function DealsSettings() {
   const {
     accountId,
     defaultCurrency,
+    defaultTimezone,
     canEditSettings,
     profileLoading,
     refreshProfile,
   } = useAuth();
 
   const [selected, setSelected] = useState(defaultCurrency);
+  const [timezone, setTimezone] = useState(defaultTimezone);
   const [saving, setSaving] = useState(false);
   const t = useTranslations('Settings.deals');
 
@@ -48,14 +51,18 @@ export function DealsSettings() {
     setSelected(defaultCurrency);
   }, [defaultCurrency]);
 
-  const dirty = selected !== defaultCurrency;
+  useEffect(() => {
+    setTimezone(defaultTimezone);
+  }, [defaultTimezone]);
+
+  const dirty = selected !== defaultCurrency || timezone !== defaultTimezone;
 
   async function handleSave() {
     if (!accountId || !dirty) return;
     setSaving(true);
     const { error } = await supabase
       .from('accounts')
-      .update({ default_currency: selected })
+      .update({ default_currency: selected, default_timezone: timezone })
       .eq('id', accountId);
     if (error) {
       toast.error(t('saveFailed'));
@@ -72,7 +79,7 @@ export function DealsSettings() {
   return (
     <section className="animate-in fade-in-50 max-w-2xl duration-200">
       <SettingsPanelHead title={t('title')} description={t('description')} />
-      <Card>
+      <Card className="overflow-visible">
         <CardHeader>
           <CardTitle className="text-foreground flex items-center gap-2">
             <Coins className="text-primary size-4" />
@@ -104,6 +111,52 @@ export function DealsSettings() {
                 {t('adminOnlyHint')}
               </p>
             )}
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="workspace-timezone">{t('timezoneLabel')}</Label>
+            <TimezoneSelect
+              inputId="workspace-timezone"
+              instanceId="workspace-timezone"
+              value={timezone}
+              onChange={(option) => setTimezone(option.value)}
+              isDisabled={!canEditSettings || profileLoading || saving}
+              isSearchable
+              menuPlacement="auto"
+              displayValue="UTC"
+              placeholder={t('timezoneSearch')}
+              noOptionsMessage={() => t('timezoneNoResults')}
+              styles={{
+                control: (base) => ({
+                  ...base,
+                  background: 'var(--muted)',
+                  borderColor: 'var(--border)',
+                  color: 'var(--foreground)',
+                }),
+                menu: (base) => ({
+                  ...base,
+                  background: 'var(--popover)',
+                  zIndex: 20,
+                }),
+                singleValue: (base) => ({
+                  ...base,
+                  color: 'var(--foreground)',
+                }),
+                input: (base) => ({ ...base, color: 'var(--foreground)' }),
+                option: (base, state) => ({
+                  ...base,
+                  background: state.isSelected
+                    ? 'var(--primary)'
+                    : state.isFocused
+                      ? 'var(--muted)'
+                      : 'transparent',
+                  color: state.isSelected
+                    ? 'var(--primary-foreground)'
+                    : 'var(--foreground)',
+                }),
+              }}
+            />
+            <p className="text-muted-foreground text-xs">{t('timezoneDesc')}</p>
           </div>
 
           {canEditSettings && (

@@ -1960,7 +1960,7 @@
       "templates": "템플릿",
       "quick-replies": "빠른 답장",
       "fields": "필드 & 태그",
-      "deals": "딜 & 통화",
+      "deals": "거래, 통화 및 시간대",
       "members": "팀원",
       "api": "API 키"
     },
@@ -2099,16 +2099,20 @@
       "networkError": "서버에 연결할 수 없습니다"
     },
     "deals": {
-      "title": "딜 & 통화",
-      "description": "새 딜과 파이프라인, 대시보드 합계에 사용되는 통화입니다.",
+      "title": "거래, 통화 및 시간대",
+      "description": "이 워크스페이스의 기본 통화 및 시간대입니다.",
       "defaultCurrency": "기본 통화",
       "defaultCurrencyDesc": "새 딜은 이 통화를 기본값으로 사용하며, 파이프라인과 대시보드 합계도 이 통화로 표시됩니다. 기존 딜은 저장 당시의 통화를 그대로 유지합니다.",
       "currencyLabel": "통화",
-      "adminOnlyHint": "계정 관리자만 기본 통화를 변경할 수 있습니다.",
+      "adminOnlyHint": "관리자만 통화 및 시간대를 변경할 수 있습니다.",
       "save": "저장",
       "saving": "저장 중...",
-      "saveFailed": "기본 통화를 저장하지 못했습니다",
-      "saveSuccess": "기본 통화가 업데이트되었습니다"
+      "saveFailed": "기본 설정을 저장하지 못했습니다",
+      "saveSuccess": "기본 설정이 업데이트되었습니다",
+      "timezoneLabel": "워크스페이스 시간대",
+      "timezoneSearch": "시간대 검색…",
+      "timezoneNoResults": "일치하는 시간대가 없습니다",
+      "timezoneDesc": "워크스페이스의 모든 사용자에게 적용됩니다. 언제든지 변경할 수 있습니다."
     },
     "aiConfig": {
       "title": "에이전트 설정",

@@ -1959,7 +1959,7 @@
       "templates": "Plantillas",
       "quick-replies": "Respuestas rápidas",
       "fields": "Campos y etiquetas",
-      "deals": "Negocios y moneda",
+      "deals": "Negocios, moneda y zona horaria",
       "members": "Miembros del equipo",
       "api": "Claves de API"
     },
@@ -2096,16 +2096,20 @@
       "networkError": "No se pudo conectar con el servidor"
     },
     "deals": {
-      "title": "Negocios y moneda",
-      "description": "La moneda que se usa para los nuevos negocios y para los totales del pipeline y del panel.",
+      "title": "Negocios, moneda y zona horaria",
+      "description": "Moneda y zona horaria predeterminadas del espacio de trabajo.",
       "defaultCurrency": "Moneda predeterminada",
       "defaultCurrencyDesc": "Los nuevos negocios usan esta moneda por defecto, y los totales del pipeline y del panel se muestran en ella. Los negocios existentes conservan la moneda con la que se guardaron.",
       "currencyLabel": "Moneda",
-      "adminOnlyHint": "Solo los administradores de la cuenta pueden cambiar la moneda predeterminada.",
+      "adminOnlyHint": "Solo los administradores pueden cambiar la moneda y la zona horaria.",
       "save": "Guardar",
       "saving": "Guardando...",
-      "saveFailed": "Error al guardar la moneda predeterminada",
-      "saveSuccess": "Moneda predeterminada actualizada"
+      "saveFailed": "No se pudieron guardar las preferencias",
+      "saveSuccess": "Preferencias actualizadas",
+      "timezoneLabel": "Zona horaria del espacio de trabajo",
+      "timezoneSearch": "Buscar zona horaria…",
+      "timezoneNoResults": "No hay zonas horarias coincidentes",
+      "timezoneDesc": "Compartida por todos en este espacio de trabajo. Puedes cambiarla en cualquier momento."
     },
     "aiConfig": {
       "title": "Configuración del agente",

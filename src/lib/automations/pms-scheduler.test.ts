@@ -121,7 +121,45 @@ describe('PMS automation scheduling adapter', () => {
     ).toBe('2026-09-30T06:00:00.000Z');
   });
 
-  it('does not schedule with a missing property timezone', () => {
+  it.each([
+    ['before_checkin', '2026-09-30T04:30:00.000Z'],
+    ['checkin_day', '2026-10-01T04:30:00.000Z'],
+    ['after_checkout', '2026-10-04T04:30:00.000Z'],
+  ] as const)(
+    'prefers property timezone over saved config for %s',
+    (trigger, expected) => {
+      expect(
+        computeScheduledRunAt(
+          trigger,
+          {
+            timezone: 'Europe/London',
+            local_time: '10:00',
+            days_before: 1,
+            days_after: 1,
+          },
+          reservation
+        )
+      ).toBe(expected);
+    }
+  );
+
+  it.each([null, ''])(
+    'falls back to the saved config when property timezone is %s',
+    (timezone) => {
+      expect(
+        computeScheduledRunAt(
+          'checkin_day',
+          {
+            timezone: 'Europe/London',
+            local_time: '10:00',
+          },
+          { ...reservation, property_timezone: timezone }
+        )
+      ).toBe('2026-10-01T09:00:00.000Z');
+    }
+  );
+
+  it('does not schedule when both property and saved config timezone are missing', () => {
     expect(
       computeScheduledRunAt(
         'checkin_day',

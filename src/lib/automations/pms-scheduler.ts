@@ -217,10 +217,9 @@ export function computeScheduledRunAt(
   config: PmsTriggerConfig,
   reservation: ReservationSchedulingContext
 ): string | null {
-  // Existing saved definitions may carry an explicit timezone. Preserve that
-  // behavior, while new definitions resolve the business timezone from the
-  // reservation's canonical PMS property.
-  const timezone = config.timezone ?? reservation.property_timezone;
+  // Prefer the property's local time. A saved automation timezone is only
+  // a fallback for properties that do not have a timezone configured.
+  const timezone = reservation.property_timezone || config.timezone;
   if (!timezone || !config.local_time) return null;
   let localDate: string | null = null;
   if (triggerType === 'before_checkin' && reservation.check_in) {

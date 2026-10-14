@@ -407,7 +407,7 @@ export function validateTriggerForActivation(
  * Activation-time property check for new reservation-relative schedules.
  * Kept separate from the synchronous shape validator because it must enforce
  * account-scoped database state. Runtime scheduling remains defensive and
- * declines to create a job when the canonical property has no timezone.
+ * declines to create a job when neither property nor saved config has a timezone.
  */
 export async function validatePmsPropertyTimezonesForActivation(
   db: SupabaseClient,

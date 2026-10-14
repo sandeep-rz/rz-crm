@@ -71,6 +71,19 @@ export function useTotalUnread(): number {
           setTotal(sum);
         }
       )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'conversations' },
+        (payload) => {
+          const id = (payload.old as Partial<Conversation>).id;
+          if (id && countsRef.current.delete(id)) {
+            setTotal(
+              [...countsRef.current.values()].filter((count) => count > 0)
+                .length
+            );
+          }
+        }
+      )
       .subscribe();
 
     return () => {

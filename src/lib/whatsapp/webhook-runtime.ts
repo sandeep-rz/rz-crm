@@ -141,6 +141,7 @@ const safeFailureReasons = new Set([
   'invalid_inbound_identity',
   'contact_write_failed',
   'conversation_write_failed',
+  'conversation_deletion_lookup_failed',
   'message_write_failed',
   'message_promotion_failed',
   'message_replay_lookup_failed',

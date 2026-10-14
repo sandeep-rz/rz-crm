@@ -158,6 +158,18 @@
     }
   },
   "Inbox": {
+    "deleteConversation": {
+      "title": "Eliminar chat",
+      "description": "Esto elimina permanentemente este chat y sus mensajes del CRM. No se puede deshacer. Se conservan el contacto, los negocios, las reservas y los archivos compartidos. Un nuevo mensaje abre un chat nuevo.",
+      "confirmation": "Escribe DELETE para confirmar",
+      "cancel": "Cancelar",
+      "delete": "Eliminar permanentemente",
+      "deleting": "Eliminando…",
+      "deleted": "Chat eliminado",
+      "failed": "No se pudo eliminar el chat. Inténtalo de nuevo.",
+      "cleanupPending": "Chat eliminado, pero no se pudieron eliminar algunos archivos adjuntos.",
+      "retryCleanup": "Reintentar limpieza"
+    },
     "page": {
       "whatsappNotConnected": "WhatsApp® no está conectado. Ve a Configuración para conectar tu cuenta."
     },

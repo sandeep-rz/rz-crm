@@ -56,6 +56,8 @@ import { buildReplyPreview } from './reply-quote';
 import { renderTemplateBody } from '@/lib/whatsapp/template-body';
 import { contactHandle } from '@/lib/whatsapp/wa-identity';
 import { toast } from 'sonner';
+import { DeleteConversationDialog } from './delete-conversation-dialog';
+import { hasMinRole } from '@/lib/auth/roles';
 
 interface ReplyDraft {
   id: string;
@@ -82,6 +84,7 @@ interface MessageThreadProps {
    * mobile only.
    */
   onBack?: () => void;
+  onDeleted?: (id: string) => void;
   /**
    * Increment to force the messages + reactions fetch effects to refire.
    * Parent bumps this on realtime reconnect / tab visibility → visible
@@ -168,6 +171,7 @@ export function MessageThread({
   onStatusChange,
   onAssignChange,
   onBack,
+  onDeleted,
   resyncToken = 0,
   onRefresh,
   contactPanelOpen,
@@ -177,7 +181,7 @@ export function MessageThread({
   const tTimer = useTranslations('Inbox.sessionTimer');
   const tQuote = useTranslations('Inbox.replyQuote');
 
-  const { user, accountId } = useAuth();
+  const { user, accountId, accountRole } = useAuth();
   const { getPresence, getRow, now } = usePresence();
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1028,6 +1032,22 @@ export function MessageThread({
               />
             </button>
           )}
+
+          {conversation &&
+            accountId &&
+            accountRole &&
+            hasMinRole(accountRole, 'admin') &&
+            onDeleted && (
+              <DeleteConversationDialog
+                key={`${accountId}:${conversation.id}`}
+                disabled={messages.some(
+                  (message) => message.status === 'sending'
+                )}
+                conversationId={conversation.id}
+                accountId={accountId}
+                onDeleted={onDeleted}
+              />
+            )}
 
           {/* Status dropdown */}
           <DropdownMenu>

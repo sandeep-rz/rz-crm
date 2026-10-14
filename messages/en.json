@@ -158,6 +158,18 @@
     }
   },
   "Inbox": {
+    "deleteConversation": {
+      "title": "Delete chat",
+      "description": "This permanently deletes this chat and its messages from the CRM. It cannot be undone. Your contact, deals and reservations stay. Shared files are kept. A new message opens a fresh chat.",
+      "confirmation": "Type DELETE to confirm",
+      "cancel": "Cancel",
+      "delete": "Delete permanently",
+      "deleting": "Deleting…",
+      "deleted": "Chat deleted",
+      "failed": "Could not delete chat. Try again.",
+      "cleanupPending": "Chat deleted, but some attachments could not be removed.",
+      "retryCleanup": "Retry cleanup"
+    },
     "page": {
       "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account."
     },

@@ -158,6 +158,18 @@
     }
   },
   "Inbox": {
+    "deleteConversation": {
+      "title": "채팅 삭제",
+      "description": "이 채팅과 메시지를 CRM에서 영구적으로 삭제합니다. 되돌릴 수 없습니다. 연락처, 거래, 예약 및 공유 파일은 유지됩니다. 새 메시지를 받으면 새 채팅이 열립니다.",
+      "confirmation": "확인하려면 DELETE를 입력하세요",
+      "cancel": "취소",
+      "delete": "영구 삭제",
+      "deleting": "삭제 중…",
+      "deleted": "채팅이 삭제되었습니다",
+      "failed": "채팅을 삭제하지 못했습니다. 다시 시도하세요.",
+      "cleanupPending": "채팅은 삭제되었지만 일부 첨부 파일을 삭제하지 못했습니다.",
+      "retryCleanup": "정리 다시 시도"
+    },
     "page": {
       "whatsappNotConnected": "WhatsApp®이 연결되어 있지 않습니다. 설정으로 이동해 계정을 연결하세요."
     },

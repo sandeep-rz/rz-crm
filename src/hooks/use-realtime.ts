@@ -76,6 +76,19 @@ export function useRealtime({
           });
         }
       )
+      // Deleted rows may expose only their primary key, so an account filter
+      // cannot match them. Consumers remove only IDs already known locally.
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'conversations' },
+        (payload) => {
+          onConversationRef.current?.({
+            eventType: 'DELETE',
+            new: payload.new as Conversation,
+            old: payload.old as Partial<Conversation>,
+          });
+        }
+      )
       .subscribe((status) => {
         setIsConnected(status === 'SUBSCRIBED');
       });

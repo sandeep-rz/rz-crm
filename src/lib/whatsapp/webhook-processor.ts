@@ -633,6 +633,22 @@ async function processMessage(
   if (!contactOutcome) throw new Error('contact_write_failed');
   const contactRecord = contactOutcome.contact;
 
+  // Old delivery retries and imported history must not resurrect erased chats.
+  const { data: deleted, error: deletionError } = await supabaseAdmin().rpc(
+    'is_deleted_conversation_message',
+    {
+      p_account: accountId,
+      p_contact: contactRecord.id,
+      p_connection: whatsappConfigId,
+      p_sent_at:
+        Number.isFinite(Number(message.timestamp)) && message.timestamp
+          ? new Date(Number(message.timestamp) * 1000).toISOString()
+          : null,
+    }
+  );
+  if (deletionError) throw new Error('conversation_deletion_lookup_failed');
+  if (deleted === true) return;
+
   // Find or create conversation
   const convResult = await findOrCreateConversation(
     accountId,

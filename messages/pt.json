@@ -158,6 +158,18 @@
     }
   },
   "Inbox": {
+    "deleteConversation": {
+      "title": "Excluir conversa",
+      "description": "Isso exclui permanentemente esta conversa e suas mensagens do CRM. Não pode ser desfeito. O contato, negócios, reservas e arquivos compartilhados são mantidos. Uma nova mensagem abre uma nova conversa.",
+      "confirmation": "Digite DELETE para confirmar",
+      "cancel": "Cancelar",
+      "delete": "Excluir permanentemente",
+      "deleting": "Excluindo…",
+      "deleted": "Conversa excluída",
+      "failed": "Não foi possível excluir a conversa. Tente novamente.",
+      "cleanupPending": "Conversa excluída, mas alguns anexos não puderam ser removidos.",
+      "retryCleanup": "Tentar limpeza novamente"
+    },
     "page": {
       "whatsappNotConnected": "O WhatsApp® não está conectado. Vá em Configurações para conectar sua conta."
     },

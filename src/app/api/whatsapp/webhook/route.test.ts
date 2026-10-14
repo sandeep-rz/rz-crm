@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
     historyPromoted: false,
     receiptContext: null as Record<string, unknown> | null,
     failInbox: false,
+    deletedConversation: false,
+    deletionLookupError: false,
     statusResult: null as Record<string, unknown> | null,
     /** Row `lookupInternalIdByMetaId` resolves for a `context.id`. */
     replyContextParent: null as { id: string } | null,
@@ -259,6 +261,11 @@ vi.mock('@supabase/supabase-js', () => ({
     },
     rpc: (name: string, args: Record<string, unknown>) => {
       h.state.rpcCalls.push({ name, args });
+      if (name === 'is_deleted_conversation_message')
+        return Promise.resolve({
+          data: h.state.deletedConversation,
+          error: h.state.deletionLookupError ? { code: 'down' } : null,
+        });
       if (name === 'apply_whatsapp_status')
         return Promise.resolve({ data: h.state.statusResult, error: null });
       if (name === 'whatsapp_delivery_context') {
@@ -425,6 +432,8 @@ beforeEach(() => {
   h.state.historyPromoted = false;
   h.state.receiptContext = null;
   h.state.failInbox = false;
+  h.state.deletedConversation = false;
+  h.state.deletionLookupError = false;
   h.state.replyContextParent = null;
   h.state.conversation = { id: 'conv-1', unread_count: 0, account_id: 'acc-1' };
   h.state.upsertCalls = [];
@@ -482,7 +491,11 @@ describe('inbound webhook: idempotent insert (#367)', () => {
       ignoreDuplicates: true,
     });
     // Downstream side effects ran exactly once.
-    expect(h.state.rpcCalls).toHaveLength(1);
+    expect(
+      h.state.rpcCalls.filter(
+        (call) => call.name === 'bump_conversation_on_inbound'
+      )
+    ).toHaveLength(1);
     expect(h.dispatchInboundToFlows).toHaveBeenCalledTimes(1);
     expect(h.dispatchWebhookEvent).toHaveBeenCalledTimes(1);
   });
@@ -495,7 +508,11 @@ describe('inbound webhook: idempotent insert (#367)', () => {
 
     expect(h.state.upsertCalls).toHaveLength(1);
     // None of the downstream side effects fire on a replay.
-    expect(h.state.rpcCalls).toHaveLength(0);
+    expect(
+      h.state.rpcCalls.filter(
+        (call) => call.name !== 'is_deleted_conversation_message'
+      )
+    ).toHaveLength(0);
     expect(h.dispatchInboundToFlows).not.toHaveBeenCalled();
     expect(h.runAutomationsForTrigger).not.toHaveBeenCalled();
     expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled();
@@ -503,12 +520,38 @@ describe('inbound webhook: idempotent insert (#367)', () => {
   });
 });
 
+describe('inbound webhook: deleted chat replay protection', () => {
+  it('drops old deliveries before message writes and automatic replies', async () => {
+    h.state.deletedConversation = true;
+    await runWebhook();
+    expect(h.state.upsertCalls).toHaveLength(0);
+    expect(h.dispatchInboundToFlows).not.toHaveBeenCalled();
+    expect(h.runAutomationsForTrigger).not.toHaveBeenCalled();
+    expect(h.state.rpcCalls[0].name).toBe('is_deleted_conversation_message');
+  });
+  it('fails closed when the cutoff lookup fails', async () => {
+    h.state.deletionLookupError = true;
+    await runWebhook();
+    expect(h.dispatchInboundToFlows).not.toHaveBeenCalled();
+    expect(h.runAutomationsForTrigger).not.toHaveBeenCalled();
+    expect(h.state.upsertCalls).toHaveLength(0);
+  });
+});
+
 describe('inbound webhook: atomic unread bump (#369)', () => {
   it('increments unread through the DB-side RPC, not a read-modify-write', async () => {
     await runWebhook();
 
-    expect(h.state.rpcCalls).toHaveLength(1);
-    expect(h.state.rpcCalls[0]).toMatchObject({
+    expect(
+      h.state.rpcCalls.filter(
+        (call) => call.name === 'bump_conversation_on_inbound'
+      )
+    ).toHaveLength(1);
+    expect(
+      h.state.rpcCalls.find(
+        (call) => call.name === 'bump_conversation_on_inbound'
+      )
+    ).toMatchObject({
       name: 'bump_conversation_on_inbound',
       args: { p_conversation_id: 'conv-1' },
     });

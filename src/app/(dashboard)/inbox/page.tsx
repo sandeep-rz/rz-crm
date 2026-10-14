@@ -121,6 +121,11 @@ function InboxPageInner() {
    * redundant DB hydrate, swamping the supabase client and starving the
    * realtime channel). The ref is kept in sync via the effect below.
    */
+  const deletedConvIdsRef = useRef<Set<string>>(new Set());
+  const activeConversationRef = useRef(activeConversation);
+  useEffect(() => {
+    activeConversationRef.current = activeConversation;
+  }, [activeConversation]);
   const knownConvIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const next = new Set<string>();
@@ -160,7 +165,7 @@ function InboxPageInner() {
           });
           return;
         }
-        if (!data) return;
+        if (!data || deletedConvIdsRef.current.has(convId)) return;
         const fetched = normalizeConversation(data);
         setConversations((prev) => {
           const existing = prev.find((c) => c.id === fetched.id);
@@ -192,6 +197,7 @@ function InboxPageInner() {
       const newMsg = event.new;
 
       if (event.eventType === 'INSERT') {
+        if (deletedConvIdsRef.current.has(newMsg.conversation_id)) return;
         // Add to messages if it belongs to active conversation
         if (
           activeConversation &&
@@ -250,13 +256,42 @@ function InboxPageInner() {
   );
 
   // Handle realtime conversation events
+  const handleDeletedConversation = useCallback(
+    (id: string) => {
+      deletedConvIdsRef.current.add(id);
+      knownConvIdsRef.current.delete(id);
+      setConversations((prev) =>
+        prev.filter((conversation) => conversation.id !== id)
+      );
+      if (activeConversationRef.current?.id === id) {
+        setActiveConversation(null);
+        setActiveContact(null);
+        setMessages([]);
+        router.replace('/inbox', { scroll: false });
+      }
+      setResyncToken((token) => token + 1);
+    },
+    [router]
+  );
+
   const handleConversationEvent = useCallback(
     (event: {
       eventType: string;
       new: Conversation;
       old: Partial<Conversation>;
     }) => {
+      if (event.eventType === 'DELETE' && event.old.id) {
+        // DELETE payloads may contain only the primary key. Ignore other workspaces.
+        if (
+          knownConvIdsRef.current.has(event.old.id) ||
+          activeConversationRef.current?.id === event.old.id
+        ) {
+          handleDeletedConversation(event.old.id);
+        }
+        return;
+      }
       const conv = event.new;
+      if (deletedConvIdsRef.current.has(conv.id)) return;
 
       if (event.eventType === 'INSERT') {
         // Prepend immediately for snappy UX so the new conv shows in the
@@ -306,7 +341,7 @@ function InboxPageInner() {
         }
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, hydrateConversation, handleDeletedConversation]
   );
 
   // Subscribe to realtime. The `isConnected` flag below feeds the
@@ -375,6 +410,9 @@ function InboxPageInner() {
 
   const handleConversationsLoaded = useCallback(
     (loaded: Conversation[]) => {
+      loaded = loaded.filter(
+        (conversation) => !deletedConvIdsRef.current.has(conversation.id)
+      );
       setConversations(loaded);
       // Resolve a pending deep-link here rather than in an effect — this
       // is an event handler, so the setState calls below are allowed by
@@ -588,6 +626,7 @@ function InboxPageInner() {
             onStatusChange={handleStatusChange}
             onAssignChange={handleAssignChange}
             onBack={handleCloseConversation}
+            onDeleted={handleDeletedConversation}
             resyncToken={resyncToken}
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}

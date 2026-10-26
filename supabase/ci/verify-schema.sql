@@ -130,6 +130,12 @@ BEGIN
     RAISE EXCEPTION 'WhatsApp single-connection policy is missing (migration 84)';
   END IF;
 
+  IF has_function_privilege('anon','public.record_whatsapp_outbound(uuid,uuid,jsonb,text)','EXECUTE') OR
+     NOT has_function_privilege('authenticated','public.record_whatsapp_outbound(uuid,uuid,jsonb,text)','EXECUTE') OR
+     NOT has_function_privilege('service_role','public.record_whatsapp_outbound(uuid,uuid,jsonb,text)','EXECUTE') THEN
+    RAISE EXCEPTION 'Outbound persistence permission boundary is missing (migration 85)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

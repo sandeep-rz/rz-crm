@@ -3,6 +3,10 @@
 import { Suspense, useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import {
+  receiveInboxMessage,
+  updateInboxMessage,
+} from '@/lib/inbox/message-state';
 import { createClient } from '@/lib/supabase/client';
 import {
   CONVERSATION_SELECT,
@@ -203,15 +207,7 @@ function InboxPageInner() {
           activeConversation &&
           newMsg.conversation_id === activeConversation.id
         ) {
-          setMessages((prev) => {
-            // Avoid duplicates
-            if (prev.some((m) => m.id === newMsg.id)) return prev;
-            // Replace optimistic message if it exists
-            const withoutOptimistic = prev.filter(
-              (m) => !m.id.startsWith('temp-')
-            );
-            return [...withoutOptimistic, newMsg];
-          });
+          setMessages((prev) => receiveInboxMessage(prev, newMsg));
         }
 
         // Update conversation list preview. We need to know *synchronously*
@@ -247,9 +243,7 @@ function InboxPageInner() {
 
       if (event.eventType === 'UPDATE') {
         // Update message status
-        setMessages((prev) =>
-          prev.map((m) => (m.id === newMsg.id ? { ...m, ...newMsg } : m))
-        );
+        setMessages((prev) => updateInboxMessage(prev, newMsg.id, newMsg));
       }
     },
     [activeConversation, hydrateConversation]
@@ -523,9 +517,7 @@ function InboxPageInner() {
 
   const handleUpdateMessage = useCallback(
     (id: string, updates: Partial<Message>) => {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, ...updates } : m))
-      );
+      setMessages((prev) => updateInboxMessage(prev, id, updates));
     },
     []
   );

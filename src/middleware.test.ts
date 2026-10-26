@@ -10,6 +10,7 @@ import { NextRequest } from 'next/server';
 //                      i.e. the freshly *rotated* auth token. The whole point
 //                      of the test is that these must survive onto whatever
 //                      response the middleware returns — including redirects.
+let authCalls = 0;
 let mockUser: { id: string } | null = null;
 let refreshedCookies: Array<{
   name: string;
@@ -30,6 +31,7 @@ vi.mock('@supabase/ssr', () => ({
       // refreshed inside getUser(), which rotates the refresh token and
       // pushes the new cookies through setAll() before resolving.
       getUser: async () => {
+        authCalls++;
         if (refreshedCookies.length) opts.cookies.setAll(refreshedCookies);
         return { data: { user: mockUser } };
       },
@@ -44,6 +46,7 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co';
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon-key';
   mockUser = null;
+  authCalls = 0;
   refreshedCookies = [];
 });
 
@@ -150,4 +153,16 @@ describe('middleware — every dashboard route requires a session', () => {
       expect(new URL(res.headers.get('location')!).pathname).toBe('/login');
     }
   );
+});
+
+it('delegates Inbox send authentication to its existing agent-authorized route once', async () => {
+  const response = await middleware(
+    new NextRequest('https://app.test/api/whatsapp/send', { method: 'POST' })
+  );
+  expect(response.status).toBe(200);
+  expect(authCalls).toBe(0);
+  await middleware(
+    new NextRequest('https://app.test/api/whatsapp/config', { method: 'POST' })
+  );
+  expect(authCalls).toBe(1);
 });

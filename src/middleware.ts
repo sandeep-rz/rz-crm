@@ -2,6 +2,14 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 export async function middleware(request: NextRequest) {
+  // This route performs getUser(), active-workspace and agent-role checks itself,
+  // including refresh-cookie writes. Do not repeat that Auth network call here.
+  if (
+    request.method === 'POST' &&
+    request.nextUrl.pathname === '/api/whatsapp/send'
+  ) {
+    return NextResponse.next({ request });
+  }
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(

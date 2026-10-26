@@ -1,3 +1,4 @@
+import type { SendTiming } from './send-timing';
 import { acquireMetaSend } from './send-policy';
 /**
  * Meta WhatsApp Cloud API helpers.
@@ -407,6 +408,7 @@ function recipientFields(to: string): Record<string, unknown> {
 }
 
 export interface SendTextMessageArgs {
+  timing?: SendTiming;
   phoneNumberId: string;
   accessToken: string;
   to: string;
@@ -434,15 +436,21 @@ export async function sendTextMessage(
   if (contextMessageId) {
     body.context = { message_id: contextMessageId };
   }
-  await guardMetaSend(phoneNumberId);
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
-  });
+  if (args.timing)
+    await args.timing.measure('allowance', () => guardMetaSend(phoneNumberId));
+  else await guardMetaSend(phoneNumberId);
+  const request = () =>
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+  const response = args.timing
+    ? await args.timing.measure('meta_http', request)
+    : await request();
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`);
   }

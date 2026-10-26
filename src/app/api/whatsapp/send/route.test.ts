@@ -135,6 +135,16 @@ function makeSupabaseMock() {
         error: null,
       })),
     },
+    rpc: vi.fn(async (name: string, args: Record<string, unknown>) => {
+      if (name !== 'record_whatsapp_outbound')
+        throw new Error('Unexpected RPC');
+      messageInserts.push({
+        conversation_id: args.p_conversation,
+        sender_type: 'agent',
+        ...(args.p_message as object),
+      });
+      return { data: 'msg-1', error: null };
+    }),
     from: vi.fn((table: string) => builder(table)),
   };
 }

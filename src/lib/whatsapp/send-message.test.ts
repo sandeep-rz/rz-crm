@@ -194,6 +194,8 @@ vi.mock('@/lib/flows/admin-client', () => ({
 }));
 
 interface CapturedWrites {
+  reads?: string[];
+  rpcCalls?: string[];
   message?: Record<string, unknown>;
   conversation?: Record<string, unknown>;
 }
@@ -211,6 +213,7 @@ function sendPathDb(
 ): SupabaseClient {
   const conversation = {
     id: 'cv-1',
+    whatsapp_config_id: 'cfg-1',
     contact,
   };
   const config = {
@@ -220,7 +223,20 @@ function sendPathDb(
   };
 
   return {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      captured.rpcCalls?.push(name);
+      if (name !== 'record_whatsapp_outbound')
+        throw new Error('Unexpected RPC');
+      captured.message = {
+        conversation_id: args.p_conversation,
+        sender_type: 'agent',
+        ...(args.p_message as object),
+      };
+      captured.conversation = { last_message_text: args.p_preview };
+      return { data: 'msg-1', error: null };
+    },
     from(table: string) {
+      captured.reads?.push(table);
       const builder: Record<string, unknown> = {
         select: () => builder,
         eq: () => builder,
@@ -474,4 +490,19 @@ describe('sendMessageToConversation — BSUID recipients (#519)', () => {
       )
     ).rejects.toThrow(/no phone number or WhatsApp user ID/);
   });
+});
+
+it('loads the thread once and commits message, preview and agent handoff in one database request', async () => {
+  const captured: CapturedWrites = { reads: [], rpcCalls: [] };
+  await sendMessageToConversation(sendPathDb([], captured), 'acct-1', {
+    conversationId: 'cv-1',
+    messageType: 'text',
+    contentText: 'Hello',
+  });
+  expect(
+    captured.reads?.filter((table) => table === 'conversations')
+  ).toHaveLength(1);
+  expect(captured.reads).not.toContain('messages');
+  expect(captured.rpcCalls).toEqual(['record_whatsapp_outbound']);
+  expect(captured.message?.content_text).toBe('Hello');
 });

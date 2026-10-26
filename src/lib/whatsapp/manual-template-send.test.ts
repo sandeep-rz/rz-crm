@@ -71,6 +71,15 @@ const conversation = {
   },
 };
 const db = {
+  rpc: async (name: string, args: Record<string, unknown>) => {
+    if (name !== 'record_whatsapp_outbound') throw new Error('Unexpected RPC');
+    if (failMessageInsert) return { data: null, error: { code: 'XX000' } };
+    writes.push({
+      conversation_id: args.p_conversation,
+      ...(args.p_message as object),
+    });
+    return { data: id(9), error: null };
+  },
   from(table: string) {
     reads.push(table);
     if (table.startsWith('pms_') && !providerTables[table])

@@ -19,6 +19,7 @@
 // without duplicating ~250 lines of Meta plumbing.
 // ============================================================
 
+import { SendTiming } from './send-timing';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
@@ -38,7 +39,6 @@ import {
 } from '@/lib/whatsapp/interactive';
 import { encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
-import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   phoneVariants,
   isRecipientNotAllowedError,
@@ -85,6 +85,8 @@ export class SendMessageError extends Error {
 }
 
 export interface SendMessageParams {
+  /** Trusted request-local instrumentation; never taken from request JSON. */
+  timing?: SendTiming;
   conversationId: string;
   whatsappConfigId?: string | null;
   messageType: string;
@@ -241,15 +243,20 @@ export async function sendMessageToConversation(
     interactivePayload,
   });
 
+  const timing = params.timing ?? new SendTiming();
   const isMediaKind = (MEDIA_KINDS as readonly string[]).includes(messageType);
 
   // Conversation + contact, account-scoped.
-  const { data: conversation, error: convError } = await db
-    .from('conversations')
-    .select('*, contact:contacts(*)')
-    .eq('id', conversationId)
-    .eq('account_id', accountId)
-    .single();
+  const { data: conversation, error: convError } = await timing.measure(
+    'conversation',
+    async () =>
+      await db
+        .from('conversations')
+        .select('*, contact:contacts(*)')
+        .eq('id', conversationId)
+        .eq('account_id', accountId)
+        .single()
+  );
 
   if (convError || !conversation) {
     throw new SendMessageError('not_found', 'Conversation not found', 404);
@@ -277,15 +284,18 @@ export async function sendMessageToConversation(
   const hasValidPhone = resolvedTarget.isPhone;
   const sanitizedPhone = hasValidPhone ? sendTarget : '';
 
-  const config = await resolveWhatsAppConnection(db, {
-    accountId,
-    connectionId: whatsappConfigId,
-    conversationId,
-  }).catch((error: unknown) => {
-    const message =
-      error instanceof Error ? error.message : 'WhatsApp not configured';
-    throw new SendMessageError('whatsapp_not_configured', message, 400);
-  });
+  const config = await timing
+    .measure('connection', () =>
+      resolveWhatsAppConnection(db, {
+        accountId,
+        connectionId: whatsappConfigId || conversation.whatsapp_config_id,
+      })
+    )
+    .catch((error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : 'WhatsApp not configured';
+      throw new SendMessageError('whatsapp_not_configured', message, 400);
+    });
   const accessToken = config.accessToken;
 
   // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
@@ -303,6 +313,8 @@ export async function sendMessageToConversation(
         }
       });
   }
+
+  const preparationStarted = performance.now();
 
   // Resolve the reply target to its Meta message_id. The parent must
   // belong to this same conversation — otherwise a caller could quote
@@ -415,6 +427,7 @@ export async function sendMessageToConversation(
     sendLanguage = prepared.template.language;
   }
 
+  timing.record('preparation', performance.now() - preparationStarted);
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
@@ -480,6 +493,7 @@ export async function sendMessageToConversation(
       to: phone,
       text: contentText!,
       contextMessageId,
+      ...(params.timing ? { timing } : {}),
     });
     return result.messageId;
   };
@@ -498,7 +512,7 @@ export async function sendMessageToConversation(
 
     for (const variant of variants) {
       try {
-        waMessageId = await attempt(variant);
+        waMessageId = await timing.measure('provider', () => attempt(variant));
         workingPhone = variant;
         lastError = null;
         break;
@@ -591,77 +605,40 @@ export async function sendMessageToConversation(
       500,
       waMessageId
     );
-  let messageRecord: { id: string };
+  const lastMessageText =
+    messageType === 'interactive'
+      ? interactivePayloadPreviewText(interactivePayload!)
+      : persistedText || `[${messageType}]`;
+  let messageId: string;
   try {
-    const { data: savedMessage, error: msgError } = await db
-      .from('messages')
-      .insert({
-        conversation_id: conversationId,
-        sender_type: 'agent',
-        content_type: messageType,
-        content_text: persistedText,
-        media_url: mediaUrl || null,
-        template_name: sendTemplateName || null,
-        interactive_payload:
-          messageType === 'interactive' ? interactivePayload : null,
-        message_id: waMessageId,
-        status: 'sent',
-        reply_to_message_id: replyToMessageId || null,
-      })
-      .select()
-      .single();
-
-    if (msgError || !savedMessage) throw acceptedPersistenceFailure();
-    messageRecord = savedMessage;
+    const { data, error } = await timing.measure(
+      'persist',
+      async () =>
+        await db.rpc('record_whatsapp_outbound', {
+          p_account: accountId,
+          p_conversation: conversationId,
+          p_preview: lastMessageText,
+          p_message: {
+            content_type: messageType,
+            content_text: persistedText,
+            media_url: mediaUrl || null,
+            template_name: sendTemplateName || null,
+            interactive_payload:
+              messageType === 'interactive' ? interactivePayload : null,
+            message_id: waMessageId,
+            reply_to_message_id: replyToMessageId || null,
+          },
+        })
+    );
+    if (error || typeof data !== 'string') throw acceptedPersistenceFailure();
+    messageId = data;
   } catch {
     console.error('[send-message] Could not save accepted message.');
     throw acceptedPersistenceFailure();
   }
 
-  const lastMessageText =
-    messageType === 'interactive'
-      ? interactivePayloadPreviewText(interactivePayload!)
-      : persistedText || `[${messageType}]`;
-
-  try {
-    const { error: previewError } = await db
-      .from('conversations')
-      .update({
-        last_message_text: lastMessageText,
-        last_message_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', conversationId);
-    if (previewError) throw acceptedPersistenceFailure();
-  } catch {
-    throw acceptedPersistenceFailure();
-  }
-
-  // Pause any active Flow run for this contact — the agent stepping in
-  // is the strongest "yield, human is here" signal. Best-effort.
-  try {
-    const { error: pauseErr } = await supabaseAdmin()
-      .from('flow_runs')
-      .update({
-        status: 'paused_by_agent',
-        ended_at: new Date().toISOString(),
-        end_reason: 'agent_replied',
-      })
-      .eq('account_id', accountId)
-      .eq('contact_id', contact.id)
-      .eq('status', 'active');
-    if (pauseErr) {
-      console.error('[flows] pause-on-agent-send failed:', pauseErr.message);
-    }
-  } catch (err) {
-    console.error(
-      '[flows] pause-on-agent-send threw:',
-      err instanceof Error ? err.message : err
-    );
-  }
-
   return {
-    messageId: messageRecord.id,
+    messageId,
     whatsappMessageId: waMessageId,
     contentText: persistedText,
   };

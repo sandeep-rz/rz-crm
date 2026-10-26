@@ -176,3 +176,13 @@ it('returns a clear local quota response without claiming an unknown Meta outcom
     error: 'WhatsApp is busy. Retry shortly.',
   });
 });
+
+it('returns request-local timing diagnostics without exposing message content', async () => {
+  const response = await POST(request());
+  expect(response.headers.get('Server-Timing')).toMatch(/auth;dur=/);
+  expect(response.headers.get('Server-Timing')).toMatch(/total;dur=/);
+  expect(response.headers.get('Cache-Control')).toBe('no-store');
+  expect(response.headers.get('Server-Timing')).not.toMatch(
+    /Real booking values|workspace/
+  );
+});

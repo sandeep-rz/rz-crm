@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { outgoingAcknowledgement } from '@/lib/inbox/message-state';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { usePresence } from '@/hooks/use-presence';
@@ -476,7 +477,7 @@ export function MessageThread({
     async (text: string, replyToId?: string) => {
       if (!conversation) return;
 
-      const tempId = `temp-${Date.now()}`;
+      const tempId = `temp-${crypto.randomUUID()}`;
 
       // Optimistic update — shows the message immediately with "sending" status
       const optimisticMsg: Message = {
@@ -510,15 +511,16 @@ export function MessageThread({
           const reason = payload?.error || `HTTP ${res.status}`;
           console.error('Failed to send message:', reason);
           toast.error(t('sendFailed', { reason }));
-          // Mark the optimistic bubble as failed so the user sees what happened
-          onUpdateMessage(tempId, { status: 'failed' });
+          // Keep a confirmed Meta acceptance even if local persistence failed.
+          onUpdateMessage(
+            tempId,
+            outgoingAcknowledgement(payload, false) ?? { status: 'failed' }
+          );
           return;
         }
 
-        // Success — the realtime INSERT event will replace the temp bubble
-        // with the real DB row. If realtime hasn't arrived yet, at least
-        // flip status to 'sent' so the UI stops showing "sending".
-        onUpdateMessage(tempId, { status: 'sent' });
+        // Bind the confirmed IDs immediately; Realtime can arrive in either order.
+        onUpdateMessage(tempId, outgoingAcknowledgement(payload, true)!);
       } catch (err) {
         console.error('Failed to send message:', err);
         const reason = err instanceof Error ? err.message : 'network error';
@@ -541,7 +543,7 @@ export function MessageThread({
           ? payload.caption || payload.filename || 'Document'
           : payload.caption;
 
-      const tempId = `temp-${Date.now()}`;
+      const tempId = `temp-${crypto.randomUUID()}`;
       const optimisticMsg: Message = {
         id: tempId,
         conversation_id: conversation.id,
@@ -576,24 +578,29 @@ export function MessageThread({
           const reason = data?.error || `HTTP ${res.status}`;
           console.error('Failed to send media:', reason);
           toast.error(t('sendFailed', { reason }));
-          onUpdateMessage(tempId, { status: 'failed' });
-          // The upload never reached the recipient — GC the orphaned
-          // object rather than leaving it in the public bucket forever.
-          void deleteAccountMedia(CHAT_MEDIA_BUCKET, payload.path).catch(
-            () => {}
-          );
+          const accepted = outgoingAcknowledgement(data, false);
+          onUpdateMessage(tempId, accepted ?? { status: 'failed' });
+          // Only definite pre-acceptance rejections permit attachment cleanup.
+          if (
+            !accepted &&
+            res.status >= 400 &&
+            res.status < 500 &&
+            res.status !== 408
+          ) {
+            void deleteAccountMedia(CHAT_MEDIA_BUCKET, payload.path).catch(
+              () => {}
+            );
+          }
           return;
         }
 
-        onUpdateMessage(tempId, { status: 'sent' });
+        onUpdateMessage(tempId, outgoingAcknowledgement(data, true)!);
       } catch (err) {
         console.error('Failed to send media:', err);
         const reason = err instanceof Error ? err.message : 'network error';
         toast.error(t('sendFailed', { reason }));
         onUpdateMessage(tempId, { status: 'failed' });
-        void deleteAccountMedia(CHAT_MEDIA_BUCKET, payload.path).catch(
-          () => {}
-        );
+        // Transport failure has an unknown delivery outcome; retain the asset.
       }
     },
     [conversation, onNewMessage, onUpdateMessage, t]
@@ -603,7 +610,7 @@ export function MessageThread({
     async (payload: InteractiveMessagePayload, replyToId?: string) => {
       if (!conversation) return;
 
-      const tempId = `temp-${Date.now()}`;
+      const tempId = `temp-${crypto.randomUUID()}`;
       // Optimistic bubble — renders the buttons/list immediately via the
       // interactive_payload, same as the persisted row will.
       const optimisticMsg: Message = {
@@ -637,11 +644,14 @@ export function MessageThread({
           const reason = data?.error || `HTTP ${res.status}`;
           console.error('Failed to send interactive message:', reason);
           toast.error(t('sendFailed', { reason }));
-          onUpdateMessage(tempId, { status: 'failed' });
+          onUpdateMessage(
+            tempId,
+            outgoingAcknowledgement(data, false) ?? { status: 'failed' }
+          );
           return;
         }
 
-        onUpdateMessage(tempId, { status: 'sent' });
+        onUpdateMessage(tempId, outgoingAcknowledgement(data, true)!);
       } catch (err) {
         console.error('Failed to send interactive message:', err);
         const reason = err instanceof Error ? err.message : 'network error';
@@ -687,7 +697,7 @@ export function MessageThread({
         template.variable_configuration_status === 'configured'
           ? template.name
           : renderTemplateBody(template.body_text, values.body);
-      const tempId = `temp-${Date.now()}`;
+      const tempId = `temp-${crypto.randomUUID()}`;
 
       const optimisticMsg: Message = {
         id: tempId,
@@ -747,12 +757,7 @@ export function MessageThread({
           return;
         }
 
-        onUpdateMessage(tempId, {
-          status: 'sent',
-          ...(typeof payload.content_text === 'string'
-            ? { content_text: payload.content_text }
-            : {}),
-        });
+        onUpdateMessage(tempId, outgoingAcknowledgement(payload, true)!);
       } catch (err) {
         console.error('Failed to send template:', err);
         const reason = err instanceof Error ? err.message : 'network error';

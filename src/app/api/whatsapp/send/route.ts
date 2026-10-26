@@ -1,3 +1,4 @@
+import { SendTiming } from '@/lib/whatsapp/send-timing';
 import { TemplatePreparationError } from '@/lib/message-preparation/errors';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -24,6 +25,24 @@ import {
 // conversation, delegate, then map `SendMessageError` back onto the
 // dashboard's internal `{ error }` shape.
 export async function POST(request: Request) {
+  const timing = new SendTiming();
+  const requestId = crypto.randomUUID();
+  const decorate = <T extends Response>(response: T): T => {
+    response.headers.set('Server-Timing', timing.header());
+    response.headers.set('Cache-Control', 'no-store');
+    response.headers.set('X-Send-Region', process.env.VERCEL_REGION || 'local');
+    response.headers.set('X-Send-Request-Id', requestId);
+    if (timing.elapsed() >= 2000)
+      console.info('[whatsapp/send] slow request', {
+        request_id: requestId,
+        status: response.status,
+        region: process.env.VERCEL_REGION || 'local',
+        timing: timing.header(),
+      });
+    return response;
+  };
+  const respond = (body: object, init?: { status?: number }) =>
+    decorate(NextResponse.json(body, init));
   try {
     // Requires the 'agent' role, matching both `canSendMessages` and the
     // `messages_modify` RLS policy (migration 017).
@@ -34,13 +53,15 @@ export async function POST(request: Request) {
     // still delivered a real WhatsApp message to the customer and merely
     // failed to record it (surfacing as "sent to Meta but failed to save
     // to DB"). RLS can't un-send that, so the role check belongs here.
-    const { supabase, accountId, userId } = await requireRole('agent');
+    const { supabase, accountId, userId } = await timing.measure('auth', () =>
+      requireRole('agent')
+    );
 
     // Per-user rate limit. Bucket key is scoped to this route so
     // `/broadcast` has an independent budget.
     const limit = checkRateLimit(`send:${userId}`, RATE_LIMITS.send);
     if (!limit.success) {
-      return rateLimitResponse(limit);
+      return decorate(rateLimitResponse(limit));
     }
 
     const body = await request.json();
@@ -66,7 +87,7 @@ export async function POST(request: Request) {
     } = body;
 
     if ((!conversationIdInput && !contact_id) || !message_type) {
-      return NextResponse.json(
+      return respond(
         {
           error:
             'Either conversation_id or contact_id, plus message_type, are required',
@@ -83,7 +104,7 @@ export async function POST(request: Request) {
             id
           ))
       )
-        return NextResponse.json(
+        return respond(
           { error: 'Invalid template or reservation selection.' },
           { status: 400 }
         );
@@ -103,10 +124,7 @@ export async function POST(request: Request) {
       });
     } catch (err) {
       if (err instanceof SendMessageError) {
-        return NextResponse.json(
-          { error: err.message },
-          { status: err.status }
-        );
+        return respond({ error: err.message }, { status: err.status });
       }
       throw err;
     }
@@ -118,20 +136,9 @@ export async function POST(request: Request) {
     let conversationId: string | null = null;
 
     if (conversationIdInput) {
-      const { data, error: convError } = await supabase
-        .from('conversations')
-        .select('id')
-        .eq('id', conversationIdInput)
-        .eq('account_id', accountId)
-        .single();
-
-      if (convError || !data) {
-        return NextResponse.json(
-          { error: 'Conversation not found' },
-          { status: 404 }
-        );
-      }
-      conversationId = data.id;
+      // The shared sender already loads and authorizes this exact conversation.
+      // Avoid a second round trip for the same account-scoped existence check.
+      conversationId = conversationIdInput;
     } else {
       // contact_id path: verify the contact is in this account first so a
       // caller can't open a conversation against someone else's contact.
@@ -143,10 +150,7 @@ export async function POST(request: Request) {
         .maybeSingle();
 
       if (contactErr || !contactRow) {
-        return NextResponse.json(
-          { error: 'Contact not found' },
-          { status: 404 }
-        );
+        return respond({ error: 'Contact not found' }, { status: 404 });
       }
 
       const resolved = await findOrCreateConversation(
@@ -157,7 +161,7 @@ export async function POST(request: Request) {
         typeof whatsapp_config_id === 'string' ? whatsapp_config_id : null
       );
       if (!resolved) {
-        return NextResponse.json(
+        return respond(
           { error: 'Failed to open a conversation for this contact' },
           { status: 500 }
         );
@@ -166,10 +170,7 @@ export async function POST(request: Request) {
     }
 
     if (!conversationId) {
-      return NextResponse.json(
-        { error: 'Conversation not found' },
-        { status: 404 }
-      );
+      return respond({ error: 'Conversation not found' }, { status: 404 });
     }
 
     // Delegate to the shared send core (validates, sends to Meta with
@@ -182,6 +183,7 @@ export async function POST(request: Request) {
         accountId,
         {
           conversationId,
+          timing,
           whatsappConfigId:
             typeof whatsapp_config_id === 'string' ? whatsapp_config_id : null,
           messageType: message_type,
@@ -200,7 +202,7 @@ export async function POST(request: Request) {
           : undefined
       );
 
-      return NextResponse.json({
+      return respond({
         success: true,
         message_id: result.messageId,
         whatsapp_message_id: result.whatsappMessageId,
@@ -217,7 +219,7 @@ export async function POST(request: Request) {
           'runtime_provider_failure',
           'runtime_resolution_failure',
         ].includes(err.code);
-        return NextResponse.json(
+        return respond(
           {
             code: err.code,
             error: missingReservation
@@ -230,7 +232,7 @@ export async function POST(request: Request) {
         );
       }
       if (err instanceof SendMessageError) {
-        return NextResponse.json(
+        return respond(
           {
             code: err.code,
             ...(err.acceptedMessageId
@@ -255,7 +257,7 @@ export async function POST(request: Request) {
     // requireRole throws Unauthorized/Forbidden; toErrorResponse maps
     // those to 401/403 and collapses anything else to a generic 500.
     console.error('Error in WhatsApp send POST:', error);
-    return toErrorResponse(error);
+    return decorate(toErrorResponse(error));
   }
 }
 

@@ -61,38 +61,7 @@ async function completedReply(
 export async function GET() {
   try {
     const ctx = await requireRole('admin');
-    const { data, error } = await admin()
-      .from('whatsapp_signup_attempts')
-      .select(
-        'id,connection_id,reconnect_id,context,created_at,state,lease_until,pending_access_token,expires_at'
-      )
-      .eq('account_id', ctx.accountId)
-      .eq('user_id', ctx.userId)
-      .neq('state', 'complete')
-      .is('discarded_at', null)
-      .gt('expires_at', new Date().toISOString())
-      .limit(20)
-      .order('created_at', { ascending: false });
-    if (error) throw new SignupError(503, 'Saved signup storage unavailable.');
-    return reply({
-      account_id: ctx.accountId,
-      attempts: (data ?? []).map((a) => ({
-        id: a.id,
-        connection_id: a.connection_id,
-        reconnect_id: a.reconnect_id,
-        context: signupContext(a.context),
-        created_at: a.created_at,
-        recoverable: Boolean(
-          a.pending_access_token &&
-          signupContext(a.context) &&
-          Date.parse(a.expires_at) > Date.now()
-        ),
-        busy:
-          a.state === 'processing' &&
-          Date.parse(a.lease_until) > Date.now() &&
-          Date.parse(a.expires_at) > Date.now(),
-      })),
-    });
+    return reply({ account_id: ctx.accountId, attempts: [] });
   } catch (error) {
     if (
       error instanceof UnauthorizedError ||
@@ -115,6 +84,7 @@ export async function GET() {
 export async function POST(request: Request) {
   let claimedId: string | undefined;
   let lease: string | undefined;
+  let actor: { userId: string; accountId: string } | undefined;
   try {
     if (
       request.headers.get('origin') !==
@@ -122,6 +92,7 @@ export async function POST(request: Request) {
     )
       return reply({ error: 'Invalid request origin' }, 403);
     const ctx = await requireRole('admin');
+    actor = ctx;
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== 'object')
       return reply({ error: 'Invalid signup request' }, 400);
@@ -165,19 +136,15 @@ export async function POST(request: Request) {
       }
       return reply({ success: true });
     }
-    if (body.action === 'discard') {
+    if (body.action === 'abandon') {
       if (!uuid(body.session_id))
-        throw new SignupError(400, 'Invalid saved session.');
-      const { error } = await db.rpc('discard_whatsapp_signup', {
+        throw new SignupError(400, 'Invalid setup session.');
+      const { error } = await db.rpc('clear_unfinished_whatsapp_signup', {
         p_attempt: body.session_id,
         p_user: ctx.userId,
         p_account: ctx.accountId,
       });
-      if (error)
-        throw new SignupError(
-          error.code === '42501' ? 403 : 409,
-          'Saved setup could not be discarded. It may be active or unavailable for this user and workspace.'
-        );
+      if (error) throw new SignupError(503, 'Could not clear setup.');
       return reply({ success: true });
     }
     if (body.action === 'sync') {
@@ -216,17 +183,48 @@ export async function POST(request: Request) {
         process.env.META_APP_SECRET
       ))
         throw new SignupError(503, 'WhatsApp onboarding is not configured.');
+      let reconnectId = body.reconnect_id ?? null;
       if (body.reconnect_id !== undefined) {
         if (!uuid(body.reconnect_id))
           throw new SignupError(400, 'Invalid reconnect request.');
         const { data, error } = await ctx.supabase
           .from('whatsapp_config')
-          .select('id')
+          .select('id,connected_at,status,onboarding_metadata')
           .eq('id', body.reconnect_id)
           .eq('account_id', ctx.accountId)
           .maybeSingle();
         if (error || !data) throw new SignupError(404, 'Connection not found.');
+        if (
+          data.connected_at === null &&
+          data.status === 'disconnected' &&
+          data.onboarding_metadata?.method === 'embedded_signup'
+        )
+          reconnectId = null;
       }
+      const { error: clearError } = await db.rpc(
+        'clear_unfinished_whatsapp_signup',
+        {
+          p_attempt: null,
+          p_user: ctx.userId,
+          p_account: ctx.accountId,
+        }
+      );
+      if (clearError)
+        throw new SignupError(503, 'Could not start a fresh setup.');
+      const { error: slotError } = await db.rpc(
+        'assert_whatsapp_connection_slot',
+        {
+          p_account: ctx.accountId,
+          p_existing: reconnectId,
+        }
+      );
+      if (slotError)
+        throw new SignupError(
+          slotError.code === '23514' ? 409 : 503,
+          slotError.code === '23514'
+            ? 'This workspace already has a WhatsApp connection. Manage the existing connection instead.'
+            : 'WhatsApp setup is temporarily unavailable. Please try again later.'
+        );
       const { count, error: countError } = await db
         .from('whatsapp_signup_attempts')
         .select('id', { count: 'exact', head: true })
@@ -243,7 +241,7 @@ export async function POST(request: Request) {
         .insert({
           user_id: ctx.userId,
           account_id: ctx.accountId,
-          reconnect_id: body.reconnect_id ?? null,
+          reconnect_id: reconnectId,
           onboarding_mode: body.mode ?? 'cloud_api',
         })
         .select('id')
@@ -251,15 +249,13 @@ export async function POST(request: Request) {
       if (error) throw new SignupError(503, 'Could not start signup.');
       return reply({ session_id: data.id, ...embeddedSignupConfig });
     }
-    const recovering = body.action === 'recover';
-    if (!recovering && body.action !== 'complete')
+    if (body.action !== 'complete')
       throw new SignupError(400, 'Invalid signup action.');
     let completionMode =
       body.completion_event === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
         ? 'coexistence'
         : 'cloud_api';
     if (
-      !recovering &&
       body.completion_event !== undefined &&
       ![
         'FINISH',
@@ -270,47 +266,33 @@ export async function POST(request: Request) {
       throw new SignupError(400, 'Invalid completion event.');
     const incomingContext = signupSessionContext(body.context);
     if (
-      !recovering &&
-      (!uuid(body.session_id) ||
-        !incomingContext ||
-        typeof body.code !== 'string' ||
-        !body.code.trim() ||
-        body.code.length > 4096)
+      !uuid(body.session_id) ||
+      !incomingContext ||
+      typeof body.code !== 'string' ||
+      !body.code.trim() ||
+      body.code.length > 4096
     )
       throw new SignupError(
         400,
         'Incomplete signup. A session, authorization code, WABA ID and phone number ID are required.'
       );
-    if (recovering && !uuid(body.session_id) && !uuid(body.connection_id))
-      throw new SignupError(400, 'A saved session or connection is required.');
-    let query = db
+    const query = db
       .from('whatsapp_signup_attempts')
       .select('*')
       .eq('account_id', ctx.accountId)
-      .eq('user_id', ctx.userId);
-    query = uuid(body.session_id)
-      ? query.eq('id', body.session_id)
-      : query
-          .eq('connection_id', body.connection_id)
-          .not('pending_access_token', 'is', null)
-          .neq('state', 'complete')
-          .order('created_at', { ascending: false })
-          .limit(1);
+      .eq('user_id', ctx.userId)
+      .eq('id', body.session_id);
     const { data: attempt, error: readError } = await query.maybeSingle();
     if (readError || !attempt)
       throw new SignupError(
         404,
-        'No saved signup is available for this user and workspace.'
+        'This setup is no longer available. Start setup again.'
       );
     // The authenticated start persisted the host's choice. A generic FINISH
     // event cannot downgrade an explicitly selected Business App flow.
     if (attempt.onboarding_mode === 'coexistence')
       completionMode = 'coexistence';
-    if (
-      !recovering &&
-      completionMode === 'cloud_api' &&
-      !signupContext(body.context)
-    ) {
+    if (completionMode === 'cloud_api' && !signupContext(body.context)) {
       const { error } = await db
         .from('whatsapp_signup_attempts')
         .update({ context: incomingContext })
@@ -324,26 +306,23 @@ export async function POST(request: Request) {
         success: false,
         needs_phone: true,
         message:
-          'Meta account access is saved. Continue Facebook setup to add and verify your phone number.',
+          'Finish adding and verifying your phone number in Facebook, then start setup again.',
       });
     }
-    const hash = recovering
-      ? null
-      : createHash('sha256').update(body.code).digest('hex');
+    const hash = createHash('sha256').update(body.code).digest('hex');
     if (attempt.state === 'complete') {
       if (
-        !recovering &&
-        (attempt.code_hash !== hash ||
-          attempt.context?.waba_id !== incomingContext?.waba_id ||
-          (incomingContext?.phone_number_id &&
-            attempt.context?.phone_number_id !==
-              incomingContext.phone_number_id) ||
-          (attempt.completion_mode &&
-            attempt.completion_mode !== completionMode &&
-            !(
-              attempt.completion_mode === 'coexistence' &&
-              attempt.pending_metadata?.onboarding_mode === 'coexistence'
-            )))
+        attempt.code_hash !== hash ||
+        attempt.context?.waba_id !== incomingContext?.waba_id ||
+        (incomingContext?.phone_number_id &&
+          attempt.context?.phone_number_id !==
+            incomingContext.phone_number_id) ||
+        (attempt.completion_mode &&
+          attempt.completion_mode !== completionMode &&
+          !(
+            attempt.completion_mode === 'coexistence' &&
+            attempt.pending_metadata?.onboarding_mode === 'coexistence'
+          ))
       )
         throw new SignupError(409, 'Signup context mismatch.');
       return completedReply(db, attempt.connection_id, attempt.completion_mode);
@@ -357,14 +336,14 @@ export async function POST(request: Request) {
         p_account: ctx.accountId,
         p_lease: lease,
         p_hash: hash,
-        p_context: recovering ? null : incomingContext,
-        p_mode: recovering ? null : completionMode,
+        p_context: incomingContext,
+        p_mode: completionMode,
       }
     );
     if (claimError || !claims?.[0])
       throw new SignupError(
         claimError?.code === '42501' ? 403 : 409,
-        'Signup is busy, expired, or requires new authorization. After an interruption wait three minutes, then recover saved setup.'
+        'Signup is busy, expired, or requires new authorization. Please wait a moment, then start setup again.'
       );
     const claimed = claims[0];
     if (claimed.state === 'complete')
@@ -515,7 +494,8 @@ export async function POST(request: Request) {
     return reply({ success: true, connection_id: connectionId });
   } catch (error) {
     if (claimedId) {
-      // Release only our lease; staged credentials remain durable for recovery.
+      // Release only our lease, then clear this failed setup. Registration
+      // uncertainty remains an internal safety marker, never a resumable setup.
       await admin()
         .rpc('release_whatsapp_signup', {
           p_attempt: claimedId,
@@ -525,6 +505,17 @@ export async function POST(request: Request) {
           () => {},
           () => {}
         );
+      if (actor)
+        await admin()
+          .rpc('clear_unfinished_whatsapp_signup', {
+            p_attempt: claimedId,
+            p_user: actor.userId,
+            p_account: actor.accountId,
+          })
+          .then(
+            () => {},
+            () => {}
+          );
     }
     if (
       error instanceof UnauthorizedError ||
@@ -542,8 +533,7 @@ export async function POST(request: Request) {
       );
     return reply(
       {
-        error:
-          'WhatsApp setup could not complete. Use Recover saved setup if credentials have already been saved.',
+        error: 'WhatsApp setup could not complete. Please start setup again.',
       },
       502
     );

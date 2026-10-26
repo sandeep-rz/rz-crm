@@ -317,6 +317,25 @@ export async function POST(request: Request) {
       }
     }
 
+    const { error: slotError } = await supabaseAdmin().rpc(
+      'assert_whatsapp_connection_slot',
+      {
+        p_account: accountId,
+        p_existing: connectionId ?? null,
+        p_phone: phone_number_id,
+      }
+    );
+    if (slotError)
+      return NextResponse.json(
+        {
+          error:
+            slotError.code === '23514'
+              ? 'This workspace already has a WhatsApp connection. Manage the existing connection instead.'
+              : 'WhatsApp setup is temporarily unavailable. Please try again later.',
+        },
+        { status: slotError.code === '23514' ? 409 : 503 }
+      );
+
     // Reject if another account has already claimed this phone_number_id.
     // The webhook resolves inbound traffic by this globally unique Meta id;
     // allowing a second workspace to claim it would make tenant routing

@@ -52,6 +52,10 @@ afterEach(async () => {
   await act(() => root.unmount());
   host.remove();
 });
+const apiCalls = () =>
+  fetcher.mock.calls.filter(
+    (call) => JSON.parse(String(call[1]?.body ?? '{}')).action !== 'abandon'
+  );
 async function click(text: string) {
   await act(async () => {
     [...host.querySelectorAll('button')]
@@ -95,7 +99,7 @@ it.each([true, false])(
     }
     await event();
     await code();
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(apiCalls()).toHaveLength(3);
     expect(changed).toHaveBeenCalledOnce();
     expect(host.textContent).toContain('WhatsApp connected');
     expect(login.mock.calls[0]).toHaveLength(2);
@@ -105,16 +109,16 @@ it('handles cancellation without exchanging a code', async () => {
   await launch();
   await event('CANCEL');
   expect(host.textContent).toContain('Signup cancelled');
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(apiCalls()).toHaveLength(1);
   expect(changed).not.toHaveBeenCalled();
 });
 it('handles incomplete Facebook authorization', async () => {
   await launch();
   await act(async () => callback({}));
   expect(host.textContent).toContain('cancelled or incomplete');
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(apiCalls()).toHaveLength(1);
 });
-it('refreshes recovery state after backend failure', async () => {
+it('keeps a failed setup open with a fresh-start message', async () => {
   fetcher
     .mockReset()
     .mockResolvedValueOnce(
@@ -136,7 +140,7 @@ it('handles Meta signup errors', async () => {
   await launch();
   await event('ERROR');
   expect(host.textContent).toContain('Meta reported a signup error');
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(apiCalls()).toHaveLength(1);
 });
 it('keeps interactive signup open beyond two minutes and completes normally', async () => {
   vi.useFakeTimers();
@@ -151,30 +155,32 @@ it('keeps interactive signup open beyond two minutes and completes normally', as
   expect(changed).toHaveBeenCalledOnce();
   expect(host.textContent).toContain('WhatsApp connected');
 });
-it('recovers a saved setup without opening Facebook again', async () => {
-  fetcher
-    .mockReset()
-    .mockResolvedValueOnce(
-      new Response(JSON.stringify({ session_id: 'session' }))
-    )
-    .mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: 'Finalization failed' }), {
-        status: 503,
-      })
-    )
-    .mockImplementation(
-      async () => new Response(JSON.stringify({ success: true }))
-    );
+it('requires a fresh Facebook setup after failure and never offers recovery', async () => {
+  fetcher.mockImplementation(
+    async (_url, init) =>
+      new Response(
+        JSON.stringify(
+          JSON.parse(String(init?.body)).action === 'start'
+            ? { session_id: 'fresh-session' }
+            : { error: 'Connection failed' }
+        ),
+        {
+          status: JSON.parse(String(init?.body)).action === 'start' ? 200 : 503,
+        }
+      )
+  );
   await launch();
   await event();
   await act(async () => callback({ authResponse: { code: 'code' } }));
-  await click('Recover saved setup');
-  expect(JSON.parse(fetcher.mock.calls[2][1]!.body as string)).toEqual({
-    action: 'recover',
-    session_id: 'session',
-  });
-  expect(login).toHaveBeenCalledOnce();
-  expect(host.textContent).toContain('setup recovered');
+  expect(host.textContent).not.toMatch(/Recover saved|Discard saved/);
+  await click('Connect WhatsApp');
+  await click('Continue with Facebook');
+  expect(login).toHaveBeenCalledTimes(2);
+  expect(
+    fetcher.mock.calls.some(
+      (call) => JSON.parse(String(call[1]?.body)).action === 'recover'
+    )
+  ).toBe(false);
 });
 it('ignores authorization callbacks from a cancelled earlier launch', async () => {
   await launch();
@@ -186,103 +192,29 @@ it('ignores authorization callbacks from a cancelled earlier launch', async () =
   await launch();
   await event();
   await act(async () => earlier({ authResponse: { code: 'stale-code' } }));
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(apiCalls()).toHaveLength(2);
   expect(changed).not.toHaveBeenCalled();
 });
 
-const saved = {
-  id: 'durable-session',
-  connection_id: null,
-  reconnect_id: null,
-  context: { waba_id: '123', phone_number_id: '456' },
-  created_at: '2026-10-08T00:00:00Z',
-  recoverable: true,
-  busy: false,
-};
-it('shows recovery after remount with a discovered connectionless attempt', async () => {
-  fetcher
-    .mockReset()
-    .mockImplementation(
-      async () => new Response(JSON.stringify({ success: true }))
-    );
-  await act(() =>
-    root.render(
-      <WhatsAppEmbeddedSignup
-        key="refreshed-browser"
-        attempts={[saved]}
-        onChanged={changed}
-      />
-    )
-  );
-  await click('Recover saved setup');
-  expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual({
-    action: 'recover',
-    session_id: saved.id,
-  });
-  expect(login).not.toHaveBeenCalled();
-  expect(changed).toHaveBeenCalledOnce();
-});
-it('does not offer recovery merely because a connection exists', async () => {
-  await act(() =>
-    root.render(
-      <WhatsAppEmbeddedSignup
-        reconnectId="working-number"
-        onChanged={changed}
-      />
-    )
-  );
-  expect(host.textContent).not.toContain('Recover saved setup');
-});
-it('explicit discard requires confirmation and sends only the attempt ID', async () => {
-  fetcher
-    .mockReset()
-    .mockImplementation(
-      async () => new Response(JSON.stringify({ success: true }))
-    );
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  await act(() =>
-    root.render(
-      <WhatsAppEmbeddedSignup attempts={[saved]} onChanged={changed} />
-    )
-  );
-  await click('Discard saved setup');
-  expect(fetcher).not.toHaveBeenCalled();
-  confirm.mockReturnValue(true);
-  await click('Discard saved setup');
-  expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual({
-    action: 'discard',
-    session_id: saved.id,
-  });
-  expect(host.textContent).toContain('connections are unchanged');
-  expect(changed).toHaveBeenCalledOnce();
-  confirm.mockRestore();
-});
-it('Cancel signup leaves durable attempts available and never discards them', async () => {
-  await act(() =>
-    root.render(
-      <WhatsAppEmbeddedSignup attempts={[saved]} onChanged={changed} />
-    )
-  );
+it('automatically clears cancelled setup without showing saved, recover or discard controls', async () => {
   await launch();
   await click('Cancel signup');
-  expect(fetcher).toHaveBeenCalledOnce();
-  expect(host.textContent).toContain('Recover saved setup');
-  expect(host.textContent).toContain('Discard saved setup');
-});
-it('disables recovery and discard while another worker holds the attempt lease', async () => {
-  await act(() =>
-    root.render(
-      <WhatsAppEmbeddedSignup
-        attempts={[{ ...saved, busy: true }]}
-        onChanged={changed}
-      />
+  expect(
+    fetcher.mock.calls.some(
+      (call) => JSON.parse(call[1]!.body as string).action === 'abandon'
     )
+  ).toBe(true);
+  expect(host.textContent).not.toMatch(
+    /Saved setup|Recover saved|Discard saved/
   );
-  const actions = [...host.querySelectorAll('button')].filter((b) =>
-    /Recover|Discard/.test(b.textContent!)
-  );
-  expect(actions).toHaveLength(2);
-  expect(actions.every((b) => b.disabled)).toBe(true);
+});
+it('clears a prepared setup on unmount so a later visit starts from scratch', async () => {
+  await act(() => root.render(<div />));
+  expect(
+    fetcher.mock.calls.some(
+      (call) => JSON.parse(call[1]!.body as string).action === 'abandon'
+    )
+  ).toBe(true);
 });
 
 it('uses Meta’s current standard v4 launch options and retries a silent launch without another session', async () => {
@@ -300,24 +232,24 @@ it('uses Meta’s current standard v4 launch options and retries a silent launch
   await click('Popup didn’t open?');
   expect(host.textContent).toContain('Allow popups for this site');
   await click('Continue with Facebook');
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(apiCalls()).toHaveLength(2);
   expect(login).toHaveBeenCalledTimes(2);
   await event();
   await act(() => earlier({ authResponse: { code: 'stale-code' } }));
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(apiCalls()).toHaveLength(2);
   await act(() => callback({ authResponse: { code: 'current-code' } }));
-  expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(apiCalls()).toHaveLength(4);
   expect(host.textContent).toContain('WhatsApp connected');
 });
 
 it('calls FB.login before the actual click handler returns without any intervening request', async () => {
   await click('Connect WhatsApp');
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(apiCalls()).toHaveLength(1);
   expect(login).not.toHaveBeenCalled();
   let returned = false;
   login.mockImplementationOnce((cb) => {
     expect(returned).toBe(false);
-    expect(fetcher).toHaveBeenCalledOnce();
+    expect(apiCalls()).toHaveLength(1);
     callback = cb;
   });
   await act(() => {
@@ -363,7 +295,7 @@ it.each([undefined, null, { error: { code: 190, message: 'private-token' } }])(
     await act(() => callback(response));
     expect(host.textContent).not.toContain('Waiting for Facebook');
     expect(host.textContent).not.toContain('private-token');
-    expect(fetcher).toHaveBeenCalledOnce();
+    expect(apiCalls()).toHaveLength(1);
   }
 );
 it('logs only safe development milestones, not SDK payloads, OAuth codes or tokens', async () => {
@@ -391,7 +323,7 @@ it('emits no diagnostic logs in production', () => {
   signupDiagnostic('signup_cancelled_or_error', { event: 'CANCEL' });
   expect(log).not.toHaveBeenCalled();
 });
-it('cancelling clears the launch watchdog and preserves the durable session', async () => {
+it('cancelling clears the launch watchdog and abandons the temporary session', async () => {
   vi.useFakeTimers();
   await launch();
   await click('Cancel signup');
@@ -400,7 +332,7 @@ it('cancelling clears the launch watchdog and preserves the durable session', as
   });
   expect(host.textContent).toContain('Signup cancelled');
   expect(host.textContent).not.toContain('Facebook has not confirmed');
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(apiCalls()).toHaveLength(1);
 });
 
 it('reports enforced CSP directives in development without logging blocked URLs', async () => {
@@ -464,16 +396,16 @@ it('launches Coexistence and accepts WABA-only session completion', async () => 
 it('exchanges the short-lived code before waiting for phone selection and ignores repeated SDK callbacks', async () => {
   await launch();
   await act(() => callback({ authResponse: { code: 'short-lived' } }));
-  expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({
+  expect(JSON.parse(String(apiCalls()[1][1]?.body))).toEqual({
     action: 'authorize',
     session_id: 'session',
     code: 'short-lived',
   });
   expect(changed).not.toHaveBeenCalled();
   await act(() => callback({ authResponse: { code: 'short-lived' } }));
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(apiCalls()).toHaveLength(2);
   await event();
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(apiCalls()).toHaveLength(3);
 });
 it.each(['FINISH_OBO_MIGRATION', 'FINISH_GRANT_ONLY_API_ACCESS'])(
   'classifies %s without an endless authorization wait',

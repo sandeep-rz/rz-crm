@@ -120,7 +120,19 @@ beforeEach(() => {
     subscribedAt: '2026-10-08T12:00:00Z',
   });
   h.rpc.mockImplementation(async (name, args) => {
-    if (name === h.conflict) return { error: { code: '23505' } };
+    if (name === h.conflict)
+      return {
+        error: {
+          code: name === 'assert_whatsapp_connection_slot' ? '23514' : '23505',
+        },
+      };
+    if (
+      [
+        'clear_unfinished_whatsapp_signup',
+        'assert_whatsapp_connection_slot',
+      ].includes(name)
+    )
+      return { data: null, error: null };
     if (name === 'claim_whatsapp_signup') {
       Object.assign(h.attempt, {
         state: 'processing',
@@ -192,9 +204,7 @@ it.each([
 });
 it('enforces user/account scope for recovery', async () => {
   h.attempt.account_id = 'foreign';
-  expect(
-    (await POST(request({ action: 'recover', session_id: id }))).status
-  ).toBe(404);
+  expect((await POST(request(body))).status).toBe(404);
   expect(h.validate).not.toHaveBeenCalled();
   expect(h.activate).not.toHaveBeenCalled();
   expect(h.filters).toContainEqual([
@@ -221,29 +231,27 @@ it('failed reconnect never writes replacement credentials or resets state on the
   expect(
     h.writes.every((write) => write.table === 'whatsapp_signup_attempts')
   ).toBe(true);
-  expect(h.attempt.pending_access_token).toBeTruthy();
+  expect(h.rpc).toHaveBeenCalledWith('clear_unfinished_whatsapp_signup', {
+    p_attempt: id,
+    p_user: 'user',
+    p_account: 'account',
+  });
   expect(h.attempt.state).toBe('failed');
   expect(
     h.rpc.mock.calls.some((call) => call[0] === 'finish_whatsapp_signup')
   ).toBe(false);
 });
-it('recovers Meta success followed by DB finalization failure without another exchange', async () => {
+it('automatically clears a failed finalization instead of offering saved setup recovery', async () => {
   h.failFinish = true;
   expect((await POST(request(body))).status).toBe(503);
-  expect(h.attempt.pending_access_token).toBeTruthy();
-  h.failFinish = false;
-  expect(
-    (await POST(request({ action: 'recover', session_id: id }))).status
-  ).toBe(200);
+  expect(h.rpc).toHaveBeenCalledWith('clear_unfinished_whatsapp_signup', {
+    p_attempt: id,
+    p_user: 'user',
+    p_account: 'account',
+  });
   expect(h.exchange).toHaveBeenCalledOnce();
-  expect(h.validate).toHaveBeenCalledOnce();
-  expect(h.validate.mock.calls[0]).toEqual([
-    'private-token',
-    context,
-    'cloud_api',
-  ]);
 });
-it('recovers an interrupted process from staged credentials and saved registration outcome', async () => {
+it('preserves duplicate-registration protection within an active callback replay', async () => {
   Object.assign(h.attempt, {
     state: 'processing',
     pending_access_token: encrypt('saved-token'),
@@ -251,10 +259,7 @@ it('recovers an interrupted process from staged credentials and saved registrati
     registration_requested_at: '2026-10-08T10:00:00Z',
     connection_id: connection,
   });
-  expect(
-    (await POST(request({ action: 'recover', connection_id: connection })))
-      .status
-  ).toBe(200);
+  expect((await POST(request(body))).status).toBe(200);
   expect(h.exchange).not.toHaveBeenCalled();
   expect(h.validate).toHaveBeenCalledWith('saved-token', context, 'cloud_api');
   expect(h.activate).toHaveBeenCalledWith(
@@ -532,6 +537,13 @@ it('WABA-only standard completion stays awaiting phone verification', async () =
     success: false,
     needs_phone: true,
   });
+  expect(h.exchange).not.toHaveBeenCalled();
+  expect(h.activate).not.toHaveBeenCalled();
+});
+
+it('rejects a second workspace connection before inserting an attempt or calling Meta', async () => {
+  h.conflict = 'assert_whatsapp_connection_slot';
+  expect((await POST(request({ action: 'start' }))).status).toBe(409);
   expect(h.exchange).not.toHaveBeenCalled();
   expect(h.activate).not.toHaveBeenCalled();
 });

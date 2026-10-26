@@ -17,7 +17,6 @@ import {
   type SignupMode,
   type SignupSessionContext,
   embeddedSignupConfig,
-  type SavedSignupAttempt,
 } from '@/lib/whatsapp/embedded-signup-context';
 
 type FacebookResponse = {
@@ -133,13 +132,13 @@ async function api(body: object) {
 
 export function WhatsAppEmbeddedSignup({
   reconnectId,
-  attempts = [],
+  initialMode = 'coexistence',
   prominent = false,
   onManualSetup,
   onChanged,
 }: {
   reconnectId?: string;
-  attempts?: SavedSignupAttempt[];
+  initialMode?: SignupMode;
   prominent?: boolean;
   onManualSetup?: () => void;
   onChanged: () => Promise<unknown>;
@@ -148,7 +147,7 @@ export function WhatsAppEmbeddedSignup({
     'idle' | 'preparing' | 'ready' | 'signup' | 'unconfirmed' | 'saving'
   >('idle');
   const [message, setMessage] = useState('');
-  const [mode, setMode] = useState<SignupMode>('coexistence');
+  const [mode, setMode] = useState<SignupMode>(initialMode);
   const preparationGeneration = useRef(0);
   const prepared = useRef<{ session: string; fb: Facebook } | null>(null);
   const run = useRef<{
@@ -164,15 +163,32 @@ export function WhatsAppEmbeddedSignup({
     if (launchWatchdog.current) clearTimeout(launchWatchdog.current);
     launchWatchdog.current = null;
   };
-  const [recoverySession, setRecoverySession] = useState<string | null>(null);
+  const abandon = (session?: string) => {
+    if (!session) return;
+    void Promise.resolve(
+      fetch('/api/whatsapp/embedded-signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'abandon', session_id: session }),
+        keepalive: true,
+      })
+    ).catch(() => {});
+  };
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
+      abandon(prepared.current?.session);
+      prepared.current = null;
       run.current = null;
       clearLaunchWatchdog();
     };
+  }, []);
+  useEffect(() => {
+    const leave = () => abandon(prepared.current?.session);
+    window.addEventListener('pagehide', leave);
+    return () => window.removeEventListener('pagehide', leave);
   }, []);
   useEffect(() => {
     if (process.env.NODE_ENV !== 'development') return;
@@ -200,6 +216,7 @@ export function WhatsAppEmbeddedSignup({
     clearLaunchWatchdog();
     preparationGeneration.current++;
     run.current = null;
+    abandon(prepared.current?.session);
     prepared.current = null;
     setMessage(text);
     setPhase('idle');
@@ -216,7 +233,6 @@ export function WhatsAppEmbeddedSignup({
       return;
     current.submitted = true;
     setPhase('saving');
-    setRecoverySession(prepared.current.session);
     try {
       await current.authorization;
       const result = await api({
@@ -230,7 +246,7 @@ export function WhatsAppEmbeddedSignup({
         if (result.needs_phone) {
           stop(result.message);
         } else {
-          setRecoverySession(null);
+          prepared.current = null;
           stop(
             result.sync_pending
               ? 'WhatsApp connected. Background synchronization needs attention; check the status below.'
@@ -246,7 +262,9 @@ export function WhatsAppEmbeddedSignup({
             : 'Connection failed. Retry signup.'
         );
     } finally {
-      if (alive.current) await onChanged();
+      // Reflect a connection that may have completed even if its HTTP response
+      // was lost; this never discovers or resumes an abandoned setup.
+      if (alive.current) await onChanged().catch(() => {});
     }
   };
   useEffect(() => {
@@ -289,6 +307,7 @@ export function WhatsAppEmbeddedSignup({
   });
   async function prepare() {
     const generation = ++preparationGeneration.current;
+    abandon(prepared.current?.session);
     prepared.current = null;
     setPhase('preparing');
     setMessage('');
@@ -310,6 +329,8 @@ export function WhatsAppEmbeddedSignup({
           buffered: Boolean(fb.__buffer),
         });
         setPhase('ready');
+      } else {
+        abandon(data.session_id);
       }
     } catch (error) {
       if (alive.current && generation === preparationGeneration.current)
@@ -321,66 +342,10 @@ export function WhatsAppEmbeddedSignup({
   useEffect(() => {
     // Prepare once per selected path while the panel opens. The actual login
     // stays synchronous in the user's click, preserving popup permission.
-    if (!attempts.length) void prepare();
+    void prepare();
     // prepare deliberately captures only the selected mode/reconnect identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, reconnectId]);
-  async function recover(session = recoverySession) {
-    setPhase('saving');
-    setMessage('Checking saved credentials and current Meta state…');
-    try {
-      await api({
-        action: 'recover',
-        ...(session ? { session_id: session } : { connection_id: reconnectId }),
-      });
-      if (alive.current) {
-        setRecoverySession(null);
-        stop(
-          'WhatsApp setup recovered. Check payment readiness in WhatsApp Manager.'
-        );
-      }
-    } catch (error) {
-      if (alive.current)
-        stop(
-          error instanceof Error
-            ? error.message
-            : 'Recovery failed. Retry saved setup.'
-        );
-    } finally {
-      if (alive.current) await onChanged();
-    }
-  }
-  async function discard(session: string) {
-    if (
-      !window.confirm(
-        'Discard this saved setup? Your working WhatsApp connection will stay unchanged. This does not undo changes already made in Meta.'
-      )
-    )
-      return;
-    setPhase('saving');
-    try {
-      await api({ action: 'discard', session_id: session });
-      if (alive.current) {
-        if (recoverySession === session) setRecoverySession(null);
-        stop('Saved setup discarded. Your WhatsApp connections are unchanged.');
-      }
-    } catch (error) {
-      if (alive.current)
-        stop(
-          error instanceof Error
-            ? error.message
-            : 'Could not discard saved setup.'
-        );
-    } finally {
-      if (alive.current) await onChanged();
-    }
-  }
-  const visibleAttempts = attempts.filter(
-    (a) =>
-      !reconnectId ||
-      a.connection_id === reconnectId ||
-      a.reconnect_id === reconnectId
-  );
   function launch(event?: { isTrusted?: boolean }) {
     if (!prepared.current || prepared.current.fb.__buffer) {
       signupDiagnostic('sdk_not_ready');
@@ -519,44 +484,46 @@ export function WhatsAppEmbeddedSignup({
             </p>
           </div>
         </div>
-        <fieldset
-          disabled={!['idle', 'ready'].includes(phase)}
-          className="w-full space-y-3 text-left"
-        >
-          <legend className="text-sm font-semibold">
-            Do you use the WhatsApp Business app?
-          </legend>
-          {(
-            [
+        {!reconnectId && (
+          <fieldset
+            disabled={!['idle', 'ready'].includes(phase)}
+            className="w-full space-y-3 text-left"
+          >
+            <legend className="text-sm font-semibold">
+              Do you use the WhatsApp Business app?
+            </legend>
+            {(
               [
-                'coexistence',
-                'Connect my WhatsApp Business App',
-                'Keep your Business app and connect the same number to your shared inbox.',
-              ],
-              [
-                'cloud_api',
-                'Connect a new WhatsApp number',
-                'Set up a new or eligible number for CRM messaging. Meta guides you through verification.',
-              ],
-            ] as const
-          ).map(([value, label, description]) => (
-            <label key={value} className="flex gap-3 rounded-xl border p-4">
-              <input
-                type="radio"
-                name={`signup-mode-${reconnectId || 'new'}`}
-                value={value}
-                checked={mode === value}
-                onChange={() => setMode(value)}
-              />
-              <span>
-                <span className="block text-sm font-medium">{label}</span>
-                <span className="text-muted-foreground text-xs">
-                  {description}
+                [
+                  'coexistence',
+                  'Connect my WhatsApp Business App',
+                  'Keep your Business app and connect the same number to your shared inbox.',
+                ],
+                [
+                  'cloud_api',
+                  'Connect a new WhatsApp number',
+                  'Set up a new or eligible number for CRM messaging. Meta guides you through verification.',
+                ],
+              ] as const
+            ).map(([value, label, description]) => (
+              <label key={value} className="flex gap-3 rounded-xl border p-4">
+                <input
+                  type="radio"
+                  name={`signup-mode-${reconnectId || 'new'}`}
+                  value={value}
+                  checked={mode === value}
+                  onChange={() => setMode(value)}
+                />
+                <span>
+                  <span className="block text-sm font-medium">{label}</span>
+                  <span className="text-muted-foreground text-xs">
+                    {description}
+                  </span>
                 </span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
+              </label>
+            ))}
+          </fieldset>
+        )}
         {mode === 'coexistence' && (
           <div className="text-muted-foreground space-y-2 text-left text-xs leading-relaxed">
             <p>
@@ -650,56 +617,6 @@ export function WhatsAppEmbeddedSignup({
           />
           Secure setup through Facebook · Your business stays in control
         </p>
-        {recoverySession &&
-          !visibleAttempts.some((a) => a.id === recoverySession) &&
-          phase === 'idle' && (
-            <Button variant="outline" onClick={() => void recover()}>
-              Recover saved setup
-            </Button>
-          )}
-        {['idle', 'ready'].includes(phase) &&
-          visibleAttempts.map((attempt) => (
-            <div
-              key={attempt.id}
-              className="bg-muted/30 w-full space-y-3 rounded-xl border p-4 text-left"
-            >
-              <p className="text-sm">
-                Saved setup ·{' '}
-                {attempt.context
-                  ? 'WhatsApp selection saved'
-                  : 'Facebook setup unfinished'}{' '}
-                · {new Date(attempt.created_at).toLocaleString()}
-              </p>
-              {!attempt.recoverable && !attempt.busy && (
-                <p className="text-sm">
-                  Saved authorization is unavailable or expired. Discard this
-                  setup before starting again.
-                </p>
-              )}
-              {attempt.busy && (
-                <p className="text-sm">
-                  Setup is being processed. Wait three minutes after an
-                  interruption, then refresh.
-                </p>
-              )}
-              {attempt.recoverable && (
-                <Button
-                  variant="outline"
-                  disabled={attempt.busy}
-                  onClick={() => void recover(attempt.id)}
-                >
-                  Recover saved setup
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                disabled={attempt.busy}
-                onClick={() => void discard(attempt.id)}
-              >
-                Discard saved setup
-              </Button>
-            </div>
-          ))}
         {message.startsWith('WhatsApp connected.') && (
           <a href="/inbox" className="text-sm underline">
             Open inbox

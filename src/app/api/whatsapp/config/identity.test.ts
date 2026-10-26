@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
+  full: false,
   mode: 'coexistence',
   phone: '456',
   waba: '123',
@@ -17,6 +18,7 @@ vi.mock('@/lib/whatsapp/meta-api', () => ({
 }));
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({
+    rpc: async () => ({ error: h.full ? { code: '23514' } : null }),
     from: () => {
       const b = {
         select: () => b,
@@ -71,6 +73,7 @@ const request = () =>
   });
 beforeEach(() => {
   vi.clearAllMocks();
+  h.full = false;
   h.mode = 'coexistence';
   h.phone = '456';
   h.waba = '123';
@@ -107,4 +110,13 @@ it('preserves standard Cloud API manual replacement and PIN registration', async
   expect((await POST(request())).status).toBe(200);
   expect(h.register).toHaveBeenCalledOnce();
   expect(h.write).toHaveBeenCalledOnce();
+});
+
+it('rejects manual addition when the workspace slot is occupied before registration or persistence', async () => {
+  h.full = true;
+  h.phone = '999';
+  expect((await POST(request())).status).toBe(409);
+  expect(h.register).not.toHaveBeenCalled();
+  expect(h.subscribe).not.toHaveBeenCalled();
+  expect(h.write).not.toHaveBeenCalled();
 });

@@ -124,6 +124,12 @@ BEGIN
     RAISE EXCEPTION 'internal function grants do not preserve the RZ runtime/dedupe boundary';
   END IF;
 
+  IF has_function_privilege('authenticated','public.clear_unfinished_whatsapp_signup(uuid,uuid,uuid)','EXECUTE') OR
+     NOT has_function_privilege('service_role','public.assert_whatsapp_connection_slot(uuid,uuid,text)','EXECUTE') OR
+     NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.whatsapp_config'::regclass AND tgname='enforce_one_whatsapp_connection' AND tgenabled='O') THEN
+    RAISE EXCEPTION 'WhatsApp single-connection policy is missing (migration 84)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

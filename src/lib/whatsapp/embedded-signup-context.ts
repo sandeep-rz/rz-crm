@@ -115,14 +115,3 @@ export const embeddedSignupConfig = {
   // This is independent of the existing server-side Graph API version.
   sdkVersion: 'v26.0',
 };
-
-/** Safe browser summary; credentials, code hashes and PINs stay server-side. */
-export type SavedSignupAttempt = {
-  id: string;
-  connection_id: string | null;
-  reconnect_id: string | null;
-  context: SignupContext | null;
-  created_at: string;
-  recoverable: boolean;
-  busy: boolean;
-};

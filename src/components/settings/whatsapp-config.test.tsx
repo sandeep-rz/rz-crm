@@ -108,9 +108,9 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 const click = async (text: string) => {
-  const button = [...host.querySelectorAll('button')].find((b) =>
-    b.textContent?.includes(text)
-  );
+  const button = [
+    ...host.querySelectorAll<HTMLElement>('button, summary'),
+  ].find((b) => b.textContent?.includes(text));
   expect(button, text).toBeTruthy();
   await act(() => button!.click());
 };
@@ -199,7 +199,7 @@ it('explicit testing uses the live endpoint and does not rewrite local connectio
   await act(async () => {
     await (h.cards.at(-1)!.onManage as () => Promise<void>)();
   });
-  await click('Advanced Options');
+  await click('Advanced settings');
   fetcher.mockResolvedValue(
     new Response(
       JSON.stringify({
@@ -221,7 +221,7 @@ it('changing inbound media retention invalidates local configuration', async () 
   await act(async () => {
     await (h.cards.at(-1)!.onManage as () => Promise<void>)();
   });
-  await click('Advanced Options');
+  await click('Advanced settings');
   fetcher.mockResolvedValue(new Response(JSON.stringify({ success: true })));
   const toggle = host.querySelector<HTMLButtonElement>('[role="switch"]');
   expect(toggle).toBeTruthy();
@@ -293,25 +293,20 @@ it('backs off active sync polling across fresh connection snapshots and stops on
   }
 });
 
-it('keeps setup hidden until Add is clicked and opens management in a dialog', async () => {
+it('does not offer another connection and opens a simple management dialog', async () => {
   await act(() => root.render(<WhatsAppConfig />));
+  expect(
+    [...host.querySelectorAll('button')].some((b) => b.textContent === 'Add')
+  ).toBe(false);
   expect(host.querySelector('[role="dialog"]')).toBeNull();
-  expect(host.textContent).not.toContain('Continue with Facebook');
-  await click('Add');
-  expect(host.querySelector('[role="dialog"]')?.textContent).toContain(
-    'Add WhatsApp connection'
-  );
-  expect(host.querySelector('[role="dialog"]')?.textContent).toContain(
-    'Connect WhatsApp'
-  );
   await act(async () => {
     await (h.cards.at(-1)!.onManage as () => Promise<void>)();
   });
-  const dialogs = host.querySelectorAll('[role="dialog"]');
-  expect(dialogs).toHaveLength(1);
-  expect(dialogs[0].textContent).toContain('Manage connection');
-  expect(dialogs[0].textContent).not.toContain('Add WhatsApp connection');
+  const dialog = host.querySelector('[role="dialog"]');
+  expect(dialog?.textContent).toContain('Connected to WhatsApp');
+  expect(dialog?.textContent).toContain('Open inbox');
+  expect(dialog?.querySelector('details')?.open).toBe(false);
+  expect(dialog?.textContent).not.toContain('Continue with Facebook');
   await click('Done');
   expect(host.querySelector('[role="dialog"]')).toBeNull();
-  expect(host.textContent).not.toContain('Live Meta status not checked');
 });

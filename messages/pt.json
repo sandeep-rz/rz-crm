@@ -167,12 +167,17 @@
     },
     "responseTimeChart": {
       "title": "Tempo médio da primeira resposta",
-      "description": "Minutos para responder à primeira mensagem sem resposta de um cliente, por dia da semana",
+      "description": "Tempo até uma resposta da equipe CRM ou da IA, por dia",
       "target": "meta {minutes}min",
       "thisWeek": "Esta semana:",
       "lastWeek": "Semana passada:",
       "noReplies": "Nenhuma resposta registrada ainda",
-      "noRepliesHint": "Este gráfico é preenchido conforme você responde às mensagens dos clientes."
+      "noRepliesHint": "Este gráfico é preenchido conforme respostas atribuídas à equipe CRM ou à IA são registradas.",
+      "humanReplies": "Equipe CRM",
+      "aiReplies": "IA",
+      "loadFailed": "Não foi possível carregar as métricas de resposta.",
+      "retry": "Tentar novamente",
+      "measurementNote": "Apenas respostas com remetente CRM registrado ou origem de IA são medidas. Histórico importado, mensagens do aplicativo e confirmações automáticas são excluídos."
     },
     "emptyState": {
       "title": "Ainda não há dados suficientes"

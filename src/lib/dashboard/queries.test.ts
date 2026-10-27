@@ -46,28 +46,45 @@ describe('loadConversationsSeries', () => {
 });
 
 describe('loadResponseTime', () => {
-  it('includes conversations beyond the first 1000 rows', async () => {
-    const customerAt = new Date(2026, 4, 18, 9, 0, 0);
-    const replyAt = new Date(2026, 4, 18, 9, 10, 0);
-    const rows: Record<string, unknown>[] = [];
-    for (let c = 0; c < 600; c++) {
-      const conversation_id = `conv-${String(c).padStart(4, '0')}`;
-      rows.push({
-        conversation_id,
-        sender_type: 'customer',
-        created_at: customerAt.toISOString(),
-      });
-      rows.push({
-        conversation_id,
-        sender_type: 'agent',
-        created_at: replyAt.toISOString(),
-      });
-    }
-    const { db } = cappedDb(rows);
-    const summary = await loadResponseTime(db);
-    const monday = summary.buckets[0];
-    expect(monday.samples).toBe(600);
-    expect(monday.avgMinutes).toBe(10);
-    expect(summary.thisWeekAvg).toBe(10);
+  const series = {
+    buckets: Array.from({ length: 7 }, (_, dow) => ({
+      dow,
+      avgMinutes: null,
+      samples: 0,
+    })),
+    thisWeekAvg: null,
+    lastWeekAvg: null,
+  };
+  it('requests only the selected workspace and retains separate series', async () => {
+    const data = {
+      timeZone: 'Asia/Kolkata',
+      human: series,
+      ai: { ...series, thisWeekAvg: 1 },
+    };
+    const rpc = vi.fn().mockResolvedValue({ data, error: null });
+    expect(
+      await loadResponseTime({ rpc } as unknown as SupabaseClient, 'workspace')
+    ).toEqual(data);
+    expect(rpc).toHaveBeenCalledExactlyOnceWith('dashboard_response_metrics', {
+      p_account: 'workspace',
+    });
+  });
+  it('surfaces a denied or failed query rather than manufacturing zeroes', async () => {
+    const rpc = vi
+      .fn()
+      .mockResolvedValue({ data: null, error: { code: '42501' } });
+    await expect(
+      loadResponseTime({ rpc } as unknown as SupabaseClient, 'foreign')
+    ).rejects.toThrow('Could not load');
+  });
+  it.each([
+    null,
+    {},
+    { timeZone: 'UTC', human: series, ai: { ...series, thisWeekAvg: -1 } },
+  ])('rejects an incomplete or invalid response: %j', async (data) => {
+    const rpc = vi.fn().mockResolvedValue({ data, error: null });
+    await expect(
+      loadResponseTime({ rpc } as unknown as SupabaseClient, 'workspace')
+    ).rejects.toThrow('Invalid');
   });
 });

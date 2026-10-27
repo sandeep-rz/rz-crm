@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { useResponseTime } from '@/hooks/use-response-time';
 import { formatCurrency } from '@/lib/currency';
 import { MessageSquare, UserPlus, DollarSign, Send } from 'lucide-react';
 
@@ -11,14 +12,12 @@ import {
   loadConversationsSeries,
   loadMetrics,
   loadPipelineDonut,
-  loadResponseTime,
 } from '@/lib/dashboard/queries';
 import type {
   ActivityItem,
   ConversationsSeriesPoint,
   MetricsBundle,
   PipelineDonutData,
-  ResponseTimeSummary,
 } from '@/lib/dashboard/types';
 
 import { MetricCard } from '@/components/dashboard/metric-card';
@@ -55,10 +54,7 @@ export default function DashboardPage() {
   const [pipeline, setPipeline] = useState<PipelineDonutData | null>(null);
   const [pipelineLoading, setPipelineLoading] = useState(true);
 
-  const [responseTime, setResponseTime] = useState<ResponseTimeSummary | null>(
-    null
-  );
-  const [responseTimeLoading, setResponseTimeLoading] = useState(true);
+  const responseTime = useResponseTime();
 
   const [activity, setActivity] = useState<ActivityItem[] | null>(null);
   const [activityLoading, setActivityLoading] = useState(true);
@@ -83,11 +79,6 @@ export default function DashboardPage() {
       .then((p) => setPipeline(p))
       .catch((err) => console.error('[dashboard] pipeline failed:', err))
       .finally(() => setPipelineLoading(false));
-
-    void loadResponseTime(db)
-      .then((r) => setResponseTime(r))
-      .catch((err) => console.error('[dashboard] response time failed:', err))
-      .finally(() => setResponseTimeLoading(false));
 
     // Fetch up to 50 so the biggest page-size option in the feed
     // (50 rows) is already in memory — switching sizes then becomes
@@ -218,7 +209,12 @@ export default function DashboardPage() {
       </div>
 
       {/* Response time */}
-      <ResponseTimeChart data={responseTime} loading={responseTimeLoading} />
+      <ResponseTimeChart
+        data={responseTime.data}
+        loading={responseTime.loading}
+        error={responseTime.error}
+        onRetry={responseTime.retry}
+      />
 
       {/* Activity feed */}
       <ActivityFeed items={activity} loading={activityLoading} />

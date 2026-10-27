@@ -42,10 +42,16 @@ export interface ResponseTimeBucket {
   samples: number;
 }
 
-export interface ResponseTimeSummary {
+export interface ResponseTimeSeries {
   buckets: ResponseTimeBucket[];
   thisWeekAvg: number | null;
   lastWeekAvg: number | null;
+}
+
+export interface ResponseTimeSummary {
+  timeZone: string;
+  human: ResponseTimeSeries;
+  ai: ResponseTimeSeries;
 }
 
 export type ActivityKind =

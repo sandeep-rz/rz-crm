@@ -166,13 +166,18 @@
       "ariaLabel": "Valor del pipeline por etapa"
     },
     "responseTimeChart": {
-      "title": "Tiempo promedio de primera respuesta",
-      "description": "Minutos para responder al primer mensaje sin respuesta de un cliente, por día de la semana",
+      "title": "Tiempo medio de primera respuesta",
+      "description": "Tiempo hasta una respuesta del equipo CRM o de IA, por día",
       "target": "objetivo {minutes}min",
       "thisWeek": "Esta semana:",
       "lastWeek": "Semana pasada:",
       "noReplies": "Aún no hay respuestas registradas",
-      "noRepliesHint": "Este gráfico se llena a medida que respondes a los mensajes de los clientes."
+      "noRepliesHint": "Este gráfico se completa al registrar respuestas atribuidas al equipo CRM o a la IA.",
+      "humanReplies": "Equipo CRM",
+      "aiReplies": "IA",
+      "loadFailed": "No se pudieron cargar las métricas de respuesta.",
+      "retry": "Reintentar",
+      "measurementNote": "Solo se miden respuestas con un remitente CRM registrado o de IA. Se excluyen el historial importado, los mensajes de la aplicación y las confirmaciones automáticas."
     },
     "emptyState": {
       "title": "Aún no hay datos suficientes"

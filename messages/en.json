@@ -166,13 +166,18 @@
       "ariaLabel": "Pipeline value by stage"
     },
     "responseTimeChart": {
-      "title": "Average First Response Time",
-      "description": "Minutes to reply to a customer's first unreplied message, by weekday",
+      "title": "Average First Reply Time",
+      "description": "Time to a CRM teammate or AI reply, by weekday",
       "target": "target {minutes}m",
       "thisWeek": "This week:",
       "lastWeek": "Last week:",
       "noReplies": "No replies recorded yet",
-      "noRepliesHint": "This chart fills in as you reply to customer messages."
+      "noRepliesHint": "This chart fills in as attributed CRM or AI replies are recorded.",
+      "humanReplies": "CRM team",
+      "aiReplies": "AI",
+      "loadFailed": "Could not load response metrics.",
+      "retry": "Retry",
+      "measurementNote": "Only replies with a recorded CRM sender or AI origin are measured. Imported history, app echoes and automated acknowledgements are excluded."
     },
     "emptyState": {
       "title": "Not enough data yet"

@@ -1,10 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   daysAgoStart,
-  DOW_SHORT_MON_FIRST,
   lastNDayKeys,
   localDayKey,
-  mondayIndex,
   startOfLocalDay,
 } from './date-utils';
 import type {
@@ -13,13 +11,13 @@ import type {
   MetricsBundle,
   PipelineDonutData,
   PipelineStageSlice,
-  ResponseTimeBucket,
   ResponseTimeSummary,
 } from './types';
 import { fetchAllPages } from '@/lib/supabase/paged-query';
 
 // ------------------------------------------------------------
-// All client-side aggregation. RLS scopes every query to the
+// Most widgets aggregate client-side; response timing uses a scoped RPC.
+// RLS scopes every query to the
 // signed-in user automatically, so we never pass user_id explicitly
 // here. Perf is acceptable for the current scale (low thousands of
 // messages) — if a tenant's dataset outgrows this, we'd migrate the
@@ -195,99 +193,47 @@ export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
 
 // --- 4. Response time by day of week ----------------------------------
 
-export async function loadResponseTime(db: DB): Promise<ResponseTimeSummary> {
-  // Pull the last 14 days of messages in one shot, then walk per
-  // conversation to find each "first inbound" → "first subsequent
-  // outbound" pair. 14 days gives us both "this week" + "last week"
-  // with enough overlap if the user opens the dashboard late on a
-  // Monday.
-  const fourteenDaysAgo = daysAgoStart(13).toISOString();
-  const rows = await fetchAllPages<{
-    conversation_id: string;
-    sender_type: string;
-    created_at: string;
-  }>((from, to) =>
-    db
-      .from('messages')
-      .select('conversation_id, sender_type, created_at')
-      .gte('created_at', fourteenDaysAgo)
-      .order('conversation_id', { ascending: true })
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, to)
-  );
-
-  // Group per conversation, pair unreplied customer messages with the
-  // next outbound message from the agent/bot. A single customer message
-  // can only count once (avoids inflating averages if the customer
-  // double-messages while the agent takes time to reply).
-  interface Sample {
-    customerAt: Date;
-    responseAt: Date;
-  }
-  const samples: Sample[] = [];
-
-  let currentConv = '';
-  let pendingCustomer: Date | null = null;
-  for (const row of rows) {
-    if (row.conversation_id !== currentConv) {
-      currentConv = row.conversation_id;
-      pendingCustomer = null;
-    }
-    const ts = new Date(row.created_at);
-    if (row.sender_type === 'customer') {
-      if (!pendingCustomer) pendingCustomer = ts;
-    } else if (pendingCustomer) {
-      samples.push({ customerAt: pendingCustomer, responseAt: ts });
-      pendingCustomer = null;
-    }
-  }
-
-  const now = new Date();
-  const thisWeekStart = daysAgoStart(mondayIndex(now));
-  const lastWeekStart = daysAgoStart(mondayIndex(now) + 7);
-
-  // Per-day-of-week buckets, averaged over both weeks' worth of data
-  // so each bar has more samples to stand on. If a day has no samples
-  // its avgMinutes stays null and the chart renders the bar muted.
-  const byDow = new Map<number, number[]>();
-  for (let i = 0; i < 7; i++) byDow.set(i, []);
-  const thisWeekMins: number[] = [];
-  const lastWeekMins: number[] = [];
-
-  for (const s of samples) {
-    const diffMin = (s.responseAt.getTime() - s.customerAt.getTime()) / 60_000;
-    if (diffMin < 0) continue;
-    const dow = mondayIndex(s.customerAt);
-    byDow.get(dow)!.push(diffMin);
-    if (s.customerAt >= thisWeekStart) {
-      thisWeekMins.push(diffMin);
-    } else if (s.customerAt >= lastWeekStart && s.customerAt < thisWeekStart) {
-      lastWeekMins.push(diffMin);
-    }
-  }
-
-  const avg = (arr: number[]) =>
-    arr.length === 0 ? null : arr.reduce((a, b) => a + b, 0) / arr.length;
-
-  const buckets: ResponseTimeBucket[] = Array.from({ length: 7 }, (_, dow) => {
-    const samples = byDow.get(dow) ?? [];
-    return {
-      dow,
-      avgMinutes: avg(samples),
-      samples: samples.length,
-    };
+/** Aggregated in Postgres so long threads are not truncated at a row cap and
+ * customer turns that cross the reporting boundary retain their original start.
+ * The caller passes its selected workspace; RLS and the RPC both enforce it. */
+export async function loadResponseTime(
+  db: DB,
+  accountId: string
+): Promise<ResponseTimeSummary> {
+  const { data, error } = await db.rpc('dashboard_response_metrics', {
+    p_account: accountId,
   });
+  if (error) throw new Error('Could not load response metrics');
+  if (
+    !data ||
+    typeof data.timeZone !== 'string' ||
+    !isResponseTimeSeries(data.human) ||
+    !isResponseTimeSeries(data.ai)
+  ) {
+    throw new Error('Invalid response metrics');
+  }
+  return data as ResponseTimeSummary;
+}
 
-  // Silence unused-label warnings — keep the arrays explicitly named
-  // for readability above.
-  void DOW_SHORT_MON_FIRST;
-
-  return {
-    buckets,
-    thisWeekAvg: avg(thisWeekMins),
-    lastWeekAvg: avg(lastWeekMins),
-  };
+function isResponseTimeSeries(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const series = value as Record<string, unknown>;
+  const minutes = (n: unknown) =>
+    n === null || (typeof n === 'number' && Number.isFinite(n) && n >= 0);
+  return (
+    minutes(series.thisWeekAvg) &&
+    minutes(series.lastWeekAvg) &&
+    Array.isArray(series.buckets) &&
+    series.buckets.length === 7 &&
+    series.buckets.every(
+      (bucket, dow) =>
+        bucket &&
+        bucket.dow === dow &&
+        minutes(bucket.avgMinutes) &&
+        Number.isInteger(bucket.samples) &&
+        bucket.samples >= 0
+    )
+  );
 }
 
 // --- 5. Activity feed --------------------------------------------------

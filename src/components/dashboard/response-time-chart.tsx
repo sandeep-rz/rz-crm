@@ -1,6 +1,8 @@
 'use client';
 
 import { Clock } from 'lucide-react';
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
 import { DOW_SHORT_MON_FIRST } from '@/lib/dashboard/date-utils';
 import type { ResponseTimeSummary } from '@/lib/dashboard/types';
 import { BarChart } from '@/components/tremor/bar-chart';
@@ -10,6 +12,8 @@ import { Skeleton } from './skeleton';
 interface ResponseTimeChartProps {
   data: ResponseTimeSummary | null;
   loading: boolean;
+  error?: boolean;
+  onRetry?: () => void;
   /** Minutes. Surfaced as a "target" pill in the header. The
    *  hand-rolled SVG version drew this as a horizontal dashed
    *  line on the chart; Tremor BarChart doesn't expose Recharts
@@ -21,7 +25,7 @@ interface ResponseTimeChartProps {
 
 import { useTranslations } from 'next-intl';
 
-// Single category, single colour — the data is "average minutes
+// One series at a time, using the existing brand color. The data is "average minutes
 // per weekday". Tremor expects categories as the second tuple in
 // the row object, so we shape the buckets into
 // `{ day: 'Mon', 'Avg minutes': 4.2 }` rows below.
@@ -30,19 +34,21 @@ const CATEGORY = 'Avg minutes';
 export function ResponseTimeChart({
   data,
   loading,
+  error = false,
+  onRetry,
   thresholdMinutes = 5,
 }: ResponseTimeChartProps) {
   const t = useTranslations('Dashboard.responseTimeChart');
-  const hasData = data?.buckets.some((b) => b.avgMinutes != null) ?? false;
+  const [kind, setKind] = useState<'human' | 'ai'>('human');
+  const series = data?.[kind];
+  const hasData = series?.buckets.some((b) => b.avgMinutes != null) ?? false;
 
-  // Map buckets → Tremor rows. Null `avgMinutes` (no samples)
-  // collapses to 0; the chart will render an empty slot for it.
-  // We attach `samples` on the row so a future customTooltip can
-  // surface "no samples" copy without losing the data shape.
+  // Preserve null (no samples) separately from a genuine zero-minute reply.
+  // Keep sample counts available to the chart rather than inventing zeroes.
   const chartData =
-    data?.buckets.map((b, i) => ({
+    series?.buckets.map((b, i) => ({
       day: DOW_SHORT_MON_FIRST[i],
-      [CATEGORY]: b.avgMinutes ?? 0,
+      [CATEGORY]: b.avgMinutes,
       samples: b.samples,
     })) ?? [];
 
@@ -63,25 +69,63 @@ export function ResponseTimeChart({
               {t('target', { minutes: thresholdMinutes })}
             </span>
           )}
-          {data && (data.thisWeekAvg != null || data.lastWeekAvg != null) && (
-            <div>
-              <div className="text-muted-foreground">
-                {t('thisWeek')}{' '}
-                <span className="text-foreground font-medium tabular-nums">
-                  {fmt(data.thisWeekAvg)}
-                </span>
+          {series &&
+            (series.thisWeekAvg != null || series.lastWeekAvg != null) && (
+              <div>
+                <div className="text-muted-foreground">
+                  {t('thisWeek')}{' '}
+                  <span className="text-foreground font-medium tabular-nums">
+                    {fmt(series.thisWeekAvg)}
+                  </span>
+                </div>
+                <div className="text-muted-foreground">
+                  {t('lastWeek')}{' '}
+                  <span className="tabular-nums">
+                    {fmt(series.lastWeekAvg)}
+                  </span>
+                </div>
               </div>
-              <div className="text-muted-foreground">
-                {t('lastWeek')}{' '}
-                <span className="tabular-nums">{fmt(data.lastWeekAvg)}</span>
-              </div>
-            </div>
-          )}
+            )}
         </div>
       </header>
 
       <div className="p-5">
-        {loading || !data ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {(['human', 'ai'] as const).map((value) => (
+            <Button
+              key={value}
+              size="sm"
+              variant={kind === value ? 'default' : 'outline'}
+              aria-pressed={kind === value}
+              onClick={() => setKind(value)}
+            >
+              {t(value === 'human' ? 'humanReplies' : 'aiReplies')}
+            </Button>
+          ))}
+          {data && (
+            <span className="text-muted-foreground text-xs">
+              {data.timeZone}
+            </span>
+          )}
+        </div>
+        {error ? (
+          <div
+            role="alert"
+            className="text-muted-foreground py-8 text-center text-sm"
+          >
+            <p>{t('loadFailed')}</p>
+            {onRetry && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={onRetry}
+              >
+                {t('retry')}
+              </Button>
+            )}
+          </div>
+        ) : loading || !data ? (
           <Skeleton className="h-[260px] w-full" />
         ) : !hasData ? (
           <EmptyState
@@ -103,6 +147,9 @@ export function ResponseTimeChart({
             className="h-[260px]"
           />
         )}
+        <p className="text-muted-foreground mt-3 text-xs">
+          {t('measurementNote')}
+        </p>
       </div>
     </section>
   );

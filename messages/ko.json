@@ -166,13 +166,18 @@
       "ariaLabel": "단계별 파이프라인 금액"
     },
     "responseTimeChart": {
-      "title": "평균 첫 응답 시간",
-      "description": "요일별, 고객의 첫 미응답 메시지에 답변하기까지 걸린 시간(분)",
+      "title": "평균 첫 답변 시간",
+      "description": "요일별 CRM 담당자 또는 AI의 답변 소요 시간",
       "target": "목표 {minutes}분",
       "thisWeek": "이번 주:",
       "lastWeek": "지난 주:",
       "noReplies": "아직 기록된 응답이 없습니다",
-      "noRepliesHint": "고객 메시지에 답변하면 이 차트가 채워집니다."
+      "noRepliesHint": "CRM 담당자 또는 AI의 답변이 기록되면 차트가 표시됩니다.",
+      "humanReplies": "CRM 팀",
+      "aiReplies": "AI",
+      "loadFailed": "답변 지표를 불러오지 못했습니다.",
+      "retry": "다시 시도",
+      "measurementNote": "CRM 발신자가 기록되었거나 AI가 보낸 답변만 측정합니다. 가져온 기록, 앱에서 보낸 메시지, 자동 확인 메시지는 제외됩니다."
     },
     "emptyState": {
       "title": "아직 데이터가 충분하지 않습니다"

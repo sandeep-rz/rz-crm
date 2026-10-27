@@ -146,6 +146,13 @@ BEGIN
     RAISE EXCEPTION 'Outbound persistence permission boundary is missing (migration 85)';
   END IF;
 
+  IF has_function_privilege('anon','public.dashboard_response_metrics(uuid)','EXECUTE') OR
+     NOT has_function_privilege('authenticated','public.dashboard_response_metrics(uuid)','EXECUTE') OR
+     has_function_privilege('service_role','public.dashboard_response_metrics(uuid)','EXECUTE') OR
+     (SELECT prosecdef FROM pg_proc WHERE oid='public.dashboard_response_metrics(uuid)'::regprocedure) THEN
+    RAISE EXCEPTION 'Response metrics must be authenticated and RLS scoped (migration 88)';
+  END IF;
+
   RAISE NOTICE 'schema verification passed';
 END
 $$;

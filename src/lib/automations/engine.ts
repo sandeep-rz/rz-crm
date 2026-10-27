@@ -266,6 +266,7 @@ export async function resumePendingExecution(pending: {
   branch: 'yes' | 'no' | null;
   next_step_position: number;
   attempt_count?: number;
+  parked_step_id?: string | null;
   context: AutomationContext;
 }): Promise<void> {
   const db = supabaseAdmin();
@@ -316,13 +317,38 @@ export async function resumePendingExecution(pending: {
     throw new AutomationTemplateSendError('unsafe_to_retry', false);
   }
 
+  let parentStepId = pending.parent_step_id;
+  let branch = pending.branch;
+  let startPosition = pending.next_step_position;
+  if (pending.parked_step_id) {
+    const { data: parked, error: parkedError } = await db
+      .from('automation_steps')
+      .select('id, step_type, parent_step_id, branch, position')
+      .eq('id', pending.parked_step_id)
+      .eq('automation_id', pending.automation_id)
+      .maybeSingle();
+    if (parkedError) throw new Error('wait continuation cursor lookup failed');
+    if (!parked || parked.step_type !== 'wait') {
+      await finalizeLog(
+        pending.log_id,
+        'failed',
+        'The wait step was removed or changed while this run was waiting.',
+        false
+      );
+      await markPending(pending.id, 'done');
+      return;
+    }
+    parentStepId = parked.parent_step_id ?? null;
+    branch = parentStepId ? (parked.branch ?? 'yes') : null;
+    startPosition = parked.position + 1;
+  }
   await runResumedSteps({
     automation: automation as Automation,
     contactId: pending.contact_id,
     context,
-    parentStepId: pending.parent_step_id,
-    branch: pending.branch,
-    startPosition: pending.next_step_position,
+    parentStepId,
+    branch,
+    startPosition,
     logId: pending.log_id,
     triggerEvent: 'resumed_wait',
     triggerJobExecution: false,
@@ -572,6 +598,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeOutcome> {
           parent_step_id: args.parentStepId,
           branch: args.branch,
           next_step_position: step.position + 1,
+          parked_step_id: step.id,
           context: args.context,
           run_at: new Date(Date.now() + ms).toISOString(),
           status: 'pending',

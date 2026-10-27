@@ -1,7 +1,13 @@
+import {
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
+} from '@/lib/rate-limit';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api';
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
+import { mediaProxyHeaders } from '@/lib/media/proxy-response-headers';
 
 export async function GET(
   request: Request,
@@ -27,6 +33,11 @@ export async function GET(
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const limit = checkRateLimit(
+      `whatsapp-media:${user.id}`,
+      RATE_LIMITS.whatsappMedia
+    );
+    if (!limit.success) return rateLimitResponse(limit);
 
     // Resolve the caller's active workspace before selecting the explicit
     // connection supplied by the conversation. Legacy requests without an
@@ -64,11 +75,7 @@ export async function GET(
 
     return new Response(new Uint8Array(buffer), {
       status: 200,
-      headers: {
-        'Content-Type':
-          contentType || mediaInfo.mimeType || 'application/octet-stream',
-        'Cache-Control': 'public, max-age=86400',
-      },
+      headers: mediaProxyHeaders(mediaId, contentType || mediaInfo.mimeType),
     });
   } catch (error) {
     console.error('Error in WhatsApp media GET:', error);

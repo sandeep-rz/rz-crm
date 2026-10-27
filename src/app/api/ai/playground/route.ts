@@ -11,6 +11,9 @@ import { generateReply } from '@/lib/ai/generate';
 import { buildSystemPrompt } from '@/lib/ai/defaults';
 import { latestUserMessage } from '@/lib/ai/query';
 import { AiError, type ChatMessage } from '@/lib/ai/types';
+import { getT } from '@/lib/i18n/translate';
+
+const t = getT('Api');
 
 // Keep the tested transcript bounded, mirroring the live context window.
 const MAX_TURNS = 20;
@@ -39,7 +42,7 @@ export async function POST(request: Request) {
     const rawMessages = Array.isArray(body?.messages) ? body.messages : null;
     if (!rawMessages) {
       return NextResponse.json(
-        { error: 'messages is required' },
+        { error: t('ai.messagesRequired') },
         { status: 400 }
       );
     }
@@ -58,7 +61,7 @@ export async function POST(request: Request) {
 
     if (messages.length === 0) {
       return NextResponse.json(
-        { error: 'Send a message to test the agent.' },
+        { error: t('ai.sendMessageToTest') },
         { status: 400 }
       );
     }
@@ -67,7 +70,7 @@ export async function POST(request: Request) {
       requireActive: false,
     }).catch((err) => {
       console.error('[ai/playground] loadAiConfig error:', err);
-      throw new AiError('Stored API key could not be decrypted.', {
+      throw new AiError(t('ai.storedKeyUndecryptable'), {
         code: 'key_decrypt_failed',
         status: 400,
       });
@@ -75,7 +78,7 @@ export async function POST(request: Request) {
     if (!config) {
       return NextResponse.json(
         {
-          error: 'No agent configured yet. Add your provider key in Setup.',
+          error: t('ai.noAgentConfigured'),
           code: 'ai_not_configured',
         },
         { status: 400 }

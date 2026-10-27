@@ -1,3 +1,8 @@
+import {
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
+} from '@/lib/rate-limit';
 import { reconcileTemplateSemantics } from '@/lib/whatsapp/semantic-template';
 import type { MessageTemplate } from '@/types';
 import { NextResponse } from 'next/server';
@@ -138,6 +143,11 @@ export async function POST(request: Request) {
     // insert/update RLS policies (migration 017) both require 'admin'.
     // Resolving account_id off the profile only proved membership.
     const { supabase, accountId, userId } = await requireRole('admin');
+    const limit = checkRateLimit(
+      `whatsapp-admin:${userId}`,
+      RATE_LIMITS.whatsappAdmin
+    );
+    if (!limit.success) return rateLimitResponse(limit);
 
     const raw = (await request.json().catch(() => ({}))) as {
       whatsapp_config_id?: unknown;

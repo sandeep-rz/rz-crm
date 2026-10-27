@@ -19,6 +19,7 @@ export interface PendingExecutionRow {
   parent_step_id: string | null;
   branch: 'yes' | 'no' | null;
   next_step_position: number;
+  parked_step_id?: string | null;
   context: AutomationContext | null;
   attempt_count: number;
 }

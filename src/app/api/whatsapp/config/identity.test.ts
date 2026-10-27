@@ -1,6 +1,8 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   full: false,
+  denied: false,
+  limited: false,
   mode: 'coexistence',
   phone: '456',
   waba: '123',
@@ -8,7 +10,27 @@ const h = vi.hoisted(() => ({
   register: vi.fn(),
   subscribe: vi.fn(),
 }));
-vi.mock('@/lib/auth/guards', () => ({ requireRole: async () => null }));
+vi.mock('@/lib/rate-limit', () => ({
+  RATE_LIMITS: { whatsappAdmin: { limit: 30, windowMs: 60000 } },
+  checkRateLimit: () => ({ success: !h.limited }),
+  rateLimitResponse: () => new Response(null, { status: 429 }),
+}));
+vi.mock('@/lib/auth/account', async (original) => {
+  const actual = await original<typeof import('@/lib/auth/account')>();
+  return {
+    ...actual,
+    requireRole: async () => {
+      if (h.denied) throw new actual.ForbiddenError();
+      const { createClient } = await import('@/lib/supabase/server');
+      return {
+        supabase: await createClient(),
+        accountId: 'account',
+        userId: 'user',
+        role: 'owner',
+      };
+    },
+  };
+});
 vi.mock('@/lib/whatsapp/encryption', () => ({ encrypt: () => 'encrypted' }));
 vi.mock('@/lib/whatsapp/meta-api', () => ({
   verifyPhoneNumber: async () => ({ display_phone_number: '15551234567' }),
@@ -74,6 +96,8 @@ const request = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   h.full = false;
+  h.denied = false;
+  h.limited = false;
   h.mode = 'coexistence';
   h.phone = '456';
   h.waba = '123';
@@ -116,6 +140,22 @@ it('rejects manual addition when the workspace slot is occupied before registrat
   h.full = true;
   h.phone = '999';
   expect((await POST(request())).status).toBe(409);
+  expect(h.register).not.toHaveBeenCalled();
+  expect(h.subscribe).not.toHaveBeenCalled();
+  expect(h.write).not.toHaveBeenCalled();
+});
+
+it('refuses a non-admin before making Meta calls or writing connection state', async () => {
+  h.denied = true;
+  expect((await POST(request())).status).toBe(403);
+  expect(h.register).not.toHaveBeenCalled();
+  expect(h.subscribe).not.toHaveBeenCalled();
+  expect(h.write).not.toHaveBeenCalled();
+});
+
+it('rate-limits setup before Meta calls and local writes', async () => {
+  h.limited = true;
+  expect((await POST(request())).status).toBe(429);
   expect(h.register).not.toHaveBeenCalled();
   expect(h.subscribe).not.toHaveBeenCalled();
   expect(h.write).not.toHaveBeenCalled();

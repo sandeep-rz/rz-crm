@@ -592,15 +592,20 @@ describe('Wait continuation replay safety', () => {
       step_type: 'add_tag',
       position: 1,
       parent_step_id: null,
-      step_config: { tag_id: 'tag-1' },
+      step_config: { tag_id: '20000000-0000-4000-8000-000000000001' },
     });
-    h.state.ownedTag = { id: 'tag-1' };
+    h.state.ownedTag = { id: '20000000-0000-4000-8000-000000000001' };
 
-    await resumePendingExecution(pending());
+    await resumePendingExecution(
+      pending({ contact_id: '10000000-0000-4000-8000-000000000001' })
+    );
 
     expect(h.state.insertCalls).toContainEqual({
       table: 'contact_tags',
-      payload: { contact_id: 'c1', tag_id: 'tag-1' },
+      payload: {
+        contact_id: '10000000-0000-4000-8000-000000000001',
+        tag_id: '20000000-0000-4000-8000-000000000001',
+      },
     });
     expect(
       h.state.rpcCalls.some(
@@ -1431,6 +1436,7 @@ describe('nested time wait ordering', () => {
         payload: expect.objectContaining({
           parent_step_id: 'condition-1',
           next_step_position: 1,
+          parked_step_id: 'wait1',
         }),
       })
     );
@@ -1444,6 +1450,34 @@ describe('nested time wait ordering', () => {
         (c) => c.name === 'complete_automation_wait_continuation'
       )
     ).toHaveLength(1);
+  });
+  it('resolves an edited wait position from its stable step identity', async () => {
+    h.state.steps = [
+      say('before-wait', 1),
+      wait('wait-moved', 2),
+      say('after-wait', 3),
+    ];
+    await resumePendingExecution({
+      ...pending(),
+      parked_step_id: 'wait-moved',
+      parent_step_id: null,
+      branch: null,
+      next_step_position: 1,
+    });
+    expect(h.state.metaSendCalls.map((call) => call.text)).toEqual([
+      'after-wait',
+    ]);
+  });
+  it('does not resume a deleted wait step at an unrelated numeric position', async () => {
+    h.state.steps = [say('unrelated', 1)];
+    await resumePendingExecution({
+      ...pending(),
+      parked_step_id: 'deleted-wait',
+    });
+    expect(h.state.metaSendCalls).toEqual([]);
+    expect(h.state.logUpdates.some((row) => row.status === 'failed')).toBe(
+      true
+    );
   });
   it('climbs through multiple conditions in order', async () => {
     h.state.steps = [

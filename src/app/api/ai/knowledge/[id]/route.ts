@@ -10,8 +10,11 @@ import {
   RATE_LIMITS,
 } from '@/lib/rate-limit';
 import { loadEmbeddingsKey } from '@/lib/ai/config';
-import { ingestDocument } from '@/lib/ai/knowledge';
+import { ingestDocument, type IngestResult } from '@/lib/ai/knowledge';
 import { AiError } from '@/lib/ai/types';
+import { getT } from '@/lib/i18n/translate';
+
+const t = getT('Api');
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -31,12 +34,15 @@ export async function GET(_request: Request, { params }: Params) {
     if (error) {
       console.error('[ai/knowledge/[id] GET] error:', error);
       return NextResponse.json(
-        { error: 'Failed to load document' },
+        { error: t('ai.knowledge.loadDocFailed') },
         { status: 500 }
       );
     }
     if (!data)
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: t('common.notFound') },
+        { status: 404 }
+      );
     return NextResponse.json(data);
   } catch (err) {
     return toErrorResponse(err);
@@ -60,17 +66,20 @@ export async function PATCH(request: Request, { params }: Params) {
     const content =
       typeof body?.content === 'string' ? body.content.trim() : undefined;
     if (title === undefined && content === undefined) {
-      return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
+      return NextResponse.json(
+        { error: t('ai.knowledge.nothingToUpdate') },
+        { status: 400 }
+      );
     }
     if (title !== undefined && !title) {
       return NextResponse.json(
-        { error: 'title cannot be empty' },
+        { error: t('common.titleEmpty') },
         { status: 400 }
       );
     }
     if (content !== undefined && !content) {
       return NextResponse.json(
-        { error: 'content cannot be empty' },
+        { error: t('ai.knowledge.contentEmpty') },
         { status: 400 }
       );
     }
@@ -89,20 +98,24 @@ export async function PATCH(request: Request, { params }: Params) {
     if (error) {
       console.error('[ai/knowledge/[id] PATCH] error:', error);
       return NextResponse.json(
-        { error: 'Failed to update document' },
+        { error: t('ai.knowledge.updateDocFailed') },
         { status: 500 }
       );
     }
     if (!updated)
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: t('common.notFound') },
+        { status: 404 }
+      );
 
     if (content !== undefined) {
       const { key: embeddingsApiKey, corrupt } = await loadEmbeddingsKey(
         supabase,
         accountId
       );
+      let ingest: IngestResult;
       try {
-        await ingestDocument(
+        ingest = await ingestDocument(
           supabase,
           accountId,
           { embeddingsApiKey },
@@ -111,21 +124,37 @@ export async function PATCH(request: Request, { params }: Params) {
         );
       } catch (err) {
         const message =
-          err instanceof AiError ? err.message : 'indexing failed';
+          err instanceof AiError
+            ? err.message
+            : t('ai.knowledge.indexingFailed');
         console.error('[ai/knowledge/[id] PATCH] ingest error:', err);
         return NextResponse.json(
           {
             success: true,
-            warning: `Updated, but semantic indexing failed (${message}). Lexical search still works; use Reindex to retry.`,
+            warning: t('ai.knowledge.updatedNotIndexed', { message }),
           },
           { status: 200 }
         );
       }
+      if (ingest.keywordOnly) {
+        const message =
+          ingest.embedError instanceof AiError
+            ? ingest.embedError.message
+            : t('ai.knowledge.indexingFailed');
+        console.error(
+          '[ai/knowledge/[id] PATCH] embedding error:',
+          ingest.embedError
+        );
+        return NextResponse.json({
+          success: true,
+          keyword_only: true,
+          warning: t('ai.knowledge.updatedIndexFailed', { message }),
+        });
+      }
       if (corrupt) {
         return NextResponse.json({
           success: true,
-          warning:
-            'Updated with keyword search only — your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key).',
+          warning: t('ai.knowledge.updatedKeywordOnly'),
         });
       }
     }
@@ -151,7 +180,7 @@ export async function DELETE(_request: Request, { params }: Params) {
     if (error) {
       console.error('[ai/knowledge/[id] DELETE] error:', error);
       return NextResponse.json(
-        { error: 'Failed to delete document' },
+        { error: t('ai.knowledge.deleteDocFailed') },
         { status: 500 }
       );
     }

@@ -1,3 +1,8 @@
+import {
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
+} from '@/lib/rate-limit';
 import { templateSubmitError } from '@/lib/whatsapp/template-submit-error';
 import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog';
 import {
@@ -118,6 +123,11 @@ export async function POST(request: Request) {
     // approval — an external side effect RLS can't roll back — before the
     // local upsert was refused.
     const { supabase, accountId, userId } = await requireRole('admin');
+    const limit = checkRateLimit(
+      `whatsapp-admin:${userId}`,
+      RATE_LIMITS.whatsappAdmin
+    );
+    if (!limit.success) return rateLimitResponse(limit);
 
     let payload: TemplatePayload;
     try {

@@ -1,3 +1,14 @@
+import {
+  requireRole,
+  UnauthorizedError,
+  ForbiddenError,
+  toErrorResponse,
+} from '@/lib/auth/account';
+import {
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
+} from '@/lib/rate-limit';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
@@ -237,24 +248,12 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient();
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const accountId = await resolveAccountId(supabase, user.id);
-    if (!accountId) {
-      return NextResponse.json(
-        { error: 'Your profile is not linked to an account.' },
-        { status: 403 }
-      );
-    }
+    const { supabase, accountId, userId } = await requireRole('admin');
+    const limit = checkRateLimit(
+      `whatsapp-admin:${userId}`,
+      RATE_LIMITS.whatsappAdmin
+    );
+    if (!limit.success) return rateLimitResponse(limit);
 
     const body = await request.json();
     const {
@@ -606,7 +605,7 @@ export async function POST(request: Request) {
         .from('whatsapp_config')
         .insert({
           account_id: accountId,
-          user_id: user.id,
+          user_id: userId,
           is_primary: shouldBePrimary,
           ...baseRow,
         })
@@ -661,6 +660,8 @@ export async function POST(request: Request) {
       phone_info: phoneInfo,
     });
   } catch (error) {
+    if (error instanceof UnauthorizedError || error instanceof ForbiddenError)
+      return toErrorResponse(error);
     console.error('Error in WhatsApp config POST:', error);
     return NextResponse.json(
       { error: 'Internal server error' },

@@ -26,6 +26,10 @@ import { ContactSidebar } from '@/components/inbox/contact-sidebar';
 import { WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
+import {
+  mergeFetchedPage,
+  prependOlderMessages,
+} from '@/lib/inbox/optimistic-messages';
 
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
@@ -504,9 +508,21 @@ function InboxPageInner() {
     router.replace('/inbox', { scroll: false });
   }, [router]);
 
-  const handleMessagesLoaded = useCallback((loaded: Message[]) => {
-    setMessages(loaded);
-  }, []);
+  const handleMessagesLoaded = useCallback(
+    (loaded: Message[], conversationId: string) => {
+      if (activeConversationRef.current?.id !== conversationId) return;
+      setMessages((prev) => mergeFetchedPage(prev, loaded, conversationId));
+    },
+    []
+  );
+
+  const handleOlderMessagesLoaded = useCallback(
+    (older: Message[], conversationId: string) => {
+      if (activeConversationRef.current?.id !== conversationId) return;
+      setMessages((prev) => prependOlderMessages(prev, older));
+    },
+    []
+  );
 
   const handleNewMessage = useCallback((msg: Message) => {
     setMessages((prev) => {
@@ -613,6 +629,7 @@ function InboxPageInner() {
             contact={activeContact}
             messages={messages}
             onMessagesLoaded={handleMessagesLoaded}
+            onOlderMessagesLoaded={handleOlderMessagesLoaded}
             onNewMessage={handleNewMessage}
             onUpdateMessage={handleUpdateMessage}
             onStatusChange={handleStatusChange}

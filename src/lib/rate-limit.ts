@@ -98,6 +98,21 @@ export function checkRateLimit(
  * Standard 429 response with the headers clients expect (RFC 6585 +
  * draft-ietf-httpapi-ratelimit-headers). Callers just `return` this.
  */
+export function getClientIp(request: Request): string {
+  const realIp = request.headers.get('x-real-ip')?.trim();
+  if (realIp) return realIp;
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    const hops = forwardedFor
+      .split(',')
+      .map((hop) => hop.trim())
+      .filter(Boolean);
+    const proxyAppended = hops[hops.length - 1];
+    if (proxyAppended) return proxyAppended;
+  }
+  return 'unknown';
+}
+
 export function rateLimitResponse(result: RateLimitResult): NextResponse {
   const retryAfterSec = Math.max(
     1,
@@ -122,6 +137,9 @@ export function rateLimitResponse(result: RateLimitResult): NextResponse {
 
 /** Preconfigured budgets, tweak here not at call sites. */
 export const RATE_LIMITS = {
+  whatsappAdmin: { limit: 30, windowMs: 60_000 },
+  whatsappMedia: { limit: 240, windowMs: 60_000 },
+  automationTrigger: { limit: 30, windowMs: 60_000 },
   /** Individual message send. 60/min per user = one per second
    *  sustained, comfortable for a live human typing. */
   send: { limit: 60, windowMs: 60_000 },

@@ -14,6 +14,9 @@ import { latestUserMessage } from '@/lib/ai/query';
 import { logAiUsage } from '@/lib/ai/usage';
 import { supabaseAdmin } from '@/lib/ai/admin-client';
 import { AiError } from '@/lib/ai/types';
+import { getT } from '@/lib/i18n/translate';
+
+const t = getT('Api');
 
 /**
  * POST /api/ai/draft  (agent+)
@@ -44,7 +47,7 @@ export async function POST(request: Request) {
         : '';
     if (!conversationId) {
       return NextResponse.json(
-        { error: 'conversation_id is required' },
+        { error: t('ai.conversationIdRequired') },
         { status: 400 }
       );
     }
@@ -59,13 +62,13 @@ export async function POST(request: Request) {
     if (convErr) {
       console.error('[ai/draft] conversation lookup error:', convErr);
       return NextResponse.json(
-        { error: 'Failed to load conversation' },
+        { error: t('common.failedToLoadConversation') },
         { status: 500 }
       );
     }
     if (!conversation) {
       return NextResponse.json(
-        { error: 'Conversation not found' },
+        { error: t('common.conversationNotFound') },
         { status: 404 }
       );
     }
@@ -73,7 +76,7 @@ export async function POST(request: Request) {
     const config = await loadAiConfig(supabase, accountId).catch((err) => {
       // Decrypt failure — surface distinctly from "not configured".
       console.error('[ai/draft] loadAiConfig error:', err);
-      throw new AiError('Stored API key could not be decrypted.', {
+      throw new AiError(t('ai.storedKeyUndecryptable'), {
         code: 'key_decrypt_failed',
         status: 400,
       });
@@ -81,8 +84,7 @@ export async function POST(request: Request) {
     if (!config) {
       return NextResponse.json(
         {
-          error:
-            'AI assistant is not set up. Enable it in Settings → AI Assistant.',
+          error: t('ai.notConfigured'),
           code: 'ai_not_configured',
         },
         { status: 400 }
@@ -95,7 +97,7 @@ export async function POST(request: Request) {
     if (messages.length === 0) {
       return NextResponse.json(
         {
-          error: 'No messages to draft from yet.',
+          error: t('ai.noMessages'),
           code: 'no_messages',
         },
         { status: 400 }

@@ -1,3 +1,8 @@
+import {
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
+} from '@/lib/rate-limit';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/whatsapp/encryption';
@@ -39,6 +44,11 @@ export async function GET(request: Request) {
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const limit = checkRateLimit(
+    `whatsapp-admin:${user.id}`,
+    RATE_LIMITS.whatsappAdmin
+  );
+  if (!limit.success) return rateLimitResponse(limit);
 
   // A workspace may have zero or more WhatsApp connections. Resolve the
   // caller's active account first, then select an explicit connection or

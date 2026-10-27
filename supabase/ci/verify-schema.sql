@@ -56,10 +56,20 @@ BEGIN
   -- plain replay can't catch it). Assert the qualified form is what's
   -- actually installed.
   IF pg_get_functiondef(
-       'public.create_broadcast_with_recipients(uuid,uuid,text,text,text,integer,uuid[],jsonb[])'::regprocedure
+       'public.create_broadcast_with_recipients(uuid,uuid,text,text,text,integer,uuid[],jsonb)'::regprocedure
      ) NOT LIKE '%RETURNING id, broadcast_recipients.contact_id%' THEN
     RAISE EXCEPTION
       'create_broadcast_with_recipients still has the ambiguous RETURNING — migration 041 did not apply';
+  END IF;
+
+  -- 86: the JSONB-array overload must be replaced rather than overloaded;
+  -- PostgREST otherwise resolves nested recipient params ambiguously.
+  IF to_regprocedure('public.create_broadcast_with_recipients(uuid,uuid,text,text,text,integer,uuid[],jsonb[])') IS NOT NULL OR
+     has_function_privilege('authenticated','public.claim_ai_reply_slot(uuid,integer)','EXECUTE') OR
+     NOT has_function_privilege('service_role','public.claim_ai_reply_slot(uuid,integer)','EXECUTE') OR
+     NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='flow_runs' AND column_name='transition_seq') OR
+     NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='automation_pending_executions' AND column_name='parked_step_id') THEN
+    RAISE EXCEPTION 'Upstream integrity contracts or service-only privileges are missing (migration 86)';
   END IF;
 
   -- The failure-reason columns (042) are only ever written by the

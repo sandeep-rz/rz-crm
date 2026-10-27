@@ -1,3 +1,8 @@
+import {
+  checkRateLimit,
+  rateLimitResponse,
+  RATE_LIMITS,
+} from '@/lib/rate-limit';
 import { NextResponse } from 'next/server';
 import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
@@ -14,6 +19,11 @@ export async function POST(request: Request) {
   let accountId: string;
   try {
     const ctx = await requireRole('agent');
+    const limit = checkRateLimit(
+      `automation-trigger:${ctx.userId}`,
+      RATE_LIMITS.automationTrigger
+    );
+    if (!limit.success) return rateLimitResponse(limit);
     accountId = ctx.accountId;
   } catch (err) {
     return toErrorResponse(err);

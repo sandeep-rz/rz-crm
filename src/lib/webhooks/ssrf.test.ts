@@ -154,3 +154,18 @@ describe('isDeliverableUrl', () => {
     );
   });
 });
+
+describe('isDeliverableUrl private host allow-list', () => {
+  it('allows only an explicitly allow-listed private host', async () => {
+    expect(
+      await isDeliverableUrl('http://127.0.0.1:11434/hook', {
+        allowPrivateHosts: ['127.0.0.1'],
+      })
+    ).toBe(true);
+    expect(
+      await isDeliverableUrl('http://127.0.0.1:11434/hook', {
+        allowPrivateHosts: ['127.0.0.2'],
+      })
+    ).toBe(false);
+  });
+});

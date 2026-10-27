@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
     claim: true as boolean,
     updatePayload: null as Record<string, unknown> | null,
     rpcCalls: [] as { name: string; args: unknown }[],
+    latestInbound: [] as { message_id: string }[],
   },
 }));
 
@@ -43,6 +44,16 @@ vi.mock('./admin-client', () => ({
           in: () => chain,
           limit: () =>
             Promise.resolve({ data: h.state.autoResponders, error: null }),
+        };
+        return chain;
+      }
+      if (table === 'messages') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          order: () => chain,
+          limit: () =>
+            Promise.resolve({ data: h.state.latestInbound, error: null }),
         };
         return chain;
       }
@@ -81,6 +92,7 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
   return {
     provider: 'openai',
     model: 'gpt-test',
+    baseUrl: null,
     apiKey: 'sk-test',
     systemPrompt: null,
     isActive: true,
@@ -102,6 +114,7 @@ beforeEach(() => {
   h.state.claim = true;
   h.state.updatePayload = null;
   h.state.rpcCalls = [];
+  h.state.latestInbound = [{ message_id: 'wamid.inbound-1' }];
   h.loadAiConfig.mockResolvedValue(aiConfig());
   h.buildConversationContext.mockResolvedValue([
     { role: 'user', content: 'hi' },
@@ -153,6 +166,27 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     // It still attempts the claim, but the send is skipped.
     expect(h.state.rpcCalls).toHaveLength(1);
     expect(h.engineSendText).not.toHaveBeenCalled();
+  });
+
+  it('skips when the slot claim is refused after a human takeover', async () => {
+    h.state.claim = false;
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.generateReply).toHaveBeenCalledTimes(1);
+    expect(h.state.rpcCalls).toHaveLength(1);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+  });
+
+  it('leaves the reply to the newer run when another inbound arrived', async () => {
+    h.state.latestInbound = [{ message_id: 'wamid.inbound-2' }];
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.state.rpcCalls).toHaveLength(0);
+    expect(h.engineSendText).not.toHaveBeenCalled();
+  });
+
+  it('replies when the triggering inbound is still the latest', async () => {
+    h.state.latestInbound = [{ message_id: 'wamid.inbound-1' }];
+    await dispatchInboundToAiReply(ARGS);
+    expect(h.engineSendText).toHaveBeenCalledTimes(1);
   });
 
   it('skips when AI is off / not configured', async () => {

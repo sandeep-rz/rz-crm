@@ -5,6 +5,9 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit';
+import { getT } from '@/lib/i18n/translate';
+
+const t = getT('Api');
 
 type Params = { params: Promise<{ conversationId: string }> };
 
@@ -41,7 +44,7 @@ export async function POST(request: Request, { params }: Params) {
     const body = await request.json().catch(() => null);
     if (!body || typeof body.paused !== 'boolean') {
       return NextResponse.json(
-        { error: 'paused (boolean) is required' },
+        { error: t('ai.pausedRequired') },
         { status: 400 }
       );
     }
@@ -58,13 +61,13 @@ export async function POST(request: Request, { params }: Params) {
     if (convErr) {
       console.error('[ai/autoreply] conversation lookup error:', convErr);
       return NextResponse.json(
-        { error: 'Failed to load conversation' },
+        { error: t('common.failedToLoadConversation') },
         { status: 500 }
       );
     }
     if (!conv) {
       return NextResponse.json(
-        { error: 'Conversation not found' },
+        { error: t('common.conversationNotFound') },
         { status: 404 }
       );
     }
@@ -98,7 +101,7 @@ export async function POST(request: Request, { params }: Params) {
     if (upErr) {
       console.error('[ai/autoreply] update error:', upErr);
       return NextResponse.json(
-        { error: 'Failed to update conversation' },
+        { error: t('ai.updateConversationFailed') },
         { status: 500 }
       );
     }

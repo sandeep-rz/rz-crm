@@ -2,7 +2,7 @@ import { ImageResponse } from 'next/og';
 
 import { MONOGRAM } from './brand-mark';
 
-// Teal tile with the Rukiye Zara gold monogram. Served as the favicon.
+// Forest green tile with the Rukiye Zara gold monogram. Served as the favicon.
 
 export const runtime = 'edge';
 export const size = { width: 32, height: 32 };
@@ -17,12 +17,12 @@ export default function Icon() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#0A7EA4',
+        background: '#145C54',
         borderRadius: 8,
       }}
     >
       <svg width="26" height="26" viewBox="213 59 165 165">
-        <path fill="#d4a160" d={MONOGRAM} />
+        <path fill="#C9A96E" d={MONOGRAM} />
       </svg>
     </div>,
     { ...size }

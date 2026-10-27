@@ -15,12 +15,12 @@ export default function AppleIcon() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#0A7EA4',
+        background: '#145C54',
         borderRadius: 36,
       }}
     >
       <svg width="132" height="132" viewBox="213 59 165 165">
-        <path fill="#d4a160" d={MONOGRAM} />
+        <path fill="#C9A96E" d={MONOGRAM} />
       </svg>
     </div>,
     { ...size }

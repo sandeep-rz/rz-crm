@@ -86,6 +86,21 @@ describe('reservation presentation', () => {
 });
 
 describe('reservation URL property context', () => {
+  it('keeps the All view explicit while clearing unrestricted filters', () => {
+    const next = updateReservationQuery(
+      new URLSearchParams(
+        'view=staying_now&property=p-1&channel=Airbnb&status=confirmed&page=4'
+      ),
+      { view: 'all', channel: 'all', status: 'all' }
+    );
+    expect(next.get('view')).toBe('all');
+    expect(next.get('property')).toBe('p-1');
+    expect(next.has('channel')).toBe(false);
+    expect(next.has('status')).toBe(false);
+    expect(next.has('page')).toBe(false);
+    expect(updateReservationQuery(next, { page: '2' }).get('view')).toBe('all');
+  });
+
   it('preserves property across lifecycle changes and resets pagination', () => {
     const next = updateReservationQuery(
       new URLSearchParams('property=p-1&channel=Airbnb&page=4'),

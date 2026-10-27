@@ -90,15 +90,15 @@
  * `:root` carries the light-mode + Rukiye Zara defaults so a
  * visitor renders correctly before JS runs; the boot script in
  * layout.tsx replays the saved mode + accent before first paint.
- * Surface values follow the PMS GREEN_THEME neutrals. Lime is
+ * Surface values follow the PMS GREEN_THEME neutrals. Gold is
  * `--brand-accent`, not the shadcn `--secondary` button surface.
  *
  * The three `--primary-*` extras (hover / soft / soft-2) feed
  * hovered primary buttons and tinted-primary surfaces (sidebar
  * active pill, validation badges).
  *
- * Token shapes come straight from the design handoff at
- * project/Color Themes.html — change one, change the other.
+ * Rukiye Zara colors follow rz-pms LightThemeColors.tsx and
+ * DarkThemeColors.tsx (GREEN_THEME), with DefaultColors.tsx neutrals.
  * ============================================================ */
 
 /* ---- MODE: neutral surfaces ---- */
@@ -108,7 +108,7 @@ html[data-mode='light'] {
   --background: #fafbfb;
   --foreground: #2a3547;
   --card: #ffffff;
-  --card-2: #f4f9fb;
+  --card-2: #f6f9fc;
   --card-foreground: #2a3547;
   --popover: #ffffff;
   --popover-foreground: #2a3547;
@@ -121,12 +121,12 @@ html[data-mode='light'] {
   --destructive: #e46a76;
   --border: #e5eaef;
   --input: #dfe5ef;
-  --chart-2: #ccda4e;
+  --chart-2: #c9a96e;
   --chart-3: #5a6a85;
   --chart-4: #767e89;
   --chart-5: #dfe5ef;
-  --brand-accent: #ccda4e;
-  --brand-accent-foreground: #2a3547;
+  --brand-accent: #c9a96e;
+  --brand-accent-foreground: #1c1208;
   --stay-confirmed: #10b981;
   --stay-confirmed-bg: #ecfdf5;
   --stay-completed: #6366f1;
@@ -162,12 +162,12 @@ html[data-mode='dark'] {
   --destructive: #e46a76;
   --border: #333f55;
   --input: #333f55;
-  --chart-2: #ccda4e;
+  --chart-2: #c9a96e;
   --chart-3: #adb0bb;
   --chart-4: #767e89;
   --chart-5: #333f55;
-  --brand-accent: #ccda4e;
-  --brand-accent-foreground: #2a3547;
+  --brand-accent: #c9a96e;
+  --brand-accent-foreground: #1c1208;
   --stay-confirmed: #34d399;
   --stay-confirmed-bg: #064e3b;
   --stay-completed: #a5b4fc;
@@ -190,22 +190,27 @@ html[data-mode='dark'] {
 
 :root,
 html[data-theme='rukiye'] {
-  --primary: #0a7ea4;
+  --primary: #145c54;
   --primary-foreground: #ffffff;
-  --primary-hover: #06769a;
-  --primary-soft: #f4f9fb;
-  --primary-soft-2: #e7f3f7;
-  --ring: #0a7ea4;
-  --chart-1: #0a7ea4;
-  --chart-2: #ccda4e;
-  --sidebar-primary: #0a7ea4;
+  --primary-hover: #0d4a45;
+  --primary-soft: #eaf4f2;
+  --primary-soft-2: color-mix(in srgb, var(--primary) 14%, white);
+  --ring: #145c54;
+  --chart-1: #145c54;
+  --chart-2: #c9a96e;
+  --sidebar-primary: #145c54;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-ring: #0a7ea4;
+  --sidebar-ring: #145c54;
 }
 
 html[data-theme='rukiye'][data-mode='dark'] {
-  --primary-soft: #05313f;
-  --primary-soft-2: #0a4a5c;
+  --primary: #24766c;
+  --primary-soft: #0c2422;
+  --primary-soft-2: color-mix(in srgb, var(--primary) 28%, var(--primary-soft));
+  --ring: #24766c;
+  --chart-1: #24766c;
+  --sidebar-primary: #24766c;
+  --sidebar-ring: #24766c;
 }
 
 html[data-theme='violet'] {

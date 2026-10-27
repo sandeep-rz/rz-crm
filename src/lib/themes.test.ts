@@ -7,17 +7,20 @@ describe('Rukiye Zara theme', () => {
   it('defaults to the rukiye accent and light mode', () => {
     expect(DEFAULT_THEME).toBe('rukiye');
     expect(DEFAULT_MODE).toBe('light');
-    expect(THEMES[0]).toMatchObject({ id: 'rukiye', swatch: '#0A7EA4' });
+    expect(THEMES[0]).toMatchObject({ id: 'rukiye', swatch: '#145C54' });
   });
 
-  it('keeps the teal primary in the shared stylesheet', () => {
+  it('uses the PMS forest green and gold in both modes', () => {
     const css = readFileSync(
       new URL('../app/globals.css', import.meta.url),
       'utf8'
     );
     expect(css).toContain("html[data-theme='rukiye']");
-    expect(css).toContain('#0a7ea4');
-    expect(css).toContain('--brand-accent: #ccda4e');
+    expect(css).toContain('--primary: #145c54');
+    expect(css).toContain('--primary-hover: #0d4a45');
+    expect(css).toContain("html[data-theme='rukiye'][data-mode='dark']");
+    expect(css).toContain('--primary: #24766c');
+    expect(css).toContain('--brand-accent: #c9a96e');
   });
 
   it('leaves buttons on the primary token instead of a hard-coded brand hex', () => {
@@ -26,7 +29,7 @@ describe('Rukiye Zara theme', () => {
       'utf8'
     );
     expect(button).toContain('bg-primary');
-    expect(button).not.toContain('#0A7EA4');
-    expect(button).not.toContain('#0a7ea4');
+    expect(button).not.toContain('#145C54');
+    expect(button).not.toContain('#145c54');
   });
 });

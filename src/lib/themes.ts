@@ -72,8 +72,8 @@ export const THEMES: ReadonlyArray<ThemeMeta> = [
   {
     id: 'rukiye',
     name: 'Rukiye Zara',
-    tagline: 'Teal and lime, shared with the property dashboard.',
-    swatch: '#0A7EA4',
+    tagline: 'Forest green and gold, shared with the property dashboard.',
+    swatch: '#145C54',
   },
   {
     id: 'violet',

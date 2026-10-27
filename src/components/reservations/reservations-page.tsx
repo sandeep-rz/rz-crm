@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import {
   BedDouble,
   CalendarDays,
+  Check,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -260,15 +261,16 @@ export function ReservationsPage() {
         }
       >
         <TabsList
-          variant="line"
-          className="border-border h-10 w-full justify-start gap-5 overflow-x-auto border-b p-0"
+          aria-label="Reservation view"
+          className="bg-muted/70 h-auto min-h-12 w-full justify-start gap-1 overflow-x-auto rounded-xl p-1"
         >
           {LIFECYCLES.map((item) => (
             <TabsTrigger
-              className="data-active:text-primary after:bg-primary h-10 flex-none px-0 text-sm"
+              className="hover:bg-background/70 aria-selected:bg-primary aria-selected:text-primary-foreground dark:aria-selected:bg-primary dark:aria-selected:text-primary-foreground h-10 flex-none gap-2 rounded-lg px-4 text-sm aria-selected:font-semibold aria-selected:shadow-sm"
               key={item}
               value={item}
             >
+              {view === item && <Check className="size-4" aria-hidden="true" />}
               {viewLabel(item)}
             </TabsTrigger>
           ))}
@@ -290,6 +292,7 @@ export function ReservationsPage() {
             <Search className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
             <Input
               className="bg-background focus-visible:border-ring h-10 rounded-xl border-transparent pr-11 pl-9 shadow-none"
+              aria-label="Search reservations"
               value={searchDraft}
               onChange={(event) => setSearchDraft(event.target.value)}
               placeholder="Search guest, reference, property or channel"
@@ -306,12 +309,14 @@ export function ReservationsPage() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:flex xl:shrink-0">
           <FilterSelect
             label="Channel"
+            allLabel="All channels"
             value={channel}
             values={channels.map((value) => ({ value, label: value }))}
             onChange={(value) => setParams({ channel: value })}
           />
           <FilterSelect
             label="Status"
+            allLabel="All statuses"
             value={status}
             values={statuses.map((value) => ({
               value,
@@ -324,13 +329,24 @@ export function ReservationsPage() {
               render={
                 <Button
                   variant="outline"
-                  className="bg-background h-10 justify-start rounded-xl px-3 font-normal shadow-none xl:min-w-36"
+                  className={`h-12 justify-start rounded-xl px-3 font-normal shadow-none xl:min-w-40 ${from || to ? 'border-primary/50 bg-primary-soft text-primary' : 'bg-background'}`}
                 />
               }
             >
               <CalendarDays className="size-4" />
-              <span className="truncate">
-                {from || to ? 'Date range set' : 'Stay dates'}
+              <span className="flex min-w-0 flex-col items-start text-left">
+                <span className="text-muted-foreground text-[11px]">
+                  Stay dates
+                </span>
+                <span className="truncate text-sm font-medium">
+                  {from && to
+                    ? `${formatStayDateShort(from, 'en')} – ${formatStayDateShort(to, 'en')}`
+                    : from
+                      ? `From ${formatStayDateShort(from, 'en')}`
+                      : to
+                        ? `Until ${formatStayDateShort(to, 'en')}`
+                        : 'Any dates'}
+                </span>
               </span>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-72 space-y-3 p-4">
@@ -363,15 +379,16 @@ export function ReservationsPage() {
             aria-label="Reset filters"
             title="Reset filters"
             variant="ghost"
-            size="icon"
-            className="text-muted-foreground h-10 w-10 shrink-0 rounded-xl"
-            onClick={() =>
+            className="text-muted-foreground h-10 shrink-0 rounded-xl px-3"
+            onClick={() => {
+              setSearchDraft('');
               router.replace(
                 `/reservations${view === 'upcoming' ? '' : `?view=${view}`}`
-              )
-            }
+              );
+            }}
           >
             <RotateCcw className="size-4" />
+            Reset
           </Button>
         )}
       </section>
@@ -674,11 +691,13 @@ function Detail({
 }
 function FilterSelect({
   label,
+  allLabel,
   value,
   values,
   onChange,
 }: {
   label: string;
+  allLabel: string;
   value: string;
   values: { value: string; label: string }[];
   onChange: (value: string) => void;
@@ -687,12 +706,19 @@ function FilterSelect({
     <Select value={value} onValueChange={(next) => next && onChange(next)}>
       <SelectTrigger
         aria-label={`Filter by ${label.toLowerCase()}`}
-        className="bg-background h-10 w-full rounded-xl px-3 shadow-none xl:w-36"
+        className={`h-12 w-full rounded-xl px-3 shadow-none xl:w-44 ${value !== 'all' ? 'border-primary/50 bg-primary-soft text-primary' : 'bg-background'}`}
       >
-        <SelectValue />
+        <span className="flex min-w-0 flex-1 flex-col items-start">
+          <span className="text-muted-foreground text-[11px]">{label}</span>
+          <SelectValue className="w-full truncate text-sm font-medium">
+            {value === 'all'
+              ? allLabel
+              : (values.find((item) => item.value === value)?.label ?? value)}
+          </SelectValue>
+        </span>
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="all">All {label.toLowerCase()}s</SelectItem>
+        <SelectItem value="all">{allLabel}</SelectItem>
         {values.map((item) => (
           <SelectItem key={item.value} value={item.value}>
             {item.label}

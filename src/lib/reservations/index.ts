@@ -7,7 +7,7 @@ export function updateReservationQuery(
 ): URLSearchParams {
   const next = new URLSearchParams(current.toString());
   for (const [key, value] of Object.entries(changes)) {
-    if (!value || value === 'all') next.delete(key);
+    if (!value || (value === 'all' && key !== 'view')) next.delete(key);
     else next.set(key, value);
   }
   if (!('page' in changes)) next.delete('page');

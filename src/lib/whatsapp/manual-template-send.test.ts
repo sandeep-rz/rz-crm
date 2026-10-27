@@ -571,3 +571,36 @@ it('rejects a semantic manual conversation referencing a foreign account contact
   await expect(send()).rejects.toMatchObject({ code: 'not_found' });
   expect(h.send).not.toHaveBeenCalled();
 });
+
+it('persists the resolved header and frozen template identity without approval samples', async () => {
+  template.header_type = 'text';
+  template.header_content = 'Welcome {{1}}';
+  template.footer_text = 'Your RZ team';
+  template.semantic_content = {
+    ...template.semantic_content!,
+    header_content: 'Welcome {{contact.first_name}}',
+  };
+  template.buttons = [{ type: 'QUICK_REPLY', text: 'Need help' }];
+  template.semantic_variable_mapping = [
+    ...(template.semantic_variable_mapping ?? []),
+    {
+      component: 'HEADER',
+      position: 1,
+      variable_key: 'contact.first_name',
+      sample: 'APPROVAL SAMPLE',
+    },
+  ];
+  await send(reservation);
+  expect(writes[0].template_snapshot).toMatchObject({
+    templateId,
+    name: template.name,
+    language: 'en_US',
+    connectionId: configId,
+    header: { type: 'text', text: 'Welcome Taylor' },
+    footer: 'Your RZ team',
+    buttons: [{ type: 'QUICK_REPLY', text: 'Need help' }],
+  });
+  expect(JSON.stringify(writes[0].template_snapshot)).not.toContain(
+    'APPROVAL SAMPLE'
+  );
+});

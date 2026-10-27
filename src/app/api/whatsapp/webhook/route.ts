@@ -1,8 +1,11 @@
-import { timingSafeEqual } from 'node:crypto';
 import { NextResponse, after } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
-import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature';
+import {
+  verifyMetaWebhookSignature,
+  verifyTokenMatches,
+} from '@/lib/whatsapp/webhook-signature';
+import { readCappedBody } from '@/lib/whatsapp/webhook-body';
 import {
   captureWhatsAppDelivery,
   runWhatsAppWorker,
@@ -39,11 +42,7 @@ export async function GET(request: Request) {
     // The provider app's endpoint can be verified before any customer exists.
     // Legacy per-connection tokens remain a compatible fallback.
     const sharedToken = process.env.META_WEBHOOK_VERIFY_TOKEN;
-    if (
-      sharedToken &&
-      Buffer.byteLength(sharedToken) === Buffer.byteLength(verifyToken) &&
-      timingSafeEqual(Buffer.from(sharedToken), Buffer.from(verifyToken))
-    ) {
+    if (sharedToken && verifyTokenMatches(sharedToken, verifyToken)) {
       return new Response(challenge, {
         status: 200,
         headers: { 'Content-Type': 'text/plain' },
@@ -71,7 +70,7 @@ export async function GET(request: Request) {
     for (const config of configs) {
       if (!config.verify_token) continue;
       try {
-        if (decrypt(config.verify_token) === verifyToken) {
+        if (verifyTokenMatches(decrypt(config.verify_token), verifyToken)) {
           matchedConfig = config;
           break;
         }
@@ -118,8 +117,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const rawBody = await request.text();
-  if (Buffer.byteLength(rawBody) > 4_000_000)
+  const rawBody = await readCappedBody(request);
+  if (rawBody === null)
     return NextResponse.json({ error: 'Payload too large' }, { status: 413 });
   if (
     !verifyMetaWebhookSignature(

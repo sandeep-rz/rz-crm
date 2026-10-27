@@ -1,3 +1,4 @@
+import { buildTemplateMessageSnapshot } from '@/lib/whatsapp/template-message-view';
 import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api';
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive';
 import {
@@ -184,6 +185,13 @@ async function sendViaMeta(
     );
   const accessToken = config.accessToken;
 
+  const templateSnapshot =
+    input.kind === 'template'
+      ? buildTemplateMessageSnapshot(
+          input.preparedTemplate.template,
+          input.templatePayload.components
+        )
+      : null;
   const attempt = async (phone: string): Promise<string> => {
     await input.onBeforeMeta?.();
     if (input.kind === 'template') {
@@ -305,6 +313,11 @@ async function sendViaMeta(
     content_type,
     content_text,
     template_name,
+    template_snapshot: templateSnapshot,
+    media_url:
+      templateSnapshot?.header && templateSnapshot.header.type !== 'text'
+        ? templateSnapshot.header.url
+        : null,
     message_id: waMessageId,
     status: 'sent',
   });

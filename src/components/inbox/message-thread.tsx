@@ -1,5 +1,7 @@
 'use client';
 
+import { matchMessageTemplate } from '@/lib/whatsapp/template-message-view';
+
 import {
   useState,
   useEffect,
@@ -210,6 +212,43 @@ export function MessageThread({
   } | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [sentTemplates, setSentTemplates] = useState<MessageTemplate[]>([]);
+  const legacyTemplateNames = useMemo(
+    () =>
+      [
+        ...new Set(
+          messages
+            .filter(
+              (message) =>
+                message.content_type === 'template' &&
+                !message.template_snapshot &&
+                message.template_name
+            )
+            .map((message) => message.template_name!)
+        ),
+      ]
+        .sort()
+        .join('\n'),
+    [messages]
+  );
+  useEffect(() => {
+    if (!accountId || !conversation?.whatsapp_config_id || !legacyTemplateNames)
+      return;
+    let cancelled = false;
+    void createClient()
+      .from('message_templates')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq('whatsapp_config_id', conversation.whatsapp_config_id)
+      .in('name', legacyTemplateNames.split('\n'))
+      .then(({ data, error }) => {
+        if (!cancelled)
+          setSentTemplates(error ? [] : ((data ?? []) as MessageTemplate[]));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, conversation?.whatsapp_config_id, legacyTemplateNames]);
   const [members, setMembers] = useState<AccountMember[]>([]);
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   // Purely visual spin state for the manual-refresh button. The actual
@@ -1310,6 +1349,16 @@ export function MessageThread({
                       >
                         <MessageBubble
                           message={msg}
+                          template={
+                            msg.content_type === 'template' &&
+                            !msg.template_snapshot
+                              ? matchMessageTemplate(
+                                  msg,
+                                  sentTemplates,
+                                  conversation?.whatsapp_config_id
+                                )
+                              : null
+                          }
                           reply={reply}
                           reactions={msgReactions}
                           currentUserId={user?.id}

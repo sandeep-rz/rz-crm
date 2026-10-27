@@ -207,6 +207,7 @@ export async function POST(request: Request) {
         message_id: result.messageId,
         whatsapp_message_id: result.whatsappMessageId,
         content_text: result.contentText,
+        template_snapshot: result.templateSnapshot,
       });
     } catch (err) {
       if (err instanceof TemplatePreparationError) {

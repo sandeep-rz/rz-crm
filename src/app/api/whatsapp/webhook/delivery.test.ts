@@ -47,3 +47,29 @@ it('acknowledges only after durable capture and keeps Meta retryable on failure'
   expect(h.after).toHaveBeenCalledTimes(1);
   expect(await response.text()).not.toContain('private');
 });
+
+it('rejects a chunked oversized body before durable capture or dispatch', async () => {
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        controller.enqueue(new Uint8Array(2_100_000));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    },
+    { highWaterMark: 0 }
+  );
+  const res = await POST(
+    new Request('https://crm.test/api/whatsapp/webhook', {
+      method: 'POST',
+      body: stream,
+      duplex: 'half',
+    } as RequestInit)
+  );
+  expect(res.status).toBe(413);
+  expect(cancelled).toBe(true);
+  expect(h.capture).not.toHaveBeenCalled();
+  expect(h.after).not.toHaveBeenCalled();
+});

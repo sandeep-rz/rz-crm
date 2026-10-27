@@ -317,6 +317,7 @@ vi.mock('@/lib/contacts/dedupe', () => ({
 
 vi.mock('@/lib/whatsapp/webhook-signature', () => ({
   verifyMetaWebhookSignature: () => true,
+  verifyTokenMatches: (a: string, b: string) => a === b,
 }));
 vi.mock('@/lib/whatsapp/template-webhook', () => ({
   isTemplateWebhookField: (field: string) =>
@@ -379,10 +380,11 @@ function inboundRequest(
       },
     ],
   };
-  return {
-    text: async () => JSON.stringify(body),
-    headers: { get: () => 'sha256=stub' },
-  } as unknown as Request;
+  return new Request('https://crm.test/api/whatsapp/webhook', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'x-hub-signature-256': 'sha256=stub' },
+  });
 }
 
 async function runWebhook(
@@ -416,10 +418,13 @@ async function runStatusWebhook(status: Record<string, unknown>) {
       },
     ],
   };
-  const res = await POST({
-    text: async () => JSON.stringify(body),
-    headers: { get: () => 'sha256=stub' },
-  } as unknown as Request);
+  const res = await POST(
+    new Request('https://crm.test/api/whatsapp/webhook', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'x-hub-signature-256': 'sha256=stub' },
+    })
+  );
   for (const cb of h.state.afterCallbacks) await cb();
   return res;
 }
@@ -1002,10 +1007,11 @@ describe('template-lifecycle webhooks: WABA id is threaded to the handler (#534)
         },
       ],
     };
-    const req = {
-      text: async () => JSON.stringify(body),
-      headers: { get: () => 'sha256=stub' },
-    } as unknown as Request;
+    const req = new Request('https://crm.test/api/whatsapp/webhook', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'x-hub-signature-256': 'sha256=stub' },
+    });
 
     await POST(req);
     for (const cb of h.state.afterCallbacks) await cb();

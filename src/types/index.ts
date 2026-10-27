@@ -273,6 +273,9 @@ export interface Message {
    */
   media_type?: string | null;
   template_name?: string;
+  template_snapshot?:
+    | import('@/lib/whatsapp/template-message-view').TemplateMessageSnapshot
+    | null;
   message_id?: string;
   status: MessageStatus;
   created_at: string;

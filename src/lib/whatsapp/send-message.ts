@@ -1,3 +1,5 @@
+import { buildTemplateMessageSnapshot } from './template-message-view';
+import type { SendTimeParams } from './template-send-builder';
 // ============================================================
 // Outbound message send — the core that both the dashboard's
 // `/api/whatsapp/send` route and the public `/api/v1/messages`
@@ -110,6 +112,8 @@ export interface SendMessageResult {
   /** Meta's `wamid` for the delivered message. */
   whatsappMessageId: string;
   contentText?: string | null;
+  templateSnapshot?:
+    import('./template-message-view').TemplateMessageSnapshot | null;
 }
 
 /**
@@ -427,6 +431,14 @@ export async function sendMessageToConversation(
     sendLanguage = prepared.template.language;
   }
 
+  const templateSnapshot =
+    messageType === 'template' && (prepared || templateRow)
+      ? buildTemplateMessageSnapshot(
+          prepared?.template ?? templateRow!,
+          templatePayload?.components,
+          templateMessageParams as SendTimeParams | undefined
+        )
+      : null;
   timing.record('preparation', performance.now() - preparationStarted);
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
@@ -621,7 +633,12 @@ export async function sendMessageToConversation(
           p_message: {
             content_type: messageType,
             content_text: persistedText,
-            media_url: mediaUrl || null,
+            media_url:
+              templateSnapshot?.header &&
+              templateSnapshot.header.type !== 'text'
+                ? templateSnapshot.header.url
+                : mediaUrl || null,
+            template_snapshot: templateSnapshot,
             template_name: sendTemplateName || null,
             interactive_payload:
               messageType === 'interactive' ? interactivePayload : null,
@@ -641,5 +658,6 @@ export async function sendMessageToConversation(
     messageId,
     whatsappMessageId: waMessageId,
     contentText: persistedText,
+    templateSnapshot,
   };
 }

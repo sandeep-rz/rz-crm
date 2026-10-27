@@ -79,6 +79,13 @@ export function outgoingAcknowledgement(
       ? { id: payload.message_id }
       : {}),
     ...(wamid ? { message_id: wamid } : {}),
+    ...(payload.template_snapshot &&
+    typeof payload.template_snapshot === 'object'
+      ? {
+          template_snapshot:
+            payload.template_snapshot as Message['template_snapshot'],
+        }
+      : {}),
     ...(typeof payload.content_text === 'string'
       ? { content_text: payload.content_text }
       : {}),

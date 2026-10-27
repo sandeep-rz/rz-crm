@@ -378,12 +378,15 @@ export async function DELETE(
     return toErrorResponse(err);
   }
 
-  const { error } = await supabaseAdmin()
+  const { data: deleted, error } = await supabaseAdmin()
     .from('automations')
     .delete()
     .eq('id', id)
-    .eq('account_id', account.accountId);
+    .eq('account_id', account.accountId)
+    .select('id');
   if (error)
     return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!deleted?.length)
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

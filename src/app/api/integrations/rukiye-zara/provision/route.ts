@@ -51,7 +51,8 @@ export async function POST(request: Request) {
       const status = error.code === 'provisioning_failed' ? 500 : 409;
       if (status === 500) {
         console.error(
-          '[POST /api/integrations/rukiye-zara/provision] provisioning failed'
+          '[POST /api/integrations/rukiye-zara/provision] provisioning failed',
+          error
         );
       }
       return errorResponse(error.code, error.message, status);

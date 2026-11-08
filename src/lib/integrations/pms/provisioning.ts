@@ -127,7 +127,7 @@ function isUniqueViolation(error: { code?: string } | null): boolean {
 }
 
 function storageFailure(error: unknown): never {
-  void error;
+  console.error('[pms provisioning] storage failure', error);
   throw new ProvisioningStoreError();
 }
 
@@ -591,6 +591,9 @@ export async function provisionRukiyeZara(
       initial_sync_status: property.initial_sync_status,
     };
   } catch (error) {
+    if (!(error instanceof ProvisioningError)) {
+      console.error('[provisionRukiyeZara]', error);
+    }
     if (error instanceof ProvisioningError) throw error;
     throw new ProvisioningError(
       'provisioning_failed',

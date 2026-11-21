@@ -520,3 +520,54 @@ describe('PMS webhook event processor', () => {
     expect(events.processed).toEqual(['good']);
   });
 });
+
+
+describe('guest.updated event dispatch', () => {
+  it('processes a guest update without fetching a reservation twice or scheduling automations', async () => {
+    const events = new MemoryEventStore();
+    const projections = new MemoryReservationStore();
+    const canonical = providerFor(reservation);
+    const scheduleAutomations = vi.fn();
+    const syncGuest = vi.fn(async () => 'updated' as const);
+    const guestEvent = {
+      ...claim,
+      eventType: 'guest.updated',
+      externalResourceId: 'guest-1',
+    };
+    const result = await processPmsWebhookEvent(guestEvent, {
+      ...dependencies(events, projections, canonical.provider),
+      scheduleAutomations,
+      syncGuest,
+    });
+    expect(result.status).toBe('processed');
+    expect(syncGuest).toHaveBeenCalledWith({
+      accountId: claim.accountId,
+      integration: context.integration,
+      propertyId: claim.propertyId,
+      externalPropertyId: '22008',
+      externalGuestId: 'guest-1',
+      occurredAt: claim.occurredAt,
+    }, canonical.provider);
+    expect(canonical.getReservation).not.toHaveBeenCalled();
+    expect(scheduleAutomations).not.toHaveBeenCalled();
+    expect(events.processed).toEqual([claim.id]);
+  });
+
+  it('ignores an unmapped guest without creating a CRM contact or scheduling automations', async () => {
+    const events = new MemoryEventStore();
+    const projections = new MemoryReservationStore();
+    const canonical = providerFor(reservation);
+    const syncGuest = vi.fn(async () => 'unmapped' as const);
+    const scheduleAutomations = vi.fn();
+    const result = await processPmsWebhookEvent({
+      ...claim, eventType: 'guest.updated', externalResourceId: 'unmapped-guest',
+    }, {
+      ...dependencies(events, projections, canonical.provider),
+      syncGuest,
+      scheduleAutomations,
+    });
+    expect(result.status).toBe('ignored');
+    expect(events.ignored).toEqual([claim.id]);
+    expect(scheduleAutomations).not.toHaveBeenCalled();
+  });
+});

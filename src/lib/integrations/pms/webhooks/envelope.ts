@@ -8,6 +8,7 @@ export const SUPPORTED_RZ_PMS_EVENTS = [
   'reservation.confirmed',
   'reservation.updated',
   'reservation.cancelled',
+  'guest.updated',
 ] as const;
 
 export type SupportedRzPmsEvent = (typeof SUPPORTED_RZ_PMS_EVENTS)[number];
@@ -85,6 +86,9 @@ export function validateRzPmsWebhookEnvelope(
   }
 
   if (type.startsWith('reservation.') && resource.type !== 'reservation') {
+    return { success: false };
+  }
+  if (type === 'guest.updated' && (resource.type !== 'guest' || source?.type !== 'pms_users' || source.id !== resource.id || value.data.guest_id !== resource.id)) {
     return { success: false };
   }
 

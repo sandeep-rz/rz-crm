@@ -15,6 +15,7 @@ import {
   type PmsReservationSyncStore,
 } from '../reservation-sync';
 import { isSupportedRzPmsEvent } from './envelope';
+import { PmsGuestSyncError, syncPmsGuestContact } from '../guest-sync';
 import { schedulePmsAutomationsAfterSync } from '@/lib/automations/pms-scheduler';
 
 export const PMS_WEBHOOK_EVENT_BATCH_SIZE = 10;
@@ -99,6 +100,7 @@ export interface PmsWebhookEventDependencies {
   createProvider?: (provider: string) => PmsProvider;
   now?: () => Date;
   scheduleAutomations?: typeof schedulePmsAutomationsAfterSync;
+  syncGuest?: typeof syncPmsGuestContact;
 }
 
 export interface PmsWebhookEventResult {
@@ -123,6 +125,10 @@ function safeFailure(error: unknown): {
       message: `${error.code}: ${error.message}`.slice(0, 500),
       retryable: false,
     };
+  }
+
+  if (error instanceof PmsGuestSyncError) {
+    return { message: `guest_${error.code}: CRM guest sync failed.`, retryable: error.code === 'storage_error' };
   }
 
   if (error instanceof PmsProviderError) {
@@ -186,7 +192,7 @@ export async function processPmsWebhookEvent(
     if (!event.externalResourceId?.trim()) {
       throw new PmsWebhookEventProcessingError(
         'invalid_resource',
-        'Reservation resource id is missing.'
+        'Webhook resource id is missing.'
       );
     }
 
@@ -210,6 +216,25 @@ export async function processPmsWebhookEvent(
     const provider = (dependencies.createProvider ?? createPmsProvider)(
       context.integration.provider
     );
+
+    if (event.eventType === 'guest.updated') {
+      const result = await (dependencies.syncGuest ?? syncPmsGuestContact)({
+        accountId: event.accountId,
+        integration: context.integration,
+        propertyId: context.property.id,
+        externalPropertyId: context.property.externalPropertyId,
+        externalGuestId: event.externalResourceId,
+        occurredAt: event.occurredAt ?? now().toISOString(),
+      }, provider);
+      if (result === 'unmapped') {
+        // No linked PMS identity means there is no safe CRM contact to modify.
+        // This is a terminal no-op until an initial reservation creates the mapping.
+        await store.markIgnored(event, now().toISOString(), 'PMS guest has no linked CRM reservation/contact.');
+        return { eventId: event.id, status: 'ignored' };
+      }
+      await store.markProcessed(event, now().toISOString());
+      return { eventId: event.id, status: 'processed' };
+    }
 
     const reservation = await provider.getReservation({
       integration: context.integration,

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
-import { isValidE164, normalizePhone } from '@/lib/whatsapp/phone-utils';
+import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
 import type { PmsIntegrationContext, PmsProvider } from './provider';
 
 export interface GuestSyncContext {
@@ -68,10 +68,11 @@ export async function syncPmsGuestContact(
   }
 
   const rawPhone = reservation.guest.phone;
-  const normalized = rawPhone ? normalizePhone(rawPhone) : '';
-  // Preserve an existing CRM phone if the PMS number lacks a valid E.164 country code.
+  const normalized = rawPhone ? parseInternationalPhone(rawPhone) : null;
+  // Preserve CRM phone if the upstream number does not explicitly include its
+  // international + prefix; never infer the country code from a national number.
   // An explicit PMS clear is represented by an empty string.
-  const phone = !rawPhone ? '' : isValidE164(normalized) ? '+' + normalized : null;
+  const phone = !rawPhone ? '' : normalized ? '+' + normalized : null;
 
   const updated = await store.updateMappedContact({
     ...input,

@@ -386,16 +386,42 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
     if (!input.contact.name && input.name) patch.name = input.name;
     if (!input.contact.email && input.email) patch.email = input.email;
     if (Object.keys(patch).length === 0) return input.contact;
-    const { data, error } = await this.admin
-      .from('contacts')
-      .update(patch)
-      .eq('id', input.contact.id)
-      .eq('account_id', input.accountId)
-      .select('id, phone, name, email')
-      .single();
-    if (error || !data)
+    const apply = (fields: Record<string, string>) =>
+      this.admin
+        .from('contacts')
+        .update(fields)
+        .eq('id', input.contact.id)
+        .eq('account_id', input.accountId)
+        .select('id, phone, name, email')
+        .single();
+
+    const first = await apply(patch);
+    if (!first.error && first.data) return first.data as PmsContactRecord;
+
+    // A different CRM contact already owns the phone. Never merge identities
+    // or change their reservations; preserve the conflicting phone ownership.
+    // Retry only the non-phone fields, so one guest cannot block the entire
+    // six-hour reservation reconciliation run.
+    const phoneConflict =
+      !!patch.phone &&
+      first.error?.code === '23505' &&
+      first.error.message?.includes('idx_contacts_account_phone_normalized');
+    if (!phoneConflict) {
       throw new PmsReservationSyncError('Contact enrichment failed.');
-    return data as PmsContactRecord;
+    }
+
+    console.warn('[PMS reservation sync] contact phone conflict skipped', {
+      accountId: input.accountId,
+      contactId: input.contact.id,
+    });
+    const { phone: _skippedPhone, ...safePatch } = patch;
+    if (Object.keys(safePatch).length === 0) return input.contact;
+
+    const retry = await apply(safePatch);
+    if (retry.error || !retry.data) {
+      throw new PmsReservationSyncError('Contact enrichment failed.');
+    }
+    return retry.data as PmsContactRecord;
   }
 
   async createGuestMapping(input: {

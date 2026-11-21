@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 import type { PmsReservation } from './provider';
 import {
   syncPmsReservation,
+  SupabasePmsReservationSyncStore,
   type PmsContactRecord,
   type PmsReservationSyncStore,
 } from './reservation-sync';
@@ -434,5 +436,114 @@ describe('syncPmsReservation contact and projection pipeline', () => {
       db
     );
     expect(result.skippedStale).toBe(true);
+  });
+});
+
+describe('Supabase contact enrichment conflict recovery', () => {
+  function contactStore(responses: Array<{
+    data: PmsContactRecord | null;
+    error: { code: string; message: string } | null;
+  }>) {
+    const updates: Array<Record<string, string>> = [];
+    const admin = {
+      from(table: string) {
+        expect(table).toBe('contacts');
+        return {
+          update(patch: Record<string, string>) {
+            updates.push(patch);
+            return {
+              eq() {
+                return this;
+              },
+              select() {
+                return this;
+              },
+              async single() {
+                const response = responses.shift();
+                if (!response) throw new Error('Unexpected contact update call');
+                return response;
+              },
+            };
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+    return { store: new SupabasePmsReservationSyncStore(admin), updates };
+  }
+
+  const existing = {
+    id: 'contact-agoda',
+    name: null,
+    email: null,
+    phone: '',
+  } satisfies PmsContactRecord;
+
+  it('skips a phone held by another contact but saves nonconflicting details', async () => {
+    const conflict = {
+      data: null,
+      error: {
+        code: '23505',
+        message: 'duplicate key value violates unique constraint "idx_contacts_account_phone_normalized"',
+      },
+    };
+    const { store, updates } = contactStore([
+      conflict,
+      { data: { ...existing, name: 'Vishal', email: 'guest@example.com' }, error: null },
+    ]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const contact = await store.enrichContact({
+        accountId: 'account-a',
+        contact: existing,
+        phone: '+919829011868',
+        name: 'Vishal',
+        email: 'guest@example.com',
+      });
+      expect(contact).toEqual({
+        ...existing,
+        name: 'Vishal',
+        email: 'guest@example.com',
+      });
+      expect(updates).toEqual([
+        { phone: '+919829011868', name: 'Vishal', email: 'guest@example.com' },
+        { name: 'Vishal', email: 'guest@example.com' },
+      ]);
+      expect(warn).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('keeps the existing contact when phone is the only conflicting field', async () => {
+    const { store, updates } = contactStore([{
+      data: null,
+      error: {
+        code: '23505',
+        message: 'duplicate key value violates unique constraint "idx_contacts_account_phone_normalized"',
+      },
+    }]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const contact = await store.enrichContact({
+        accountId: 'account-a', contact: existing,
+        phone: '+919829011868', name: null, email: null,
+      });
+      expect(contact).toEqual(existing);
+      expect(updates).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not swallow unrelated unique constraints', async () => {
+    const { store, updates } = contactStore([{
+      data: null,
+      error: { code: '23505', message: 'duplicate key value violates unique constraint "other_unique_constraint"' },
+    }]);
+    await expect(store.enrichContact({
+      accountId: 'account-a', contact: existing,
+      phone: '+919829011868', name: null, email: null,
+    })).rejects.toThrow('Contact enrichment failed.');
+    expect(updates).toHaveLength(1);
   });
 });

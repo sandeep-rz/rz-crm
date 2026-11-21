@@ -8,6 +8,7 @@ import {
 } from './provider';
 import {
   PMS_RECONCILIATION_INTERVAL_MS,
+  PMS_GUEST_RECOVERY_BATCH_SIZE,
   PMS_RECONCILIATION_PAGE_SIZE,
   PMS_RECONCILIATION_STALE_MS,
   SupabasePmsReconciliationStore,
@@ -350,6 +351,8 @@ function workerDependencies(
     reservationStore: reservations,
     createProvider: () => canonical,
     now: () => new Date(NOW),
+    // Existing reservation tests isolate the reservation workflow.
+    guestRecoveryStore: { listCandidates: async () => [] },
   };
 }
 
@@ -425,6 +428,7 @@ describe('periodic PMS reservation reconciliation', () => {
       completed: 1,
       failed: 0,
       reservationsProcessed: 2,
+      guestsChecked: 0,
     });
     expect(
       listReservations.mock.calls.map(([input]) => input.cursor ?? null)
@@ -732,5 +736,66 @@ describe('periodic PMS reservation reconciliation', () => {
     expect(projections.reservations.get('integration-1:absent')?.id).toBe(
       'keep-me'
     );
+  });
+});
+
+describe('mapped guest reconciliation recovery', () => {
+  it('recovers missed guest updates without creating directory-only contacts', async () => {
+    const state = new MemoryReconciliationStore();
+    const projections = new MemoryReservationStore();
+    const guestIds = ['guest-1', 'guest-2'];
+    const syncGuest = vi.fn(async () => 'updated' as const);
+    const listCandidates = vi.fn(async () => guestIds.map((externalGuestId) => ({
+      externalGuestId,
+    })));
+    const result = await runPmsReservationReconciliationWorker({
+      ...workerDependencies(
+        state,
+        projections,
+        provider([{ items: [], nextCursor: null, hasMore: false }])
+      ),
+      guestRecoveryStore: { listCandidates },
+      syncGuest,
+    });
+    expect(result).toMatchObject({ completed: 1, failed: 0, guestsChecked: 2 });
+    expect(listCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({ propertyId: claim.propertyId }),
+      PMS_GUEST_RECOVERY_BATCH_SIZE
+    );
+    expect(syncGuest).toHaveBeenCalledTimes(2);
+    expect(syncGuest).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      externalGuestId: 'guest-1', occurredAt: NOW.toISOString(),
+    }), expect.anything());
+    expect(state.rows[0].lastReconciledAt).toBe(NOW.toISOString());
+  });
+
+  it('does not advance the watermark when guest recovery fails', async () => {
+    const state = new MemoryReconciliationStore({
+      lastReconciledAt: '2026-09-26T00:00:00.000Z',
+    });
+    const result = await runPmsReservationReconciliationWorker({
+      ...workerDependencies(
+        state,
+        new MemoryReservationStore(),
+        provider([{ items: [], nextCursor: null, hasMore: false }])
+      ),
+      guestRecoveryStore: { listCandidates: async () => [{ externalGuestId: 'guest-1' }] },
+      syncGuest: async () => { throw new Error('temporary upstream failure'); },
+    });
+    expect(result.failed).toBe(1);
+    expect(state.rows[0].lastReconciledAt).toBe('2026-09-26T00:00:00.000Z');
+  });
+
+  it('fails safely rather than repeatedly skipping a missing mapping', async () => {
+    const state = new MemoryReconciliationStore();
+    const result = await runPmsReservationReconciliationWorker({
+      ...workerDependencies(
+        state, new MemoryReservationStore(),
+        provider([{ items: [], nextCursor: null, hasMore: false }])
+      ),
+      guestRecoveryStore: { listCandidates: async () => [{ externalGuestId: 'guest-1' }] },
+      syncGuest: async () => 'unmapped' as const,
+    });
+    expect(result.failed).toBe(1);
   });
 });

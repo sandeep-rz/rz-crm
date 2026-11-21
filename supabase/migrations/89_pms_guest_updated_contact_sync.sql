@@ -55,7 +55,7 @@ BEGIN
   UPDATE public.contacts c
   SET name=NULLIF(btrim(p_name),''),
       email=NULLIF(lower(btrim(p_email)),''),
-      phone=COALESCE(p_phone,'')
+      phone=CASE WHEN p_phone IS NULL THEN c.phone ELSE p_phone END
   WHERE c.id=v_identity.contact_id AND c.account_id=p_account_id;
 
   IF NOT FOUND THEN RETURN false; END IF;

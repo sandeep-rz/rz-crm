@@ -1,47 +1,69 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { useAuth } from '@/hooks/use-auth';
-import type { Notification } from '@/types';
-import { Bell, CheckCheck, Loader2, UserPlus } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
-import { useTranslations } from 'next-intl';
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
+import { notificationsAccountFilter } from "@/lib/notifications/unread-count";
+import type { Notification } from "@/types";
+import { Bell, CheckCheck, Loader2, UserPlus } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { useLocale, useTranslations } from "next-intl";
+import { getDateLocale } from "@/i18n/date-locale";
+import { notificationText } from "@/lib/notifications/notification-text";
 
 // Icon per notification type. Only one type exists today
 // (conversation_assigned) but this keeps future types a one-line add.
-const TYPE_ICON: Record<Notification['type'], typeof Bell> = {
+const TYPE_ICON: Record<Notification["type"], typeof Bell> = {
   conversation_assigned: UserPlus,
 };
 
 export default function NotificationsPage() {
-  const t = useTranslations('Notifications');
+  const t = useTranslations("Notifications");
+  const dateLocale = getDateLocale(useLocale());
   const router = useRouter();
   const { accountId } = useAuth();
   const [notifications, setNotifications] = useState<Notification[] | null>(
-    null
+    null,
   );
   const [error, setError] = useState<string | null>(null);
+  const [actorNames, setActorNames] = useState<Record<string, string>>({});
+  const [contactNames, setContactNames] = useState<Record<string, string>>({});
   const [markingAll, setMarkingAll] = useState(false);
 
   const load = useCallback(async () => {
     if (!accountId) return;
     const supabase = createClient();
     const { data, error: fetchErr } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false })
+      .from("notifications")
+      .select("*")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false })
       .limit(100);
     if (fetchErr) {
       setError(fetchErr.message);
       return;
     }
-    setNotifications((data ?? []) as Notification[]);
+    const rows = (data ?? []) as Notification[];
+    const actorIds = [...new Set(rows.flatMap((row) => row.actor_user_id ? [row.actor_user_id] : []))];
+    const contactIds = [...new Set(rows.flatMap((row) => row.contact_id ? [row.contact_id] : []))];
+    // The database stores English notification copy. Resolve the structured
+    // references so the UI can translate it while preserving people's names.
+    const [actors, contacts] = await Promise.all([
+      actorIds.length
+        ? supabase.from("profiles").select("user_id, full_name").eq("account_id", accountId).in("user_id", actorIds)
+        : Promise.resolve({ data: [] }),
+      contactIds.length
+        ? supabase.from("contacts").select("id, name, phone").eq("account_id", accountId).in("id", contactIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+    setActorNames(Object.fromEntries((actors.data ?? []).map((row) => [row.user_id, row.full_name?.trim() || ""])));
+    setContactNames(Object.fromEntries((contacts.data ?? []).map((row) => [row.id, row.name?.trim() || row.phone || ""])));
+    setError(null);
+    setNotifications(rows);
   }, [accountId]);
 
   useEffect(() => {
@@ -52,41 +74,47 @@ export default function NotificationsPage() {
   // Realtime — new assignments appear without a refresh, and a
   // "mark all read" fired from another tab/device stays in sync here.
   useEffect(() => {
+    if (!accountId) return;
     const supabase = createClient();
     const channel = supabase
-      .channel('notifications-page')
+      .channel(`notifications-page:${accountId}`)
       .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications' },
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "notifications",
+          filter: notificationsAccountFilter(accountId),
+        },
         (payload) => {
-          if (payload.eventType === 'INSERT') {
+          if (payload.eventType === "INSERT") {
             const row = payload.new as Notification;
             setNotifications((prev) => {
               if (!prev) return [row];
               if (prev.some((n) => n.id === row.id)) return prev;
               return [row, ...prev];
             });
-          } else if (payload.eventType === 'UPDATE') {
+            void load();
+          } else if (payload.eventType === "UPDATE") {
             const row = payload.new as Notification;
-            setNotifications(
-              (prev) =>
-                prev?.map((n) => (n.id === row.id ? { ...n, ...row } : n)) ??
-                prev
+            setNotifications((prev) =>
+              prev?.map((n) => (n.id === row.id ? { ...n, ...row } : n)) ??
+              prev,
             );
-          } else if (payload.eventType === 'DELETE') {
+          } else if (payload.eventType === "DELETE") {
             const oldRow = payload.old as Partial<Notification>;
             setNotifications(
-              (prev) => prev?.filter((n) => n.id !== oldRow.id) ?? prev
+              (prev) => prev?.filter((n) => n.id !== oldRow.id) ?? prev,
             );
           }
-        }
+        },
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [accountId, load]);
 
   const markRead = useCallback(
     async (id: string) => {
@@ -97,21 +125,21 @@ export default function NotificationsPage() {
           prev?.map((n) =>
             n.id === id && !n.read_at
               ? { ...n, read_at: new Date().toISOString() }
-              : n
-          ) ?? prev
+              : n,
+          ) ?? prev,
       );
       const supabase = createClient();
       const { error: updateErr } = await supabase
-        .from('notifications')
+        .from("notifications")
         .update({ read_at: new Date().toISOString() })
-        .eq('id', id)
-        .is('read_at', null);
+        .eq("id", id)
+        .is("read_at", null);
       if (updateErr) {
-        toast.error(t('markReadFailed'));
+        toast.error(t("markReadFailed"));
         load();
       }
     },
-    [load, t]
+    [load, t],
   );
 
   const handleClick = useCallback(
@@ -121,38 +149,37 @@ export default function NotificationsPage() {
         router.push(`/inbox?c=${n.conversation_id}`);
       }
     },
-    [markRead, router]
+    [markRead, router],
   );
 
-  const unreadIds =
-    notifications?.filter((n) => !n.read_at).map((n) => n.id) ?? [];
+  const unreadIds = notifications?.filter((n) => !n.read_at).map((n) => n.id) ?? [];
 
   const markAllRead = useCallback(async () => {
-    if (unreadIds.length === 0) return;
+    if (unreadIds.length === 0 || !accountId) return;
     setMarkingAll(true);
     const now = new Date().toISOString();
     setNotifications(
-      (prev) =>
-        prev?.map((n) => (n.read_at ? n : { ...n, read_at: now })) ?? prev
+      (prev) => prev?.map((n) => (n.read_at ? n : { ...n, read_at: now })) ?? prev,
     );
     const supabase = createClient();
     const { error: updateErr } = await supabase
-      .from('notifications')
+      .from("notifications")
       .update({ read_at: now })
-      .is('read_at', null);
+      .eq("account_id", accountId)
+      .is("read_at", null);
     setMarkingAll(false);
     if (updateErr) {
-      toast.error(t('markAllFailed'));
+      toast.error(t("markAllFailed"));
       load();
     }
-  }, [unreadIds.length, load, t]);
+  }, [unreadIds.length, accountId, load, t]);
 
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-destructive text-sm">{error}</p>
+        <p className="text-sm text-destructive">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
-          {t('retry')}
+          {t("retry")}
         </Button>
       </div>
     );
@@ -161,7 +188,7 @@ export default function NotificationsPage() {
   if (notifications === null) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <Loader2 className="text-primary h-6 w-6 animate-spin" />
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
       </div>
     );
   }
@@ -170,9 +197,9 @@ export default function NotificationsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-foreground text-2xl font-bold">{t('title')}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {t('description')}
+          <h1 className="text-2xl font-bold text-foreground">{t("title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t("description")}
           </p>
         </div>
         <Button
@@ -186,48 +213,54 @@ export default function NotificationsPage() {
           ) : (
             <CheckCheck className="h-4 w-4" />
           )}
-          {t('markAllRead')}
+          {t("markAllRead")}
         </Button>
       </div>
 
       {notifications.length === 0 ? (
-        <div className="border-border bg-muted/40 flex h-48 flex-col items-center justify-center rounded-xl border border-dashed">
-          <div className="bg-primary/10 flex h-12 w-12 items-center justify-center rounded-xl">
-            <Bell className="text-primary h-6 w-6" />
+        <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/40">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+            <Bell className="h-6 w-6 text-primary" />
           </div>
-          <p className="text-foreground mt-3 text-sm font-medium">
-            {t('emptyTitle')}
+          <p className="mt-3 text-sm font-medium text-foreground">
+            {t("emptyTitle")}
           </p>
-          <p className="text-muted-foreground mt-1 text-xs">{t('emptyDesc')}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("emptyDesc")}
+          </p>
         </div>
       ) : (
         <ul className="space-y-2">
           {notifications.map((n) => {
             const Icon = TYPE_ICON[n.type] ?? Bell;
             const isUnread = !n.read_at;
+            const copy = notificationText(n, {
+              actor: n.actor_user_id ? actorNames[n.actor_user_id] : undefined,
+              contact: n.contact_id ? contactNames[n.contact_id] : undefined,
+            }, t);
             return (
               <li key={n.id}>
                 <button
                   type="button"
                   onClick={() => handleClick(n)}
                   className={cn(
-                    'flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors',
+                    "flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors",
                     isUnread
-                      ? 'border-primary/30 bg-primary/5 hover:border-primary/50'
-                      : 'border-border bg-card hover:border-border/70'
+                      ? "border-primary/30 bg-primary/5 hover:border-primary/50"
+                      : "border-border bg-card hover:border-border/70",
                   )}
                 >
                   <div
                     className={cn(
-                      'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg',
-                      isUnread ? 'bg-primary/15' : 'bg-muted'
+                      "flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg",
+                      isUnread ? "bg-primary/15" : "bg-muted",
                     )}
                     aria-hidden
                   >
                     <Icon
                       className={cn(
-                        'h-5 w-5',
-                        isUnread ? 'text-primary' : 'text-muted-foreground'
+                        "h-5 w-5",
+                        isUnread ? "text-primary" : "text-muted-foreground",
                       )}
                     />
                   </div>
@@ -235,26 +268,27 @@ export default function NotificationsPage() {
                     <div className="flex items-center gap-2">
                       <span
                         className={cn(
-                          'truncate text-sm font-semibold',
-                          isUnread ? 'text-foreground' : 'text-muted-foreground'
+                          "truncate text-sm font-semibold",
+                          isUnread ? "text-foreground" : "text-muted-foreground",
                         )}
                       >
-                        {n.title}
+                        {copy.title}
                       </span>
                       {isUnread && (
                         <span
-                          aria-label={t('unread')}
-                          className="bg-primary h-2 w-2 flex-shrink-0 rounded-full"
+                          aria-label={t("unread")}
+                          className="h-2 w-2 flex-shrink-0 rounded-full bg-primary"
                         />
                       )}
                     </div>
-                    {n.body && (
-                      <p className="text-muted-foreground mt-0.5 truncate text-xs">
-                        {n.body}
+                    {copy.body && (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {copy.body}
                       </p>
                     )}
-                    <p className="text-muted-foreground/70 mt-1 text-[11px]">
+                    <p className="mt-1 text-[11px] text-muted-foreground/70">
                       {formatDistanceToNow(new Date(n.created_at), {
+                        locale: dateLocale,
                         addSuffix: true,
                       })}
                     </p>

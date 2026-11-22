@@ -1,24 +1,24 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import Link from 'next/link';
-import { useTranslations } from 'next-intl';
-import { createClient } from '@/lib/supabase/client';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { useState } from "react";
+import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { MessageSquare, CheckCircle, ArrowLeft } from 'lucide-react';
+} from "@/components/ui/card";
+import { MessageSquare, CheckCircle, ArrowLeft } from "lucide-react";
 
 export default function ForgotPasswordPage() {
-  const t = useTranslations('ForgotPasswordPage');
-  const [email, setEmail] = useState('');
+  const t = useTranslations("ForgotPasswordPage");
+  const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -35,7 +35,7 @@ export default function ForgotPasswordPage() {
     // URL Configuration → Redirect URLs, or it silently falls back to
     // its Site URL; see docs/auth-emails.md.
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent('/reset-password')}`,
+      redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/reset-password")}`,
     });
 
     if (error) {
@@ -50,17 +50,17 @@ export default function ForgotPasswordPage() {
 
   if (success) {
     return (
-      <div className="bg-background flex min-h-screen items-center justify-center px-4">
-        <Card className="border-border bg-card w-full max-w-md">
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <Card className="w-full max-w-md border-border bg-card">
           <CardHeader className="items-center text-center">
-            <div className="bg-primary/10 mb-2 flex h-12 w-12 items-center justify-center rounded-xl">
-              <CheckCircle className="text-primary h-6 w-6" />
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+              <CheckCircle className="h-6 w-6 text-primary" />
             </div>
-            <CardTitle className="text-foreground text-xl">
-              {t('checkEmailTitle')}
+            <CardTitle className="text-xl text-foreground">
+              {t("checkEmailTitle")}
             </CardTitle>
             <CardDescription className="text-muted-foreground">
-              {t.rich('checkEmailDesc', {
+              {t.rich("checkEmailDesc", {
                 email,
                 strong: (chunks) => (
                   <span className="text-foreground">{chunks}</span>
@@ -72,9 +72,9 @@ export default function ForgotPasswordPage() {
             <Link href="/login">
               <Button
                 variant="outline"
-                className="border-border text-muted-foreground hover:bg-muted hover:text-foreground w-full"
+                className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
               >
-                {t('backToSignIn')}
+                {t("backToSignIn")}
               </Button>
             </Link>
           </CardContent>
@@ -84,17 +84,15 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="bg-background flex min-h-screen items-center justify-center px-4">
-      <Card className="border-border bg-card w-full max-w-md">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
-          <div className="bg-primary/10 mb-2 flex h-12 w-12 items-center justify-center rounded-xl">
-            <MessageSquare className="text-primary h-6 w-6" />
+          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+            <MessageSquare className="h-6 w-6 text-primary" />
           </div>
-          <CardTitle className="text-foreground text-xl">
-            {t('title')}
-          </CardTitle>
+          <CardTitle className="text-xl text-foreground">{t("title")}</CardTitle>
           <CardDescription className="text-muted-foreground">
-            {t('desc')}
+            {t("desc")}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -107,12 +105,12 @@ export default function ForgotPasswordPage() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-muted-foreground">
-                {t('emailLabel')}
+                {t("emailLabel")}
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder={t('emailPlaceholder')}
+                placeholder={t("emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -123,18 +121,18 @@ export default function ForgotPasswordPage() {
             <Button
               type="submit"
               disabled={loading}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 mt-2 h-10 w-full disabled:opacity-50"
+              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {loading ? t('sending') : t('sendLink')}
+              {loading ? t("sending") : t("sendLink")}
             </Button>
           </form>
 
           <Link
             href="/login"
-            className="text-muted-foreground hover:text-foreground mt-6 flex items-center justify-center gap-2 text-sm"
+            className="mt-6 flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
-            {t('backToSignIn')}
+            {t("backToSignIn")}
           </Link>
         </CardContent>
       </Card>

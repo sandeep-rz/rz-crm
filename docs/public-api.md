@@ -41,15 +41,15 @@ key's next request. Revoked keys stay in the list as an audit trail.
 A key can do only what its scopes allow — independent of who created
 it. Grant the minimum.
 
-| Scope                | Allows                                |
-| -------------------- | ------------------------------------- |
-| `messages:send`      | Send WhatsApp messages                |
-| `messages:read`      | Read messages and delivery status     |
-| `contacts:read`      | List and read contacts                |
-| `contacts:write`     | Create and update contacts            |
-| `conversations:read` | List and read conversations           |
-| `broadcasts:send`    | Launch broadcast campaigns            |
-| `webhooks:manage`    | Register and manage outbound webhooks |
+| Scope                | Allows                                   |
+| -------------------- | ---------------------------------------- |
+| `messages:send`      | Send WhatsApp messages                   |
+| `messages:read`      | Read messages and delivery status        |
+| `contacts:read`      | List and read contacts                   |
+| `contacts:write`     | Create and update contacts               |
+| `conversations:read` | List and read conversations              |
+| `broadcasts:send`    | Launch broadcast campaigns               |
+| `webhooks:manage`    | Register and manage outbound webhooks    |
 
 A key with **no scopes** still authenticates and can call
 `GET /api/v1/me` — useful for verifying a key works.
@@ -69,14 +69,15 @@ Every response uses one of two shapes:
 Branch on `error.code` (stable); `error.message` is for humans and
 may be reworded.
 
-| Status | `code`         | Meaning                                               |
-| ------ | -------------- | ----------------------------------------------------- |
+| Status | `code`         | Meaning                                          |
+| ------ | -------------- | ------------------------------------------------ |
 | 401    | `unauthorized` | Missing / malformed / unknown / revoked / expired key |
-| 403    | `forbidden`    | Valid key, but missing the required scope             |
-| 429    | `rate_limited` | Per-key rate limit exceeded                           |
-| 400    | `bad_request`  | Malformed input                                       |
-| 404    | `not_found`    | No such resource                                      |
-| 500    | `internal`     | Server error                                          |
+| 403    | `forbidden`    | Valid key, but missing the required scope        |
+| 429    | `rate_limited` | Per-key rate limit exceeded                      |
+| 400    | `bad_request`  | Malformed input                                  |
+| 404    | `not_found`    | No such resource                                 |
+| 500    | `internal`     | Server error                                     |
+| 503    | `unavailable`  | The key could not be verified right now — retry  |
 
 ## Rate limits
 
@@ -119,7 +120,9 @@ curl https://your-crm.example.com/api/v1/me \
 
 Send a WhatsApp message to a phone number. Scope: `messages:send`. You
 pass an **E.164 number**, not an internal id — the endpoint
-finds-or-creates the contact + conversation, then sends.
+finds-or-creates the contact + conversation, then sends. An optional
+`name` names the contact only when this call creates it; an existing
+contact's name is never changed.
 
 `to` must start with `+` followed by the country code (`+14155550123`;
 spaces, dashes and parentheses between the digits are fine). A number
@@ -147,9 +150,9 @@ curl -X POST https://your-crm.example.com/api/v1/messages \
   "template": {
     "name": "order_update",
     "language": "en_US",
-    "params": ["A123"], // positional body vars, or a structured object
+    "params": ["A123"]        // positional body vars, or a structured object
   },
-  "reply_to_message_id": "<uuid>", // optional; must be in the same conversation
+  "reply_to_message_id": "<uuid>"   // optional; must be in the same conversation
 }
 ```
 
@@ -181,15 +184,10 @@ or phone) and `?tag=<tagId>`.
 {
   "data": [
     {
-      "id": "…",
-      "phone": "+14155550123",
-      "name": "Jane Doe",
-      "email": null,
-      "company": "Acme",
-      "avatar_url": null,
+      "id": "…", "phone": "+14155550123", "name": "Jane Doe",
+      "email": null, "company": "Acme", "avatar_url": null,
       "tags": [{ "id": "…", "name": "vip", "color": "#3b82f6" }],
-      "created_at": "…",
-      "updated_at": "…"
+      "created_at": "…", "updated_at": "…"
     }
   ],
   "meta": { "next_cursor": "…" }
@@ -203,7 +201,9 @@ and country code required — same rule as `POST /api/v1/messages`) is
 required; `name`, `email`, `company`, and `tags` (an array of tag names,
 created if missing) are optional. **Find-or-create by phone:** an existing
 match returns `200` with the existing contact; a new contact returns
-`201`. The response body is the serialized contact (same shape as the
+`201`. For an existing contact, `name`, `email` and `company` are left
+unchanged and `tags` are **added** to the tags it already has (none are
+removed); use `PATCH` to replace its tags. The response body is the serialized contact (same shape as the
 list rows above).
 
 ### `GET` / `PATCH /api/v1/contacts/{id}`
@@ -257,7 +257,9 @@ curl -X POST https://your-crm.example.com/api/v1/broadcasts \
 Recipients are capped at **1000 per request** — split larger sends.
 Invalid phone numbers — including any without a leading `+` and country
 code — are dropped and counted as `rejected`; if none are valid the
-request fails with `400 bad_request`. Response (202):
+request fails with `400 bad_request`. Recipients that resolve to a
+contact already listed earlier in the same request are messaged once and
+counted as `duplicates`. Response (202):
 
 ```json
 {
@@ -266,7 +268,8 @@ request fails with `400 bad_request`. Response (202):
     "status": "sending",
     "total_recipients": 2,
     "accepted": 2,
-    "rejected": 0
+    "rejected": 0,
+    "duplicates": 0
   }
 }
 ```
@@ -293,7 +296,8 @@ GET /api/v1/contacts?limit=50&cursor=eyJ…
 
 Cursors are keyset-based (stable under concurrent inserts). Pass the
 cursor back verbatim — don't parse it. `next_cursor: null` means the
-last page.
+last page. A malformed or tampered cursor is ignored and the first page
+is returned.
 
 ## Webhooks
 
@@ -303,17 +307,17 @@ things happen in your account. **Migration required:** apply
 
 ### Events
 
-| Event                    | Fires when                                 |
-| ------------------------ | ------------------------------------------ |
-| `message.received`       | An inbound message arrives from a contact  |
-| `message.status_updated` | A message you sent changed delivery status |
-| `conversation.created`   | A new conversation is opened for a contact |
+| Event                    | Fires when                                        |
+| ------------------------ | ------------------------------------------------- |
+| `message.received`       | An inbound message arrives from a contact         |
+| `message.status_updated` | A message you sent changed delivery status        |
+| `conversation.created`   | A new conversation is opened for a contact (by an inbound message or `POST /api/v1/messages`) |
 
 ### Managing endpoints
 
 All under scope `webhooks:manage`.
 
-- `POST /api/v1/webhooks` — register `{ "url": "https://…", "events": ["message.received"] }`. `url` must be `https://`. **The response includes `secret` exactly once** — store it to verify signatures; wacrm keeps only an encrypted copy.
+- `POST /api/v1/webhooks` — register `{ "url": "https://…", "events": ["message.received"] }`. `url` must be `https://` and must not embed a username or password (`https://user:pass@…` is rejected with `400`; verify deliveries with the signing secret instead). **The response includes `secret` exactly once** — store it to verify signatures; wacrm keeps only an encrypted copy.
 - `GET /api/v1/webhooks` — list your endpoints (never returns the secret).
 - `GET /api/v1/webhooks/{id}` — read one.
 - `PATCH /api/v1/webhooks/{id}` — update `url`, `events`, or `is_active` (re-enabling clears the failure counter).
@@ -338,7 +342,7 @@ delivery uuid you can dedupe on, and `data` varies by `event`:
   "event": "message.received",
   "occurred_at": "2026-07-01T12:00:00.000Z",
   "account_id": "…",
-  "data": {/* per-event, see below */}
+  "data": { /* per-event, see below */ }
 }
 ```
 
@@ -364,10 +368,8 @@ a few minutes old (replay protection).
 
 ```js
 const [, t, v1] = header.match(/t=(\d+),v1=([0-9a-f]+)/);
-const expected = crypto
-  .createHmac('sha256', secret)
-  .update(`${t}.${rawBody}`)
-  .digest('hex');
+const expected = crypto.createHmac('sha256', secret)
+  .update(`${t}.${rawBody}`).digest('hex');
 const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1));
 ```
 

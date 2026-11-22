@@ -8,18 +8,15 @@ import {
 } from './provider';
 import {
   PMS_RECONCILIATION_INTERVAL_MS,
-  PMS_GUEST_RECOVERY_BATCH_SIZE,
   PMS_RECONCILIATION_PAGE_SIZE,
   PMS_RECONCILIATION_STALE_MS,
   SupabasePmsReconciliationStore,
   runPmsReservationReconciliationWorker,
+  reconcilePmsProperty,
   type PmsReconciliationClaim,
   type PmsReconciliationStore,
 } from './reconciliation';
-import type {
-  PmsContactRecord,
-  PmsReservationSyncStore,
-} from './reservation-sync';
+import type { PmsReservationSyncStore } from './reservation-sync';
 import {
   processPmsWebhookEvent,
   type PmsWebhookEventClaim,
@@ -188,7 +185,12 @@ class MemoryReconciliationStore implements PmsReconciliationStore {
 }
 
 class MemoryReservationStore implements PmsReservationSyncStore {
-  contacts: PmsContactRecord[] = [];
+  contacts: {
+    id: string;
+    phone: string;
+    name: string | null;
+    email: string | null;
+  }[] = [];
   mappings = new Map<string, string>();
   reservations = new Map<
     string,
@@ -200,124 +202,57 @@ class MemoryReservationStore implements PmsReservationSyncStore {
     }
   >();
 
-  async findGuestMapping(input: {
-    integrationId: string;
-    externalGuestId: string;
-  }) {
-    const contactId = this.mappings.get(
-      `${input.integrationId}:${input.externalGuestId}`
-    );
-    return contactId ? { contactId } : null;
-  }
-
-  async findContactsByPhone(_accountId: string, phone: string) {
-    return this.contacts.filter(
-      (contact) => contact.phone.replace(/\D/g, '') === phone
-    );
-  }
-
-  async findContactsByEmail(_accountId: string, email: string) {
-    return this.contacts.filter(
-      (contact) => contact.email?.toLowerCase() === email
-    );
-  }
-
-  async findContactById(_accountId: string, contactId: string) {
-    return this.contacts.find((contact) => contact.id === contactId) ?? null;
-  }
-
-  async createContact(input: {
-    accountId: string;
-    phone: string;
-    name: string | null;
-    email: string | null;
-  }) {
-    void input.accountId;
-    const existing = this.contacts.find(
-      (contact) =>
-        (!!input.phone && contact.phone === input.phone) ||
-        (!!input.email && contact.email?.toLowerCase() === input.email)
-    );
-    if (existing) return { contact: existing, created: false };
-    const contact = {
-      id: `contact-${this.contacts.length + 1}`,
-      phone: input.phone,
-      name: input.name,
-      email: input.email,
-    };
-    this.contacts.push(contact);
-    return { contact, created: true };
-  }
-
-  async enrichContact(input: {
-    accountId: string;
-    contact: PmsContactRecord;
-    phone: string | null;
-    name: string | null;
-    email: string | null;
-  }) {
-    void input.accountId;
-    if (!input.contact.phone && input.phone) input.contact.phone = input.phone;
-    if (!input.contact.name && input.name) input.contact.name = input.name;
-    if (!input.contact.email && input.email) input.contact.email = input.email;
-    return input.contact;
-  }
-
-  async createGuestMapping(input: {
-    accountId: string;
-    integrationId: string;
-    contactId: string;
-    externalGuestId: string;
-  }) {
-    void input.accountId;
-    const key = `${input.integrationId}:${input.externalGuestId}`;
-    if (!this.mappings.has(key)) this.mappings.set(key, input.contactId);
-    return { contactId: this.mappings.get(key)! };
-  }
-
-  async findReservation(input: {
-    accountId: string;
-    integrationId: string;
-    externalReservationId: string;
-  }) {
-    void input.accountId;
-    return (
-      this.reservations.get(
-        `${input.integrationId}:${input.externalReservationId}`
-      ) ?? null
-    );
-  }
-
-  async saveReservation(input: {
-    accountId: string;
-    integrationId: string;
-    propertyId: string;
-    contactId: string | null;
-    reservation: PmsReservation;
-    syncedAt: string;
-    existing: { id: string; externalUpdatedAt: string | null } | null;
-  }) {
-    void input.accountId;
-    void input.propertyId;
-    void input.syncedAt;
-    const key = `${input.integrationId}:${input.reservation.externalId}`;
-    const winner = this.reservations.get(key);
-    const current = input.existing ?? winner;
+  async upsert(
+    ...[input, guest]: Parameters<PmsReservationSyncStore['upsert']>
+  ) {
+    const key = `${input.integration.integrationId}:${input.reservation.externalId}`;
+    const previous = this.reservations.get(key);
     if (
-      current?.externalUpdatedAt &&
+      previous?.externalUpdatedAt &&
       (!input.reservation.updatedAt ||
-        current.externalUpdatedAt > input.reservation.updatedAt)
+        previous.externalUpdatedAt > input.reservation.updatedAt)
     ) {
-      return { id: current.id, skippedStale: true };
+      return {
+        reservationId: previous.id,
+        contactId: previous.contactId,
+        contactCreated: false,
+        externalGuestMapped: false,
+        skippedStale: true,
+      };
     }
-    const id = current?.id ?? `reservation-${this.reservations.size + 1}`;
+    const guestKey =
+      input.reservation.guest.externalId &&
+      `${input.integration.integrationId}:${input.reservation.guest.externalId}`;
+    let contactId =
+      (guestKey && this.mappings.get(guestKey)) ||
+      previous?.contactId ||
+      this.contacts.find((c) => guest.phone && c.phone === guest.phone)?.id ||
+      null;
+    const contactCreated = !contactId && Boolean(guestKey || guest.phone);
+    if (contactCreated) {
+      contactId = `contact-${this.contacts.length + 1}`;
+      this.contacts.push({
+        id: contactId,
+        phone: guest.phone ?? '',
+        name: guest.name ?? null,
+        email: guest.email ?? null,
+      });
+    }
+    if (guestKey && contactId) this.mappings.set(guestKey, contactId);
+    const id = previous?.id ?? `reservation-${this.reservations.size + 1}`;
     this.reservations.set(key, {
       id,
       externalUpdatedAt: input.reservation.updatedAt,
       status: input.reservation.status,
-      contactId: input.contactId,
+      contactId,
     });
-    return { id, skippedStale: false };
+    return {
+      reservationId: id,
+      contactId,
+      contactCreated,
+      externalGuestMapped: Boolean(guestKey && contactId),
+      skippedStale: false,
+    };
   }
 }
 
@@ -351,8 +286,6 @@ function workerDependencies(
     reservationStore: reservations,
     createProvider: () => canonical,
     now: () => new Date(NOW),
-    // Existing reservation tests isolate the reservation workflow.
-    guestRecoveryStore: { listCandidates: async () => [] },
   };
 }
 
@@ -428,7 +361,6 @@ describe('periodic PMS reservation reconciliation', () => {
       completed: 1,
       failed: 0,
       reservationsProcessed: 2,
-      guestsChecked: 0,
     });
     expect(
       listReservations.mock.calls.map(([input]) => input.cursor ?? null)
@@ -739,63 +671,24 @@ describe('periodic PMS reservation reconciliation', () => {
   });
 });
 
-describe('mapped guest reconciliation recovery', () => {
-  it('recovers missed guest updates without creating directory-only contacts', async () => {
-    const state = new MemoryReconciliationStore();
-    const projections = new MemoryReservationStore();
-    const guestIds = ['guest-1', 'guest-2'];
-    const syncGuest = vi.fn(async () => 'updated' as const);
-    const listCandidates = vi.fn(async () => guestIds.map((externalGuestId) => ({
-      externalGuestId,
-    })));
-    const result = await runPmsReservationReconciliationWorker({
-      ...workerDependencies(
-        state,
-        projections,
-        provider([{ items: [], nextCursor: null, hasMore: false }])
-      ),
-      guestRecoveryStore: { listCandidates },
-      syncGuest,
+describe('reconciliation watermark under concurrent changes', () => {
+  it('retains the inclusive scan-start boundary when the run finishes later', async () => {
+    const markCompleted = vi.fn(async () => undefined);
+    const store: PmsReconciliationStore = {
+      claimProperties: async () => [],
+      markCompleted,
+      markFailed: async () => undefined,
+    };
+    await reconcilePmsProperty(claim, {
+      store,
+      reservationStore: { upsert: vi.fn() },
+      createProvider: () =>
+        provider([{ items: [], hasMore: false, nextCursor: null }]),
+      now: () => new Date(NOW.getTime() + 90_000),
     });
-    expect(result).toMatchObject({ completed: 1, failed: 0, guestsChecked: 2 });
-    expect(listCandidates).toHaveBeenCalledWith(
-      expect.objectContaining({ propertyId: claim.propertyId }),
-      PMS_GUEST_RECOVERY_BATCH_SIZE
+    expect(markCompleted).toHaveBeenCalledWith(
+      claim,
+      claim.processingStartedAt
     );
-    expect(syncGuest).toHaveBeenCalledTimes(2);
-    expect(syncGuest).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      externalGuestId: 'guest-1', occurredAt: NOW.toISOString(),
-    }), expect.anything());
-    expect(state.rows[0].lastReconciledAt).toBe(NOW.toISOString());
-  });
-
-  it('does not advance the watermark when guest recovery fails', async () => {
-    const state = new MemoryReconciliationStore({
-      lastReconciledAt: '2026-09-26T00:00:00.000Z',
-    });
-    const result = await runPmsReservationReconciliationWorker({
-      ...workerDependencies(
-        state,
-        new MemoryReservationStore(),
-        provider([{ items: [], nextCursor: null, hasMore: false }])
-      ),
-      guestRecoveryStore: { listCandidates: async () => [{ externalGuestId: 'guest-1' }] },
-      syncGuest: async () => { throw new Error('temporary upstream failure'); },
-    });
-    expect(result.failed).toBe(1);
-    expect(state.rows[0].lastReconciledAt).toBe('2026-09-26T00:00:00.000Z');
-  });
-
-  it('fails safely rather than repeatedly skipping a missing mapping', async () => {
-    const state = new MemoryReconciliationStore();
-    const result = await runPmsReservationReconciliationWorker({
-      ...workerDependencies(
-        state, new MemoryReservationStore(),
-        provider([{ items: [], nextCursor: null, hasMore: false }])
-      ),
-      guestRecoveryStore: { listCandidates: async () => [{ externalGuestId: 'guest-1' }] },
-      syncGuest: async () => 'unmapped' as const,
-    });
-    expect(result.failed).toBe(1);
   });
 });

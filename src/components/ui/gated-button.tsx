@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 // ============================================================
 // GatedButton — Button + role-gated "Read-only" tooltip helper.
@@ -45,23 +45,21 @@
 // can't ${gateReason}"`.
 // ============================================================
 
-import type { ComponentProps, ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from "react";
+import { useTranslations } from "next-intl";
 
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
-interface GatedButtonProps extends Omit<
-  ComponentProps<typeof Button>,
-  'title'
-> {
+interface GatedButtonProps extends Omit<ComponentProps<typeof Button>, "title"> {
   /** False → button is disabled and the wrapper span shows the
    *  "Read-only" tooltip. Defaults to `true` so a `<GatedButton>`
    *  without the prop is just a Button. */
   canAct?: boolean;
-  /** Verb phrase that completes the sentence
-   *  `"Read-only — your role can't <gateReason>"`. Provided
-   *  per-call so each CTA can name what it does ("create flows",
-   *  "send messages", "add contacts"). */
+  /** Already-translated verb phrase that completes the sentence
+   *  `"Read-only — your role can't <gateReason>"` (see the
+   *  `GatedButton.reasons.*` messages). Provided per-call so each
+   *  CTA can name what it does ("create flows", "send messages"). */
   gateReason?: string;
   /** Optional fallback title for the non-gated case. */
   title?: string;
@@ -77,9 +75,11 @@ export function GatedButton({
   children,
   ...rest
 }: GatedButtonProps) {
+  const t = useTranslations("GatedButton");
   const effectivelyDisabled = disabled || !canAct;
-  const tooltip =
-    !canAct && gateReason ? `Read-only — your role can't ${gateReason}` : title;
+  const tooltip = !canAct && gateReason
+    ? t("readOnly", { action: gateReason })
+    : title;
 
   return (
     <span
@@ -88,10 +88,14 @@ export function GatedButton({
       // here (not on the button) is what makes the tooltip work
       // in Safari / older Firefox — those browsers don't fire
       // mouseover on disabled buttons.
-      className={cn('inline-flex', !canAct && 'cursor-not-allowed')}
+      className={cn("inline-flex", !canAct && "cursor-not-allowed")}
       title={tooltip}
     >
-      <Button disabled={effectivelyDisabled} className={className} {...rest}>
+      <Button
+        disabled={effectivelyDisabled}
+        className={className}
+        {...rest}
+      >
         {children}
       </Button>
     </span>

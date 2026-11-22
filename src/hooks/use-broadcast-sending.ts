@@ -3,19 +3,23 @@
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
-import { BATCH_SEND_ATTEMPTS, batchRetryDelayMs } from '@/lib/broadcast-retry';
-import { normalizeKey } from '@/lib/contacts/dedupe';
-import { BroadcastRecipient, Contact, MessageTemplate } from '@/types';
+import {
+  BATCH_SEND_ATTEMPTS,
+  batchRetryDelayMs,
+} from '@/lib/broadcast-retry';
 import {
   resolveAudienceContacts,
   type AudienceConfig,
 } from '@/lib/broadcast-audience';
-import { fetchAllInChunks, fetchAllPages } from '@/lib/supabase/paged-query';
+import { normalizeKey } from '@/lib/contacts/dedupe';
 import {
-  frozenTemplateParams,
-  type BroadcastVariableMappings,
-  type LegacyBroadcastVariableMapping,
-} from '@/lib/broadcast-message-variables';
+  acquireWizardDeliveryLease,
+  renewWizardDeliveryLease,
+  type DeliveryLeaseResult,
+} from '@/lib/whatsapp/broadcast-delivery-lease';
+import { fetchAllInChunks, fetchAllPages } from '@/lib/supabase/paged-query';
+import { BroadcastRecipient, Contact, MessageTemplate } from '@/types';
+import { getT } from '@/lib/i18n/translate';
 
 export type {
   AudienceConfig,
@@ -30,13 +34,16 @@ export type {
  * contact_custom_values.value row keyed by the custom_fields.id stored
  * in `value`.
  */
-export type VariableMapping = LegacyBroadcastVariableMapping;
+export type VariableMapping =
+  | { type: 'static'; value: string }
+  | { type: 'field'; value: string }
+  | { type: 'custom_field'; value: string };
 
 interface BroadcastPayload {
   name: string;
   template: MessageTemplate;
   audience: AudienceConfig;
-  variables: BroadcastVariableMappings;
+  variables: Record<string, VariableMapping>;
   /**
    * Media URL for an IMAGE/VIDEO/DOCUMENT header. Required at send
    * time for media-header templates — Meta rejects the send without
@@ -44,11 +51,17 @@ interface BroadcastPayload {
    * falls back to the template's stored URL only when this is empty.
    */
   headerMediaUrl?: string;
-  whatsappConfigId: string;
+}
+
+export type BroadcastSendInterruption = 'lease_lost' | 'lease_error';
+
+export interface BroadcastSendOutcome {
+  broadcastId: string;
+  interruption: BroadcastSendInterruption | null;
 }
 
 interface UseBroadcastSendingReturn {
-  createAndSendBroadcast: (payload: BroadcastPayload) => Promise<string>;
+  createAndSendBroadcast: (payload: BroadcastPayload) => Promise<BroadcastSendOutcome>;
   isProcessing: boolean;
   progress: number;
 }
@@ -73,19 +86,27 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-interface LegacyResolutionResult {
-  contact_id: string;
-  success: boolean;
-  message_params?: Record<string, unknown> | null;
-  error?: string;
+class DeliveryLeaseInterrupted extends Error {
+  constructor(readonly interruption: BroadcastSendInterruption) {
+    super(interruption);
+  }
 }
 
-interface RecipientInsertRow extends Record<string, unknown> {
-  broadcast_id: string;
-  contact_id: string;
-  status: 'pending' | 'failed';
-  template_params: unknown;
-  error_message: string | null;
+function heldLeaseOrThrow(result: DeliveryLeaseResult): string {
+  if (result.status === 'held') return result.lease;
+  if (result.status === 'error') {
+    console.error('[broadcast] delivery lease renewal failed:', result.message);
+  }
+  throw new DeliveryLeaseInterrupted(
+    result.status === 'lost' ? 'lease_lost' : 'lease_error',
+  );
+}
+
+interface BroadcastApiResult {
+  phone: string;
+  status: 'sent' | 'failed';
+  whatsapp_message_id?: string;
+  error?: string;
 }
 
 /** contactId → (customFieldId → value). */
@@ -99,7 +120,7 @@ type CustomValueIndex = Map<string, Map<string, string>>;
 export function resolveVariables(
   variables: Record<string, VariableMapping>,
   contact: Contact,
-  customValues?: Map<string, string>
+  customValues?: Map<string, string>,
 ): string[] {
   // Keys are typically "1","2",... — numeric-aware sort keeps
   // {{1}} before {{10}}.
@@ -135,7 +156,7 @@ export function resolveVariables(
  */
 async function fetchCustomValueIndex(
   supabase: ReturnType<typeof createClient>,
-  contactIds: string[]
+  contactIds: string[],
 ): Promise<CustomValueIndex> {
   const index: CustomValueIndex = new Map();
   const rows = await fetchAllInChunks<
@@ -147,8 +168,9 @@ async function fetchCustomValueIndex(
       .select('contact_id, custom_field_id, value')
       .in('contact_id', slice)
       .order('id')
-      .range(from, to)
+      .range(from, to),
   );
+
   for (const row of rows) {
     const bucket = index.get(row.contact_id) ?? new Map<string, string>();
     bucket.set(row.custom_field_id, row.value ?? '');
@@ -158,17 +180,15 @@ async function fetchCustomValueIndex(
 }
 
 export function useBroadcastSending(): UseBroadcastSendingReturn {
+  const t = getT('Broadcasts.sending');
   const { accountId } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
 
   async function resolveAudience(audience: AudienceConfig): Promise<Contact[]> {
-    if (!accountId) {
-      throw new Error('Your profile is not linked to an account.');
-    }
     const supabase = createClient();
-    return resolveAudienceContacts(supabase, audience, accountId, (rows) =>
-      upsertCsvContacts(supabase, rows)
+    return resolveAudienceContacts(supabase, audience, (rows) =>
+      upsertCsvContacts(supabase, rows),
     );
   }
 
@@ -188,7 +208,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
    */
   async function upsertCsvContacts(
     supabase: ReturnType<typeof createClient>,
-    csvRows: { phone: string; name?: string }[]
+    csvRows: { phone: string; name?: string }[],
   ): Promise<Contact[]> {
     if (csvRows.length === 0) return [];
 
@@ -197,10 +217,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     } = await supabase.auth.getSession();
     const user = session?.user;
     if (!user) {
-      throw new Error('You are not signed in.');
+      throw new Error(t('notSignedIn'));
     }
     if (!accountId) {
-      throw new Error('Your profile is not linked to an account.');
+      throw new Error(t('notLinkedToAccount'));
     }
 
     // De-duplicate within the CSV on the NORMALIZED number — the same
@@ -215,21 +235,30 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
     }
     const keys = [...uniqueByKey.keys()];
 
-    // Chunk normalized numbers and page matches within the active workspace.
-    const existing = await fetchAllInChunks<Contact, string>(
-      keys,
-      (slice, from, to) =>
-        supabase
-          .from('contacts')
-          .select('*')
-          .eq('account_id', accountId)
-          .in('phone_normalized', slice)
-          .order('id')
-          .range(from, to)
-    );
+    // Single round-trip lookup of the contacts already in this ACCOUNT.
+    // Scoping to `user_id` missed rows a teammate created on a shared
+    // account, so those numbers looked new and their inserts collided
+    // with the account-wide unique index.
+    let existing: Contact[];
+    try {
+      existing = await fetchAllInChunks<Contact, string>(
+        keys,
+        (slice, from, to) =>
+          supabase
+            .from('contacts')
+            .select('*')
+            .eq('account_id', accountId)
+            .in('phone_normalized', slice)
+            .order('id')
+            .range(from, to),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(t('lookupCsvContactsFailed', { error: message }));
+    }
 
     const byKey = new Map<string, Contact>();
-    for (const c of (existing ?? []) as Contact[]) {
+    for (const c of existing) {
       const key = normalizeKey(c.phone ?? '');
       if (key) byKey.set(key, c);
     }
@@ -254,7 +283,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         .insert(chunk)
         .select();
       if (insertErr) {
-        throw new Error(`Failed to create CSV contacts: ${insertErr.message}`);
+        throw new Error(t('createCsvContactsFailed', { error: insertErr.message }));
       }
       for (const c of (inserted ?? []) as Contact[]) {
         const key = normalizeKey(c.phone ?? '');
@@ -268,9 +297,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       .filter((c): c is Contact => Boolean(c));
   }
 
-  async function createAndSendBroadcast(
-    payload: BroadcastPayload
-  ): Promise<string> {
+  async function createAndSendBroadcast(payload: BroadcastPayload): Promise<BroadcastSendOutcome> {
     setIsProcessing(true);
     setProgress(0);
 
@@ -287,10 +314,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       } = await supabase.auth.getSession();
       const user = session?.user;
       if (!user) {
-        throw new Error('You are not signed in.');
+        throw new Error(t('notSignedIn'));
       }
       if (!accountId) {
-        throw new Error('Your profile is not linked to an account.');
+        throw new Error(t('notLinkedToAccount'));
       }
 
       // ── Step 1: Resolve audience contacts ─────────────────────────
@@ -298,42 +325,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       const contacts = await resolveAudience(payload.audience);
 
       if (contacts.length === 0) {
-        throw new Error('No contacts found for this audience.');
-      }
-
-      // Validate configured semantics without freezing recipient values. The
-      // send endpoint prepares each exact contact at send time. Historical
-      // mappings retain their existing pre-resolution/frozen values.
-      const semantic =
-        payload.template.variable_configuration_status === 'configured';
-      const legacyByContact = new Map<string, LegacyResolutionResult>();
-      if (semantic || Array.isArray(payload.variables)) {
-        const response = await fetch(
-          '/api/whatsapp/broadcast/resolve-variables',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              template_name: payload.template.name,
-              ...(semantic
-                ? { template_id: payload.template.id, validate_only: true }
-                : {}),
-              template_language: payload.template.language ?? 'en_US',
-              whatsapp_config_id: payload.whatsappConfigId,
-              contact_ids: contacts.map((contact) => contact.id),
-              mappings: payload.variables,
-            }),
-          }
-        );
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(
-            result.error ?? 'Template variable resolution failed.'
-          );
-        }
-        for (const item of (result.results ?? []) as LegacyResolutionResult[]) {
-          legacyByContact.set(item.contact_id, item);
-        }
+        throw new Error(t('noContactsForAudience'));
       }
 
       // ── Step 2: Create broadcast row ──────────────────────────────
@@ -343,13 +335,10 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         .insert({
           user_id: user.id,
           account_id: accountId,
-          whatsapp_config_id: payload.whatsappConfigId,
           name: payload.name,
           template_name: payload.template.name,
           template_language: payload.template.language ?? 'en_US',
-          template_variables: semantic
-            ? { template_id: payload.template.id }
-            : payload.variables,
+          template_variables: payload.variables,
           audience_filter: {
             type: payload.audience.type,
             tagIds: payload.audience.tagIds,
@@ -369,12 +358,14 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       if (broadcastError || !broadcast) {
         throw new Error(
-          `Failed to create broadcast: ${broadcastError?.message ?? 'unknown error'}`
+          t('createBroadcastFailed', {
+            error: broadcastError?.message ?? t('unknownErrorLower'),
+          }),
         );
       }
 
       // ── Step 3: Insert recipient rows ─────────────────────────────
-      // Legacy custom values are fetched BEFORE the insert so each row can
+      // Custom values are fetched BEFORE the insert so each row can
       // carry its resolved template params. Those params are what makes
       // the campaign resumable server-side (issue #472): the send loop
       // below runs in this browser tab, and if the tab goes away the
@@ -382,69 +373,26 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       // column. Resolving once here also means the resume sends exactly
       // what this pass would have.
       setProgress(20);
-      const headerType = payload.template.header_type;
-      const isMediaHeader =
-        headerType === 'image' ||
-        headerType === 'video' ||
-        headerType === 'document';
-      const headerMediaUrl = payload.headerMediaUrl?.trim();
-      let recipientRows: RecipientInsertRow[];
-      if (semantic) {
-        recipientRows = contacts.map((contact) => ({
-          broadcast_id: broadcast.id,
-          contact_id: contact.id,
-          status: 'pending' as const,
-          template_params: [],
-          error_message: null,
-        }));
-      } else if (Array.isArray(payload.variables)) {
-        recipientRows = contacts.map((contact) => {
-          const resolved = legacyByContact.get(contact.id);
-          const messageParams = {
-            ...(resolved?.message_params ?? { body: [] }),
-            ...(isMediaHeader && headerMediaUrl ? { headerMediaUrl } : {}),
-          };
-          return {
-            broadcast_id: broadcast.id,
-            contact_id: contact.id,
-            status: resolved?.success
-              ? ('pending' as const)
-              : ('failed' as const),
-            template_params: messageParams,
-            error_message: resolved?.success
-              ? null
-              : (resolved?.error ?? 'Template variable resolution failed'),
-          };
-        });
-      } else {
-        // Compatibility boundary for historical positional mappings. Their
-        // resolved body arrays retain the exact pre-Phase-7 representation.
-        const legacyVariables = payload.variables as Record<
-          string,
-          LegacyBroadcastVariableMapping
-        >;
-        const customValueIndex = await fetchCustomValueIndex(
-          supabase,
-          contacts.map((contact) => contact.id)
-        );
-        const paramsByContact = new Map(
-          contacts.map((contact) => [
-            contact.id,
-            resolveVariables(
-              legacyVariables,
-              contact,
-              customValueIndex.get(contact.id)
-            ),
-          ])
-        );
-        recipientRows = contacts.map((contact) => ({
-          broadcast_id: broadcast.id,
-          contact_id: contact.id,
-          status: 'pending' as const,
-          template_params: paramsByContact.get(contact.id) ?? [],
-          error_message: null,
-        }));
-      }
+      const customValueIndex = await fetchCustomValueIndex(
+        supabase,
+        contacts.map((c) => c.id),
+      );
+      const paramsByContact = new Map(
+        contacts.map((contact) => [
+          contact.id,
+          resolveVariables(
+            payload.variables,
+            contact,
+            customValueIndex.get(contact.id),
+          ),
+        ]),
+      );
+      const recipientRows = contacts.map((contact) => ({
+        broadcast_id: broadcast.id,
+        contact_id: contact.id,
+        status: 'pending' as const,
+        template_params: paramsByContact.get(contact.id) ?? [],
+      }));
 
       for (let i = 0; i < recipientRows.length; i += INSERT_BATCH_SIZE) {
         const batch = recipientRows.slice(i, i + INSERT_BATCH_SIZE);
@@ -462,69 +410,97 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
             .update({
               status: 'failed',
               failed_count: contacts.length,
+              delivery_lease_until: null,
             })
             .eq('id', broadcast.id);
           throw new Error(
-            `Failed to insert recipient batch ${i / INSERT_BATCH_SIZE + 1}: ${recipientError.message}`
+            t('insertRecipientBatchFailed', {
+              batch: i / INSERT_BATCH_SIZE + 1,
+              error: recipientError.message,
+            }),
           );
         }
       }
 
       // ── Step 4: Fetch recipients back (joined contact) ────────────
       setProgress(30);
-      const recipients = await fetchAllPages<BroadcastRecipient>((from, to) =>
-        supabase
-          .from('broadcast_recipients')
-          .select('*, contact:contacts(*)')
-          .eq('broadcast_id', broadcast.id)
-          .order('id')
-          .range(from, to)
-      );
+      let recipients: BroadcastRecipient[];
+      try {
+        recipients = await fetchAllPages<BroadcastRecipient>(
+          (from, to) =>
+            supabase
+              .from('broadcast_recipients')
+              .select('*, contact:contacts(*)')
+              .eq('broadcast_id', broadcast.id)
+              .order('id')
+              .range(from, to),
+        );
+      } catch {
+        throw new Error(t('fetchRecipientsFailed'));
+      }
 
-      const pendingRecipients = recipients.filter(
-        (recipient) => recipient.status === 'pending'
-      );
+      let failedCount = 0;
       const totalRecipients = recipients.length;
 
-      for (let i = 0; i < pendingRecipients.length; i += SEND_BATCH_SIZE) {
-        const batch = pendingRecipients.slice(i, i + SEND_BATCH_SIZE);
+      // Media-header templates (image/video/document) require a media
+      // URL on every send. Collected in the personalize step and applied
+      // to all recipients; falls back to the template's stored URL on the
+      // server when omitted.
+      const headerType = payload.template.header_type;
+      const isMediaHeader =
+        headerType === 'image' ||
+        headerType === 'video' ||
+        headerType === 'document';
+      const headerMediaUrl = payload.headerMediaUrl?.trim();
+      const messageParams =
+        isMediaHeader && headerMediaUrl ? { headerMediaUrl } : undefined;
 
-        const apiRecipients = batch.map((r) => {
-          const frozen = frozenTemplateParams(r.template_params);
-          return {
-            phone: r.contact?.phone ?? '',
-            contact_id: r.contact_id,
-            recipient_id: r.id,
-            // Legacy sends replay frozen params; semantic sends carry only
-            // contact identity for server-side preparation.
-            ...(semantic ? {} : frozen),
-            ...(!semantic &&
-            !frozen.messageParams &&
-            isMediaHeader &&
-            headerMediaUrl
-              ? { messageParams: { headerMediaUrl } }
-              : {}),
-          };
-        });
+      let heldLease: string | null = null;
+      const keepDeliveryLease = async () => {
+        heldLease = heldLeaseOrThrow(
+          heldLease === null
+            ? await acquireWizardDeliveryLease(supabase, broadcast.id)
+            : await renewWizardDeliveryLease(supabase, broadcast.id, heldLease),
+        );
+      };
+      let interruption: BroadcastSendInterruption | null = null;
+
+      for (let i = 0; i < recipients.length; i += SEND_BATCH_SIZE) {
+        const batch = recipients.slice(i, i + SEND_BATCH_SIZE);
+
+        const apiRecipients = batch
+          .filter((r) => r.contact?.phone)
+          .map((r) => ({
+            phone: r.contact!.phone as string,
+            // Read back off the row rather than re-resolved, so this
+            // pass and any later resume send identical params.
+            params: Array.isArray(r.template_params) ? r.template_params : [],
+            ...(messageParams ? { messageParams } : {}),
+          }));
 
         if (apiRecipients.length === 0) continue;
+
+        try {
+          await keepDeliveryLease();
+        } catch (err) {
+          if (!(err instanceof DeliveryLeaseInterrupted)) throw err;
+          interruption = err.interruption;
+          break;
+        }
 
         try {
           // Send the batch, waiting out a 429 rather than writing the
           // whole batch off as failed. Only 429 is replayed — see
           // batchRetryDelayMs for why nothing else can be.
-          let data: { error?: string; results?: unknown[] } = {};
+          let data: { error?: string; results?: BroadcastApiResult[] } = {};
           for (let attempt = 1; ; attempt++) {
             const res = await fetch('/api/whatsapp/broadcast', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 recipients: apiRecipients,
-                broadcast_id: broadcast.id,
                 template_name: payload.template.name,
-                ...(semantic ? { template_id: payload.template.id } : {}),
                 template_language: payload.template.language ?? 'en_US',
-                whatsapp_config_id: payload.whatsappConfigId,
               }),
             });
 
@@ -536,32 +512,97 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
                 ? batchRetryDelayMs(res.status, res.headers.get('Retry-After'))
                 : null;
             if (retryIn === null) {
-              throw new Error(data.error || 'Broadcast API request failed');
+              throw new Error(data.error || t('apiRequestFailed'));
             }
             await sleep(retryIn);
+            await keepDeliveryLease();
           }
-        } catch {
-          // A lost response does not prove delivery failed. The server owns
-          // durable recipient outcomes; never overwrite its acceptance/guard.
+
+          const resultsByPhone = new Map<string, BroadcastApiResult>();
+          for (const r of (data.results ?? []) as BroadcastApiResult[]) {
+            resultsByPhone.set(r.phone, r);
+          }
+
+          for (const recipient of batch) {
+            const phone = recipient.contact?.phone;
+            const result = phone ? resultsByPhone.get(phone) : undefined;
+
+            if (!result) {
+              failedCount++;
+              await supabase
+                .from('broadcast_recipients')
+                .update({
+                  status: 'failed',
+                  error_message: t('noPhoneOnContact'),
+                })
+                .eq('id', recipient.id);
+              continue;
+            }
+
+            if (result.status === 'sent') {
+              await supabase
+                .from('broadcast_recipients')
+                .update({
+                  status: 'sent',
+                  sent_at: new Date().toISOString(),
+                  whatsapp_message_id: result.whatsapp_message_id ?? null,
+                  error_message: null,
+                })
+                .eq('id', recipient.id);
+            } else {
+              failedCount++;
+              await supabase
+                .from('broadcast_recipients')
+                .update({
+                  status: 'failed',
+                  error_message: result.error ?? t('unknownError'),
+                })
+                .eq('id', recipient.id);
+            }
+          }
+        } catch (err) {
+          if (err instanceof DeliveryLeaseInterrupted) {
+            interruption = err.interruption;
+            break;
+          }
+          for (const recipient of batch) {
+            failedCount++;
+            await supabase
+              .from('broadcast_recipients')
+              .update({
+                status: 'failed',
+                error_message: err instanceof Error ? err.message : t('unknownError'),
+              })
+              .eq('id', recipient.id);
+          }
         }
 
         const progressPct =
           30 + Math.round(((i + batch.length) / totalRecipients) * 60);
         setProgress(progressPct);
 
-        if (i + SEND_BATCH_SIZE < pendingRecipients.length) {
+        if (i + SEND_BATCH_SIZE < recipients.length) {
           await sleep(SEND_BATCH_DELAY_MS);
         }
       }
 
       // ── Step 5: Finalize status ───────────────────────────────────
       // Aggregate counts are maintained by the DB trigger (migration
-      // 003); server batches finalize status from recipient rows.
+      // 003); we only flip the final status here.
       setProgress(95);
-      // The batch endpoint finalizes from durable recipient rows. Local
-      // request counters must not overwrite accepted or in-flight outcomes.
+      if (!interruption) {
+        const finalStatus = failedCount === totalRecipients ? 'failed' : 'sent';
+        const finalize = supabase
+          .from('broadcasts')
+          .update({ status: finalStatus, delivery_lease_until: null })
+          .eq('id', broadcast.id);
+        await (heldLease === null
+          ? finalize.is('delivery_lease_until', null)
+          : finalize.eq('delivery_lease_until', heldLease));
+      }
+
       setProgress(100);
-      return broadcast.id;
+      return { broadcastId: broadcast.id, interruption };
     } finally {
       setIsProcessing(false);
     }

@@ -42,6 +42,8 @@ export interface PmsReservation {
     fullName: string | null;
     email: string | null;
     phone: string | null;
+    /** Authoritative clears; omitted, empty, and null values otherwise preserve known fields. */
+    clearedFields?: Array<'phone' | 'name' | 'email'>;
   };
 
   occupancy: {

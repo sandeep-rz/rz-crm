@@ -8,7 +8,7 @@
 //                        `broadcasts` row + `broadcast_recipients`
 //                        rows (status 'pending'), return a plan.
 //   deliverBroadcast() — send each recipient's template via Meta
-//                        stamp each recipient
+//                        (phone-variant retry), stamp each recipient
 //                        row + the aggregate counts, finalize status.
 //
 // Recipient rows carry `whatsapp_message_id`, so the inbound webhook's
@@ -18,31 +18,16 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { sendTemplateMessage } from '@/lib/whatsapp/meta-api';
+import { decrypt } from '@/lib/whatsapp/encryption';
 import {
-  sendTemplateMessage,
-  MetaSendPolicyError,
-} from '@/lib/whatsapp/meta-api';
-import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
-import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
+  parseInternationalPhone,
+  phoneVariants,
+  isRecipientNotAllowedError,
+} from '@/lib/whatsapp/phone-utils';
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import type { MessageTemplate } from '@/types';
-import type { SendTimeParams } from '@/lib/whatsapp/template-send-builder';
-import { listMessageVariableDefinitions } from '@/lib/message-variables/catalog';
-import { semanticBroadcastTemplateIssue } from '@/lib/broadcast-message-variables';
-import { buildMetaTemplateMessagePayload } from './meta-template-payload';
-import { TemplatePreparationError } from '@/lib/message-preparation/errors';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
-import { validateBroadcastRecipientPhone } from './broadcast-recipient-phone';
-import {
-  claimBroadcastRecipient,
-  broadcastSendFailure,
-  recordBroadcastRecipientFailure,
-  BROADCAST_DELIVERY_UNCONFIRMED,
-} from './broadcast-delivery';
-import {
-  broadcastTemplateContent,
-  persistBroadcastMessage,
-} from './broadcast-message';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -68,29 +53,28 @@ export interface CreateBroadcastParams {
   templateName: string;
   templateLanguage?: string | null;
   recipients: BroadcastRecipientInput[];
-  whatsappConfigId?: string | null;
 }
 
 interface PlannedRecipient {
   recipientRowId: string;
-  contactId?: string;
   phone: string;
   params: string[];
-  messageParams?: SendTimeParams;
 }
 
 export interface BroadcastPlan {
   broadcastId: string;
-  accountId?: string;
-  connectionId?: string;
   templateName: string;
   templateLanguage: string;
   phoneNumberId: string;
   accessToken: string;
   templateRow: MessageTemplate | null;
   planned: PlannedRecipient[];
-  /** Phones rejected up front (invalid or mismatched contact destination). */
+  /** Phones rejected up front (invalid E.164) — counted as failed. */
   rejected: number;
+}
+
+export interface CreatedBroadcastPlan extends BroadcastPlan {
+  duplicates: number;
 }
 
 const MAX_RECIPIENTS = 1000;
@@ -106,7 +90,7 @@ export async function createBroadcast(
   accountId: string,
   auditUserId: string,
   params: CreateBroadcastParams
-): Promise<BroadcastPlan> {
+): Promise<CreatedBroadcastPlan> {
   const { name, templateName, recipients } = params;
 
   if (!templateName) {
@@ -129,18 +113,19 @@ export async function createBroadcast(
 
   // Config (fail fast + provides the audit trail owner already resolved
   // by the caller). Meta send needs phone_number_id + decrypted token.
-  const config = await resolveWhatsAppConnection(db, {
-    accountId,
-    connectionId: params.whatsappConfigId,
-  }).catch(() => null);
-  if (!config) {
+  const { data: config, error: configError } = await db
+    .from('whatsapp_config')
+    .select('*')
+    .eq('account_id', accountId)
+    .single();
+  if (configError || !config) {
     throw new BroadcastError(
       'whatsapp_not_configured',
       'WhatsApp not configured. Please set up your WhatsApp integration first.',
       400
     );
   }
-  const accessToken = config.accessToken;
+  const accessToken = decrypt(config.access_token);
 
   // Template row (once) for header/button components; guard a
   // malformed local row rather than N identical opaque failures.
@@ -148,8 +133,7 @@ export async function createBroadcast(
     db,
     accountId,
     templateName,
-    params.templateLanguage,
-    config.id
+    params.templateLanguage
   );
   if (resolvedTemplate.malformed) {
     throw new BroadcastError(
@@ -159,15 +143,6 @@ export async function createBroadcast(
     );
   }
   const templateRow = resolvedTemplate.row;
-  const semantic = templateRow?.variable_configuration_status === 'configured';
-  if (semantic) {
-    const issue = semanticBroadcastTemplateIssue(
-      templateRow,
-      await listMessageVariableDefinitions({ db })
-    );
-    if (issue)
-      throw new BroadcastError('template_context_required', issue, 400);
-  }
 
   // Resolve each recipient to a contact. Invalid phones are dropped
   // (counted as rejected) rather than aborting the whole broadcast.
@@ -186,30 +161,17 @@ export async function createBroadcast(
     const { id } = await findOrCreateContact(db, accountId, auditUserId, {
       phone: to,
     });
-    // Contact lookup may fuzzy-match a phone suffix. Do not attach frozen
-    // recipient values to that contact unless its full destination agrees.
-    const destination = await validateBroadcastRecipientPhone(
-      db,
-      accountId,
-      id,
-      sanitized
-    );
-    if (destination.error !== null) {
-      rejected++;
-      continue;
-    }
     resolved.push({
       contactId: id,
-      phone: destination.phone,
-      params:
-        !semantic && Array.isArray(r.params)
-          ? r.params.filter((p): p is string => typeof p === 'string')
-          : [],
+      phone: sanitized,
+      params: Array.isArray(r.params)
+        ? r.params.filter((p): p is string => typeof p === 'string')
+        : [],
     });
   }
 
   // Collapse recipients that resolved to the SAME contact (the caller
-  // listed the same normalized phone twice).
+  // listed a phone twice, or two numbers fuzzy-matched to one contact).
   // Keep the first occurrence so the contact is messaged once and its
   // params aren't silently overwritten by a later duplicate — and so
   // the row↔params pairing below (keyed by contact_id) is unambiguous.
@@ -223,7 +185,7 @@ export async function createBroadcast(
   if (deduped.length === 0) {
     throw new BroadcastError(
       'bad_request',
-      'No recipients had a valid matching contact phone number. Use international format (leading + and country code, e.g. +14155550123).',
+      'No recipients had a valid international phone number (leading + and country code, e.g. +14155550123)',
       400
     );
   }
@@ -259,30 +221,11 @@ export async function createBroadcast(
     }
   );
   if (createErr || !createdRows || createdRows.length === 0) {
-    console.error('[broadcast-core] Could not create broadcast.', {
-      code: createErr?.code,
-    });
+    console.error('[broadcast-core] create broadcast error:', createErr);
     throw new BroadcastError('internal', 'Failed to create broadcast', 500);
   }
 
   const broadcastId = createdRows[0].broadcast_id as string;
-  const { error: connectionPersistError } = await db
-    .from('broadcasts')
-    .update({
-      whatsapp_config_id: config.id,
-      ...(semantic
-        ? { template_variables: { template_id: templateRow!.id } }
-        : {}),
-    })
-    .eq('id', broadcastId)
-    .eq('account_id', accountId);
-  if (connectionPersistError) {
-    throw new BroadcastError(
-      'internal',
-      'Failed to persist broadcast connection',
-      500
-    );
-  }
 
   // Pair each inserted recipient row back to its phone/params by
   // contact_id — unambiguous now that duplicates are collapsed.
@@ -290,32 +233,26 @@ export async function createBroadcast(
   const planned: PlannedRecipient[] = createdRows.map(
     (row: { recipient_id: string; contact_id: string }) => {
       const r = byContact.get(row.contact_id)!;
-      return {
-        recipientRowId: row.recipient_id,
-        contactId: row.contact_id,
-        phone: r.phone,
-        params: r.params,
-      };
+      return { recipientRowId: row.recipient_id, phone: r.phone, params: r.params };
     }
   );
 
   return {
     broadcastId,
-    accountId,
-    connectionId: config.id,
     templateName,
     templateLanguage: resolvedTemplate.language,
-    phoneNumberId: config.phoneNumberId,
+    phoneNumberId: config.phone_number_id,
     accessToken,
     templateRow,
     planned,
     rejected,
+    duplicates: resolved.length - deduped.length,
   };
 }
 
 /**
  * Fan out a {@link BroadcastPlan}: send each recipient's template
- * and stamp its `broadcast_recipients` row.
+ * (phone-variant retry) and stamp its `broadcast_recipients` row.
  * Best-effort per recipient — one failure never aborts the rest.
  * Designed to run inside `after()`.
  *
@@ -330,192 +267,51 @@ export async function deliverBroadcast(
   db: SupabaseClient,
   plan: BroadcastPlan
 ): Promise<void> {
-  const { data: broadcast, error: broadcastError } = await db
-    .from('broadcasts')
-    .select('id')
-    .eq('id', plan.broadcastId)
-    .eq('account_id', plan.accountId)
-    .eq('whatsapp_config_id', plan.connectionId)
-    .maybeSingle();
-  if (broadcastError || !broadcast)
-    throw new BroadcastError('not_found', 'Broadcast not found', 404);
-  const semantic =
-    plan.templateRow?.variable_configuration_status === 'configured';
-  let semanticIssue: string | null = null;
-  if (semantic) {
-    try {
-      semanticIssue = semanticBroadcastTemplateIssue(
-        plan.templateRow!,
-        await listMessageVariableDefinitions({ db })
-      );
-    } catch {
-      semanticIssue = 'The template variable catalog is unavailable.';
-    }
-  }
   for (const recipient of plan.planned) {
-    const identity = {
-      broadcastId: plan.broadcastId,
-      recipientId: recipient.recipientRowId,
-      contactId: recipient.contactId!,
-    };
-    const { data: saved, error: recipientError } = await db
-      .from('broadcast_recipients')
-      .select('id, whatsapp_message_id')
-      .eq('id', recipient.recipientRowId)
-      .eq('broadcast_id', plan.broadcastId)
-      .eq('contact_id', recipient.contactId)
-      .maybeSingle();
-    if (recipientError || !saved) continue;
-    // Acceptance is durable even if Inbox persistence or a browser status
-    // update failed. A recovery pass must not deliver it a second time.
-    if (saved.whatsapp_message_id) {
-      await db
-        .from('broadcast_recipients')
-        .update({ status: 'sent' })
-        .eq('id', recipient.recipientRowId)
-        .eq('broadcast_id', plan.broadcastId)
-        .in('status', ['pending', 'failed']);
-      continue;
-    }
-    const destination = await validateBroadcastRecipientPhone(
-      db,
-      plan.accountId,
-      recipient.contactId,
-      recipient.phone
-    );
-    if (destination.error !== null) {
-      await recordBroadcastRecipientFailure(db, identity, destination.error);
-      continue;
-    }
-    // Never retry a contact-linked message to a guessed alternate number.
+    const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
     let lastError: string | null = null;
 
-    let templatePayload:
-      ReturnType<typeof buildMetaTemplateMessagePayload> | undefined;
-    if (semantic) {
+    for (const variant of variants) {
       try {
-        if (semanticIssue)
-          throw new BroadcastError(
-            'template_context_required',
-            semanticIssue,
-            400
-          );
-        if (!plan.accountId || !recipient.contactId)
-          throw new TemplatePreparationError('invalid_input');
-        const { prepareTemplateMessage } =
-          await import('@/lib/message-preparation/prepare-template-message');
-        const prepared = await prepareTemplateMessage(
-          {
-            accountId: plan.accountId,
-            templateId: plan.templateRow!.id,
-            context: { contactId: recipient.contactId },
-          },
-          { db }
-        );
-        if (prepared.template.connectionId !== plan.connectionId)
-          throw new TemplatePreparationError('template_connection_invalid');
-        templatePayload = buildMetaTemplateMessagePayload(prepared);
-      } catch (error) {
-        await recordBroadcastRecipientFailure(
-          db,
-          identity,
-          error instanceof BroadcastError
-            ? error.message
-            : 'Required template or contact information is unavailable.'
-        );
-        continue;
-      }
-    }
-    try {
-      if (!(await claimBroadcastRecipient(db, identity))) continue;
-    } catch {
-      console.error('[broadcast] Recipient claim unavailable.', {
-        recipientId: recipient.recipientRowId,
-      });
-      continue;
-    }
-    try {
-      const result = await sendTemplateMessage({
-        phoneNumberId: plan.phoneNumberId,
-        accessToken: plan.accessToken,
-        to: destination.phone,
-        templateName: plan.templateName,
-        language: plan.templateLanguage,
-        templatePayload,
-        template: semantic ? undefined : (plan.templateRow ?? undefined),
-        params: semantic ? undefined : recipient.params,
-        messageParams: semantic ? undefined : recipient.messageParams,
-      });
-      sentMessageId = result.messageId;
-      lastError = null;
-    } catch (error) {
-      if (error instanceof MetaSendPolicyError) {
-        // No HTTP request occurred. Return this recipient to the existing
-        // pending continuation and stop prepared work after an offboard/quota.
-        const { error: deferError } = await db
-          .from('broadcast_recipients')
-          .update({ status: 'pending', error_message: error.message })
-          .eq('id', identity.recipientId)
-          .eq('broadcast_id', identity.broadcastId)
-          .eq('status', 'failed')
-          .eq('error_message', BROADCAST_DELIVERY_UNCONFIRMED)
-          .is('whatsapp_message_id', null);
-        if (deferError)
-          throw new Error('Could not preserve deferred recipient.');
+        const result = await sendTemplateMessage({
+          phoneNumberId: plan.phoneNumberId,
+          accessToken: plan.accessToken,
+          to: variant,
+          templateName: plan.templateName,
+          language: plan.templateLanguage,
+          template: plan.templateRow ?? undefined,
+          params: recipient.params,
+        });
+        sentMessageId = result.messageId;
+        lastError = null;
         break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        lastError = message;
+        // Only a "recipient not allowed" error is worth another variant.
+        if (!isRecipientNotAllowedError(message)) break;
       }
-      lastError = broadcastSendFailure(error);
     }
 
     if (sentMessageId) {
-      // Record acceptance before any conversation/message persistence.
-      try {
-        const { error: acceptanceError } = await db
-          .from('broadcast_recipients')
-          .update({
-            status: 'sent',
-            sent_at: new Date().toISOString(),
-            whatsapp_message_id: sentMessageId,
-            error_message: null,
-          })
-          .eq('id', recipient.recipientRowId)
-          .eq('broadcast_id', plan.broadcastId)
-          .eq('error_message', BROADCAST_DELIVERY_UNCONFIRMED)
-          .is('whatsapp_message_id', null);
-        if (acceptanceError) throw new Error('Acceptance could not be saved.');
-        await persistBroadcastMessage(db, {
-          accountId: plan.accountId!,
-          connectionId: plan.connectionId!,
-          contactId: recipient.contactId!,
-          messageId: sentMessageId,
-          templateName: plan.templateName,
-          contentText: broadcastTemplateContent(
-            plan.templateRow,
-            recipient.params,
-            recipient.messageParams,
-            templatePayload
-          ),
-        });
-      } catch {
-        // Meta accepted. Keep the wamid and sent state; never enqueue a resend
-        // because local Inbox persistence failed.
-        console.error(
-          '[broadcast] Accepted message could not be saved to Inbox.',
-          {
-            broadcastId: plan.broadcastId,
-            recipientId: recipient.recipientRowId,
-            messageId: sentMessageId,
-          }
-        );
-      }
+      await db
+        .from('broadcast_recipients')
+        .update({
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+          whatsapp_message_id: sentMessageId,
+          error_message: null,
+        })
+        .eq('id', recipient.recipientRowId);
     } else {
-      await recordBroadcastRecipientFailure(
-        db,
-        identity,
-        lastError || BROADCAST_DELIVERY_UNCONFIRMED,
-        true
-      );
+      await db
+        .from('broadcast_recipients')
+        .update({
+          status: 'failed',
+          error_message: lastError || 'Unknown error',
+        })
+        .eq('id', recipient.recipientRowId);
     }
   }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Broadcast } from '@/types';
@@ -18,8 +18,6 @@ import { useCan } from '@/hooks/use-can';
 import { GatedButton } from '@/components/ui/gated-button';
 import { getBroadcastStatus } from '@/lib/broadcast-status';
 import { useTranslations } from 'next-intl';
-import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
-import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
 
 /**
  * Poll cadence while any broadcast is sending. Kept modest so we don't
@@ -46,10 +44,10 @@ function RateCell({
   const pct = percent(value, total);
   return (
     <div className="flex items-center gap-2">
-      <span className="text-muted-foreground w-10 text-right text-xs tabular-nums">
+      <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">
         {pct}%
       </span>
-      <div className="bg-muted h-1.5 w-20 overflow-hidden rounded-full">
+      <div className="h-1.5 w-20 overflow-hidden rounded-full bg-muted">
         <div
           className={`h-1.5 rounded-full ${color}`}
           style={{ width: `${pct}%` }}
@@ -63,8 +61,8 @@ export default function BroadcastsPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.page');
   const tStatus = useTranslations('Broadcasts.status');
+  const tGate = useTranslations('GatedButton');
   const canCreate = useCan('send-messages');
-  const whatsapp = useWhatsAppCapability();
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +70,7 @@ export default function BroadcastsPage() {
   // Used to kick off polling only while something is actively sending.
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchBroadcasts = useCallback(async () => {
+  async function fetchBroadcasts() {
     try {
       const supabase = createClient();
       const { data, error: fetchError } = await supabase
@@ -87,18 +85,15 @@ export default function BroadcastsPage() {
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }
 
   useEffect(() => {
-    if (!whatsapp.available) return;
-    void Promise.resolve().then(fetchBroadcasts);
-    // The provider refreshes on workspace changes; only begin loading
-    // tenant data after this workspace has a usable connection.
-  }, [fetchBroadcasts, whatsapp.available]);
+    fetchBroadcasts();
+  }, []);
 
   const anySending = useMemo(
     () => broadcasts.some((b) => b.status === 'sending'),
-    [broadcasts]
+    [broadcasts],
   );
 
   useEffect(() => {
@@ -135,20 +130,12 @@ export default function BroadcastsPage() {
       stopPolling();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [anySending, fetchBroadcasts]);
-
-  if (!whatsapp.available) {
-    return (
-      <WhatsAppCapabilityGate feature="Broadcasts">
-        <></>
-      </WhatsAppCapabilityGate>
-    );
-  }
+  }, [anySending]);
 
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <Loader2 className="text-primary h-6 w-6 animate-spin" />
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
       </div>
     );
   }
@@ -172,9 +159,9 @@ export default function BroadcastsPage() {
         <div
           role="progressbar"
           aria-label={t('broadcastInProgress')}
-          className="broadcast-indeterminate bg-muted fixed inset-x-0 top-0 z-40 h-0.5 overflow-hidden"
+          className="broadcast-indeterminate fixed inset-x-0 top-0 z-40 h-0.5 overflow-hidden bg-muted"
         >
-          <div className="broadcast-indeterminate-bar bg-primary h-0.5" />
+          <div className="broadcast-indeterminate-bar h-0.5 bg-primary" />
           <style jsx>{`
             .broadcast-indeterminate-bar {
               width: 33%;
@@ -196,12 +183,14 @@ export default function BroadcastsPage() {
 
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-foreground text-2xl font-bold">{t('title')}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">{t('subtitle')}</p>
+          <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('subtitle')}
+          </p>
         </div>
         <GatedButton
           canAct={canCreate}
-          gateReason="create broadcasts"
+          gateReason={tGate('reasons.createBroadcasts')}
           onClick={() => router.push('/broadcasts/new')}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
@@ -211,50 +200,36 @@ export default function BroadcastsPage() {
       </div>
 
       {broadcasts.length === 0 ? (
-        <div className="border-border bg-card flex h-64 flex-col items-center justify-center rounded-xl border">
-          <Radio className="text-muted-foreground mb-3 h-10 w-10" />
-          <p className="text-foreground text-sm font-medium">
-            {t('noBroadcastsYet')}
-          </p>
-          <p className="text-muted-foreground mt-1 text-xs">
+        <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-border bg-card">
+          <Radio className="mb-3 h-10 w-10 text-muted-foreground" />
+          <p className="text-sm font-medium text-foreground">{t('noBroadcastsYet')}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
             {t('createFirst')}
           </p>
           <GatedButton
             canAct={canCreate}
-            gateReason="create broadcasts"
+            gateReason={tGate('reasons.createBroadcasts')}
             onClick={() => router.push('/broadcasts/new')}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 mt-4"
+            className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90"
           >
             <Plus className="h-4 w-4" />
             {t('newBroadcast')}
           </GatedButton>
         </div>
       ) : (
-        <div className="border-border bg-card overflow-x-auto rounded-xl border">
+        <div className="overflow-x-auto rounded-xl border border-border bg-card">
           <Table>
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="text-muted-foreground">
-                  {t('table.name')}
-                </TableHead>
-                <TableHead className="text-muted-foreground hidden md:table-cell">
-                  {t('table.template')}
-                </TableHead>
-                <TableHead className="text-muted-foreground hidden text-right sm:table-cell">
+                <TableHead className="text-muted-foreground">{t('table.name')}</TableHead>
+                <TableHead className="hidden text-muted-foreground md:table-cell">{t('table.template')}</TableHead>
+                <TableHead className="hidden text-right text-muted-foreground sm:table-cell">
                   {t('table.recipients')}
                 </TableHead>
-                <TableHead className="text-muted-foreground hidden lg:table-cell">
-                  {t('table.delivery')}
-                </TableHead>
-                <TableHead className="text-muted-foreground hidden lg:table-cell">
-                  {t('table.read')}
-                </TableHead>
-                <TableHead className="text-muted-foreground">
-                  {t('table.status')}
-                </TableHead>
-                <TableHead className="text-muted-foreground hidden sm:table-cell">
-                  {t('table.date')}
-                </TableHead>
+                <TableHead className="hidden text-muted-foreground lg:table-cell">{t('table.delivery')}</TableHead>
+                <TableHead className="hidden text-muted-foreground lg:table-cell">{t('table.read')}</TableHead>
+                <TableHead className="text-muted-foreground">{t('table.status')}</TableHead>
+                <TableHead className="hidden text-muted-foreground sm:table-cell">{t('table.date')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -263,16 +238,16 @@ export default function BroadcastsPage() {
                 return (
                   <TableRow
                     key={broadcast.id}
-                    className="border-border hover:bg-muted/50 cursor-pointer"
+                    className="cursor-pointer border-border hover:bg-muted/50"
                     onClick={() => router.push(`/broadcasts/${broadcast.id}`)}
                   >
-                    <TableCell className="text-foreground font-medium">
+                    <TableCell className="font-medium text-foreground">
                       {broadcast.name}
                     </TableCell>
-                    <TableCell className="text-muted-foreground hidden md:table-cell">
+                    <TableCell className="hidden text-muted-foreground md:table-cell">
                       {broadcast.template_name}
                     </TableCell>
-                    <TableCell className="text-muted-foreground hidden text-right tabular-nums sm:table-cell">
+                    <TableCell className="hidden text-right text-muted-foreground tabular-nums sm:table-cell">
                       {broadcast.total_recipients}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
@@ -302,7 +277,7 @@ export default function BroadcastsPage() {
                         {tStatus(status.label)}
                       </span>
                     </TableCell>
-                    <TableCell className="text-muted-foreground hidden sm:table-cell">
+                    <TableCell className="hidden text-muted-foreground sm:table-cell">
                       {new Date(broadcast.created_at).toLocaleDateString()}
                     </TableCell>
                   </TableRow>

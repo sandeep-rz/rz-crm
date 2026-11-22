@@ -1,15 +1,11 @@
-import { NextResponse } from 'next/server';
-import { requireRole, toErrorResponse } from '@/lib/auth/account';
-import {
-  checkRateLimit,
-  rateLimitResponse,
-  RATE_LIMITS,
-} from '@/lib/rate-limit';
-import { getT } from '@/lib/i18n/translate';
+import { NextResponse } from 'next/server'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
+import { getT } from '@/lib/i18n/translate'
 
-const t = getT('Api');
+const t = getT('Api')
 
-type Params = { params: Promise<{ conversationId: string }> };
+type Params = { params: Promise<{ conversationId: string }> }
 
 /**
  * POST /api/ai/autoreply/[conversationId]  (agent+)
@@ -33,23 +29,23 @@ type Params = { params: Promise<{ conversationId: string }> };
  */
 export async function POST(request: Request, { params }: Params) {
   try {
-    const { supabase, accountId, userId } = await requireRole('agent');
+    const { supabase, accountId, userId } = await requireRole('agent')
 
     // Reuse the send bucket: this is a cheap per-user inbox action and
     // toggling it in a tight loop has no legitimate use.
-    const limit = checkRateLimit(`ai-takeover:${userId}`, RATE_LIMITS.send);
-    if (!limit.success) return rateLimitResponse(limit);
+    const limit = checkRateLimit(`ai-takeover:${userId}`, RATE_LIMITS.send)
+    if (!limit.success) return rateLimitResponse(limit)
 
-    const { conversationId } = await params;
-    const body = await request.json().catch(() => null);
+    const { conversationId } = await params
+    const body = await request.json().catch(() => null)
     if (!body || typeof body.paused !== 'boolean') {
       return NextResponse.json(
         { error: t('ai.pausedRequired') },
-        { status: 400 }
-      );
+        { status: 400 },
+      )
     }
-    const paused = body.paused as boolean;
-    const assignToMe = body.assign_to_me === true;
+    const paused = body.paused as boolean
+    const assignToMe = body.assign_to_me === true
 
     // Confirm the conversation is in the caller's account before writing.
     const { data: conv, error: convErr } = await supabase
@@ -57,25 +53,22 @@ export async function POST(request: Request, { params }: Params) {
       .select('id')
       .eq('id', conversationId)
       .eq('account_id', accountId)
-      .maybeSingle();
+      .maybeSingle()
     if (convErr) {
-      console.error('[ai/autoreply] conversation lookup error:', convErr);
+      console.error('[ai/autoreply] conversation lookup error:', convErr)
       return NextResponse.json(
         { error: t('common.failedToLoadConversation') },
-        { status: 500 }
-      );
+        { status: 500 },
+      )
     }
     if (!conv) {
-      return NextResponse.json(
-        { error: t('common.conversationNotFound') },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: t('common.conversationNotFound') }, { status: 404 })
     }
 
-    const update: Record<string, unknown> = { ai_autoreply_disabled: paused };
+    const update: Record<string, unknown> = { ai_autoreply_disabled: paused }
 
     if (paused) {
-      if (assignToMe) update.assigned_agent_id = userId;
+      if (assignToMe) update.assigned_agent_id = userId
     } else {
       // Resuming hands the thread *back to the bot*. Clear the pause and
       // the handoff note, and — crucially — release ANY assignment, not
@@ -84,30 +77,30 @@ export async function POST(request: Request, { params }: Params) {
       // (e.g. the agent a prior handoff routed to) would silently keep
       // the bot muted and make "Resume AI" a no-op. This is the explicit
       // choice to let the bot own the thread again.
-      update.assigned_agent_id = null;
+      update.assigned_agent_id = null
       // Give the bot a fresh reply budget on this thread. This is a
       // deliberate, manual, rate-limited action (not automatable), so it
       // can't be used to bypass the per-conversation cap at scale — it's
       // a human choosing to re-engage the assistant.
-      update.ai_reply_count = 0;
-      update.ai_handoff_summary = null;
+      update.ai_reply_count = 0
+      update.ai_handoff_summary = null
     }
 
     const { error: upErr } = await supabase
       .from('conversations')
       .update(update)
       .eq('id', conversationId)
-      .eq('account_id', accountId);
+      .eq('account_id', accountId)
     if (upErr) {
-      console.error('[ai/autoreply] update error:', upErr);
+      console.error('[ai/autoreply] update error:', upErr)
       return NextResponse.json(
         { error: t('ai.updateConversationFailed') },
-        { status: 500 }
-      );
+        { status: 500 },
+      )
     }
 
-    return NextResponse.json({ success: true, paused });
+    return NextResponse.json({ success: true, paused })
   } catch (err) {
-    return toErrorResponse(err);
+    return toErrorResponse(err)
   }
 }

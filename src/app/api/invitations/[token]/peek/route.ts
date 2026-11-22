@@ -21,20 +21,20 @@
 //     theoretical, but rate limiting is cheap insurance.
 // ============================================================
 
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
 
-import { hashInviteToken } from '@/lib/auth/invitations';
+import { hashInviteToken } from "@/lib/auth/invitations";
 import {
   checkRateLimit,
   getClientIp,
   rateLimitResponse,
   RATE_LIMITS,
-} from '@/lib/rate-limit';
-import { createClient } from '@/lib/supabase/server';
+} from "@/lib/rate-limit";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ token: string }> }
+  { params }: { params: Promise<{ token: string }> },
 ) {
   // Rate-limit by IP first. Returns 429 to a serial bruteforcer
   // before we ever touch the DB.
@@ -43,23 +43,23 @@ export async function GET(
   if (!limit.success) return rateLimitResponse(limit);
 
   const { token } = await params;
-  if (!token || typeof token !== 'string') {
+  if (!token || typeof token !== "string") {
     return NextResponse.json(
-      { ok: false, reason: 'not_found' },
-      { status: 404 }
+      { ok: false, reason: "not_found" },
+      { status: 404 },
     );
   }
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc('peek_invitation', {
+  const { data, error } = await supabase.rpc("peek_invitation", {
     p_token_hash: hashInviteToken(token),
   });
 
   if (error) {
-    console.error('[peek] rpc error:', error);
+    console.error("[peek] rpc error:", error);
     return NextResponse.json(
-      { ok: false, reason: 'server_error' },
-      { status: 500 }
+      { ok: false, reason: "server_error" },
+      { status: 500 },
     );
   }
 

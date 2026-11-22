@@ -1,259 +1,20 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
-import {
-  daysAgoStart,
-  lastNDayKeys,
-  localDayKey,
-  startOfLocalDay,
-} from './date-utils';
-import type {
-  ActivityItem,
-  ConversationsSeriesPoint,
-  MetricsBundle,
-  PipelineDonutData,
-  PipelineStageSlice,
-  ResponseTimeSummary,
-} from './types';
-import { fetchAllPages } from '@/lib/supabase/paged-query';
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { groupInboundMessages } from './activity-grouping'
+import type { ActivityItem } from './types'
+import { getT } from '@/lib/i18n/translate'
 
-// ------------------------------------------------------------
-// Most widgets aggregate client-side; response timing uses a scoped RPC.
-// RLS scopes every query to the
-// signed-in user automatically, so we never pass user_id explicitly
-// here. Perf is acceptable for the current scale (low thousands of
-// messages) — if a tenant's dataset outgrows this, we'd migrate the
-// heavy aggregations to SQL RPCs. Noted in the PR.
-// ------------------------------------------------------------
+const BROADCAST_STATUS_KEYS = new Set(['draft', 'scheduled', 'sending', 'sent', 'failed'])
 
-type DB = SupabaseClient;
+type DB = SupabaseClient
 
-// --- 1. Metric cards ---------------------------------------------------
-
-export async function loadMetrics(db: DB): Promise<MetricsBundle> {
-  const todayStart = startOfLocalDay().toISOString();
-  const yesterdayStart = daysAgoStart(1).toISOString();
-
-  const [
-    openConvCur,
-    newConvToday,
-    newConvYesterday,
-    newContactsToday,
-    newContactsYesterday,
-    openDeals,
-    messagesToday,
-    messagesYesterday,
-  ] = await Promise.all([
-    db
-      .from('conversations')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'open'),
-    db
-      .from('conversations')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'open')
-      .gte('created_at', todayStart),
-    db
-      .from('conversations')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'open')
-      .gte('created_at', yesterdayStart)
-      .lt('created_at', todayStart),
-    db
-      .from('contacts')
-      .select('id', { count: 'exact', head: true })
-      .gte('created_at', todayStart),
-    db
-      .from('contacts')
-      .select('id', { count: 'exact', head: true })
-      .gte('created_at', yesterdayStart)
-      .lt('created_at', todayStart),
-    db.from('deals').select('value, status').eq('status', 'open'),
-    db
-      .from('messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('sender_type', 'agent')
-      .gte('created_at', todayStart),
-    db
-      .from('messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('sender_type', 'agent')
-      .gte('created_at', yesterdayStart)
-      .lt('created_at', todayStart),
-  ]);
-
-  const openDealsRows = (openDeals.data ?? []) as { value: number | null }[];
-  const openDealsValue = openDealsRows.reduce(
-    (sum, d) => sum + (d.value ?? 0),
-    0
-  );
-
-  return {
-    activeConversations: {
-      current: openConvCur.count ?? 0,
-      // "vs yesterday" on a current-state count has no clean answer
-      // without snapshots — we show the delta in NEW open conversations
-      // today vs yesterday. That's the business-meaningful daily signal.
-      previous: (newConvToday.count ?? 0) - (newConvYesterday.count ?? 0),
-    },
-    newContactsToday: {
-      current: newContactsToday.count ?? 0,
-      previous: newContactsYesterday.count ?? 0,
-    },
-    openDealsValue,
-    openDealsCount: openDealsRows.length,
-    messagesSentToday: {
-      current: messagesToday.count ?? 0,
-      previous: messagesYesterday.count ?? 0,
-    },
-  };
-}
-
-// --- 2. Conversations over time ---------------------------------------
-
-export async function loadConversationsSeries(
-  db: DB,
-  rangeDays: number
-): Promise<ConversationsSeriesPoint[]> {
-  const start = daysAgoStart(rangeDays - 1).toISOString();
-  const data = await fetchAllPages<{ created_at: string; sender_type: string }>(
-    (from, to) =>
-      db
-        .from('messages')
-        .select('created_at, sender_type')
-        .gte('created_at', start)
-        .order('created_at', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to)
-  );
-
-  const keys = lastNDayKeys(rangeDays);
-  const buckets = new Map<string, { incoming: number; outgoing: number }>();
-  for (const k of keys) buckets.set(k, { incoming: 0, outgoing: 0 });
-
-  for (const row of data) {
-    const key = localDayKey(row.created_at);
-    const bucket = buckets.get(key);
-    if (!bucket) continue;
-    if (row.sender_type === 'customer') bucket.incoming += 1;
-    else bucket.outgoing += 1; // agent + bot both count as outgoing
-  }
-
-  return keys.map((day) => ({
-    day,
-    ...(buckets.get(day) ?? { incoming: 0, outgoing: 0 }),
-  }));
-}
-
-// --- 3. Pipeline donut -------------------------------------------------
-
-export async function loadPipelineDonut(db: DB): Promise<PipelineDonutData> {
-  const [stagesRes, dealsRes] = await Promise.all([
-    db
-      .from('pipeline_stages')
-      .select('id, name, color, pipeline_id, position')
-      .order('position'),
-    db.from('deals').select('stage_id, value, status').eq('status', 'open'),
-  ]);
-
-  const stages = (stagesRes.data ?? []) as {
-    id: string;
-    name: string;
-    color: string;
-  }[];
-  const deals = (dealsRes.data ?? []) as {
-    stage_id: string;
-    value: number | null;
-  }[];
-
-  const byStage = new Map<string, { count: number; total: number }>();
-  for (const d of deals) {
-    const row = byStage.get(d.stage_id) ?? { count: 0, total: 0 };
-    row.count += 1;
-    row.total += d.value ?? 0;
-    byStage.set(d.stage_id, row);
-  }
-
-  const slices: PipelineStageSlice[] = stages
-    .map((s) => ({
-      id: s.id,
-      name: s.name,
-      color: s.color || '#64748b',
-      dealCount: byStage.get(s.id)?.count ?? 0,
-      totalValue: byStage.get(s.id)?.total ?? 0,
-    }))
-    // Hide empty stages from the ring (but we'd still show them in the
-    // legend if the user wanted a full breakdown — trimming keeps the
-    // visual clean for the common case).
-    .filter((s) => s.totalValue > 0 || s.dealCount > 0);
-
-  return {
-    stages: slices,
-    totalValue: slices.reduce((sum, s) => sum + s.totalValue, 0),
-  };
-}
-
-// --- 4. Response time by day of week ----------------------------------
-
-/** Aggregated in Postgres so long threads are not truncated at a row cap and
- * customer turns that cross the reporting boundary retain their original start.
- * The caller passes its selected workspace; RLS and the RPC both enforce it. */
-export async function loadResponseTime(
-  db: DB,
-  accountId: string
-): Promise<ResponseTimeSummary> {
-  const { data, error } = await db.rpc('dashboard_response_metrics', {
-    p_account: accountId,
-  });
-  if (error) throw new Error('Could not load response metrics');
-  if (
-    !data ||
-    typeof data.timeZone !== 'string' ||
-    !isResponseTimeSeries(data.human) ||
-    !isResponseTimeSeries(data.ai)
-  ) {
-    throw new Error('Invalid response metrics');
-  }
-  return data as ResponseTimeSummary;
-}
-
-function isResponseTimeSeries(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const series = value as Record<string, unknown>;
-  const minutes = (n: unknown) =>
-    n === null || (typeof n === 'number' && Number.isFinite(n) && n >= 0);
-  return (
-    minutes(series.thisWeekAvg) &&
-    minutes(series.lastWeekAvg) &&
-    Array.isArray(series.buckets) &&
-    series.buckets.length === 7 &&
-    series.buckets.every(
-      (bucket, dow) =>
-        bucket &&
-        bucket.dow === dow &&
-        minutes(bucket.avgMinutes) &&
-        Number.isInteger(bucket.samples) &&
-        bucket.samples >= 0
-    )
-  );
-}
-
-// --- 5. Activity feed --------------------------------------------------
-
-export async function loadActivity(
-  db: DB,
-  limit = 20
-): Promise<ActivityItem[]> {
-  // Pull ~10 from each source (plenty of headroom after merge-sort),
-  // then interleave by timestamp. The individual per-table limits
-  // keep the payload small; the final limit is enforced after sort.
+export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> {
   const [msgs, contacts, deals, broadcasts, autoLogs] = await Promise.all([
     db
       .from('messages')
-      .select(
-        'id, content_text, sender_type, created_at, conversation_id, conversations(contact_id, contacts(name, phone))'
-      )
+      .select('id, content_text, sender_type, created_at, conversation_id, conversations(contact_id, contacts(name, phone))')
       .eq('sender_type', 'customer')
       .order('created_at', { ascending: false })
-      .limit(10),
+      .limit(40),
     db
       .from('contacts')
       .select('id, name, phone, created_at')
@@ -271,134 +32,119 @@ export async function loadActivity(
       .limit(5),
     db
       .from('automation_logs')
-      .select(
-        'id, trigger_event, status, created_at, automation:automations(name), contact:contacts(name, phone)'
-      )
+      .select('id, trigger_event, status, created_at, automation:automations(name), contact:contacts(name, phone)')
       .order('created_at', { ascending: false })
       .limit(10),
-  ]);
+  ])
 
-  const items: ActivityItem[] = [];
+  const items: ActivityItem[] = []
+  const t = getT('Dashboard.activityFeed.items')
 
-  // PostgREST returns nested selections as arrays by default, even when
-  // the foreign key is 1:1. We normalise by taking [0] on each level.
-  for (const m of (msgs.data ?? []) as unknown as Array<{
-    id: string;
-    content_text: string | null;
-    created_at: string;
-    conversation_id: string;
+  const inbound = (msgs.data ?? []) as unknown as Array<{
+    id: string
+    created_at: string
+    conversation_id: string
     conversations:
-      | {
-          contact_id: string | null;
-          contacts:
-            | { name: string | null; phone: string }[]
-            | { name: string | null; phone: string }
-            | null;
-        }[]
-      | {
-          contact_id: string | null;
-          contacts:
-            | { name: string | null; phone: string }[]
-            | { name: string | null; phone: string }
-            | null;
-        }
-      | null;
-  }>) {
-    const conv = Array.isArray(m.conversations)
-      ? m.conversations[0]
-      : m.conversations;
-    const contact = Array.isArray(conv?.contacts)
-      ? conv?.contacts[0]
-      : conv?.contacts;
-    const who = contact?.name || contact?.phone || 'Unknown';
+      | { contact_id: string | null; contacts: { name: string | null; phone: string }[] | { name: string | null; phone: string } | null }[]
+      | { contact_id: string | null; contacts: { name: string | null; phone: string }[] | { name: string | null; phone: string } | null }
+      | null
+  }>
+
+  const grouped = groupInboundMessages(
+    inbound.map((m) => {
+      const conv = Array.isArray(m.conversations) ? m.conversations[0] : m.conversations
+      const contact = Array.isArray(conv?.contacts) ? conv?.contacts[0] : conv?.contacts
+      return {
+        id: m.id,
+        conversationId: m.conversation_id,
+        who: contact?.name || contact?.phone || t('unknown'),
+        at: m.created_at,
+      }
+    }),
+  )
+
+  for (const g of grouped) {
     items.push({
-      id: `msg-${m.id}`,
+      id: `msg-${g.id}`,
       kind: 'message',
-      text: `New message from ${who}`,
-      at: m.created_at,
-      href: `/inbox?c=${m.conversation_id}`,
-    });
+      text: g.count > 1 ? t('newMessages', { who: g.who, count: g.count }) : t('newMessage', { who: g.who }),
+      at: g.at,
+      href: `/inbox?c=${g.conversationId}`,
+    })
   }
 
-  for (const c of (contacts.data ?? []) as Array<{
-    id: string;
-    name: string | null;
-    phone: string;
-    created_at: string;
-  }>) {
+  for (const c of (contacts.data ?? []) as Array<{ id: string; name: string | null; phone: string; created_at: string }>) {
     items.push({
       id: `contact-${c.id}`,
       kind: 'contact',
-      text: `New contact: ${c.name || c.phone}`,
+      text: t('newContact', { name: c.name || c.phone }),
       at: c.created_at,
       href: '/contacts',
-    });
+    })
   }
 
   for (const d of (deals.data ?? []) as unknown as Array<{
-    id: string;
-    title: string;
-    updated_at: string;
-    stage: { name: string }[] | { name: string } | null;
+    id: string
+    title: string
+    updated_at: string
+    stage: { name: string }[] | { name: string } | null
   }>) {
-    const stage = Array.isArray(d.stage) ? d.stage[0] : d.stage;
+    const stage = Array.isArray(d.stage) ? d.stage[0] : d.stage
     items.push({
       id: `deal-${d.id}`,
       kind: 'deal',
       text: stage?.name
-        ? `Deal "${d.title}" in ${stage.name}`
-        : `Deal "${d.title}" updated`,
+        ? t('dealInStage', { title: d.title, stage: stage.name })
+        : t('dealUpdated', { title: d.title }),
       at: d.updated_at,
       href: '/pipelines',
-    });
+    })
   }
 
   for (const b of (broadcasts.data ?? []) as Array<{
-    id: string;
-    name: string;
-    status: string;
-    total_recipients: number;
-    created_at: string;
+    id: string
+    name: string
+    status: string
+    total_recipients: number
+    created_at: string
   }>) {
-    const label =
-      b.status === 'sent'
-        ? `sent to ${b.total_recipients} contacts`
-        : `${b.status} (${b.total_recipients} recipients)`;
+    const count = String(b.total_recipients)
+    const status = BROADCAST_STATUS_KEYS.has(b.status)
+      ? t(`broadcastStatusNames.${b.status}`)
+      : b.status
     items.push({
       id: `broadcast-${b.id}`,
       kind: 'broadcast',
-      text: `Broadcast "${b.name}" ${label}`,
+      text:
+        b.status === 'sent'
+          ? t('broadcastSent', { name: b.name, count })
+          : t('broadcastStatus', { name: b.name, status, count }),
       at: b.created_at,
       href: '/broadcasts',
-    });
+    })
   }
 
   for (const l of (autoLogs.data ?? []) as unknown as Array<{
-    id: string;
-    trigger_event: string;
-    status: string;
-    created_at: string;
-    automation: { name: string }[] | { name: string } | null;
-    contact:
-      | { name: string | null; phone: string }[]
-      | { name: string | null; phone: string }
-      | null;
+    id: string
+    trigger_event: string
+    status: string
+    created_at: string
+    automation: { name: string }[] | { name: string } | null
+    contact: { name: string | null; phone: string }[] | { name: string | null; phone: string } | null
   }>) {
-    const automation = Array.isArray(l.automation)
-      ? l.automation[0]
-      : l.automation;
-    const contact = Array.isArray(l.contact) ? l.contact[0] : l.contact;
-    const who = contact?.name || contact?.phone || 'a contact';
-    const autoName = automation?.name || 'Automation';
+    const automation = Array.isArray(l.automation) ? l.automation[0] : l.automation
+    const contact = Array.isArray(l.contact) ? l.contact[0] : l.contact
+    const who = contact?.name || contact?.phone || t('aContact')
+    const autoName = automation?.name || t('automationFallback')
     items.push({
       id: `auto-${l.id}`,
       kind: 'automation',
-      text: `Automation "${autoName}" ${l.status === 'failed' ? 'failed for' : 'triggered for'} ${who}`,
+      text: t(l.status === 'failed' ? 'automationFailed' : 'automationTriggered', { name: autoName, who }),
       at: l.created_at,
-    });
+    })
   }
 
   return items
     .sort((a, b) => (a.at > b.at ? -1 : a.at < b.at ? 1 : 0))
-    .slice(0, limit);
+    .slice(0, limit)
 }

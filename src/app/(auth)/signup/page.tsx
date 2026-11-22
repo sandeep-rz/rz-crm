@@ -1,24 +1,21 @@
-'use client';
+"use client";
 
-import { browserWorkspaceDefaults } from '@/lib/workspace-defaults';
-
-import { Suspense, useState } from 'react';
-import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { useTranslations } from 'next-intl';
-import { createClient } from '@/lib/supabase/client';
-import { buildSignupMetadata } from '@/lib/auth/invitation-token-client';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Suspense, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { MessageSquare, CheckCircle, UsersRound } from 'lucide-react';
+} from "@/components/ui/card";
+import { MessageSquare, CheckCircle, UsersRound } from "lucide-react";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -37,13 +34,13 @@ function SignupPageInner() {
   // verification → redirect round-trip. `emailRedirectTo` below
   // sends the verified user to /join/<token> so they land on the
   // redeem step instead of being dropped on /dashboard.
-  const inviteToken = searchParams.get('invite');
-  const t = useTranslations('SignupPage');
+  const inviteToken = searchParams.get("invite");
+  const t = useTranslations("SignupPage");
 
-  const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -54,12 +51,12 @@ function SignupPageInner() {
     setError(null);
 
     if (password !== confirmPassword) {
-      setError(t('passwordsMismatch'));
+      setError(t("passwordsMismatch"));
       return;
     }
 
     if (password.length < 6) {
-      setError(t('passwordTooShort'));
+      setError(t("passwordTooShort"));
       return;
     }
 
@@ -77,57 +74,43 @@ function SignupPageInner() {
     // → Redirect URLs; see docs/auth-emails.md.
     const next = inviteToken
       ? `/join/${encodeURIComponent(inviteToken)}`
-      : '/dashboard';
+      : "/dashboard";
     const emailRedirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
-    try {
-      // Migration 045 validates this digest against a real pending invite
-      // before suppressing personal-workspace bootstrap. Never store the
-      // plaintext invitation token in auth user metadata.
-      const metadata = await buildSignupMetadata(
-        fullName,
-        inviteToken,
-        browserWorkspaceDefaults()
-      );
-
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: metadata,
-          emailRedirectTo,
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName,
         },
-      });
+        emailRedirectTo,
+      },
+    });
 
-      if (error) {
-        setError(error.message);
-        return;
-      }
-
-      setSuccess(true);
-    } catch (signupError) {
-      console.error('[signup] failed:', signupError);
-      setError(
-        signupError instanceof Error ? signupError.message : t('signupFailed')
-      );
-    } finally {
+    if (error) {
+      setError(error.message);
       setLoading(false);
+      return;
     }
+
+    setSuccess(true);
+    setLoading(false);
   };
 
   if (success) {
     return (
-      <div className="bg-background flex min-h-screen items-center justify-center px-4">
-        <Card className="border-border bg-card w-full max-w-md">
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <Card className="w-full max-w-md border-border bg-card">
           <CardHeader className="items-center text-center">
-            <div className="bg-primary/10 mb-2 flex h-12 w-12 items-center justify-center rounded-xl">
-              <CheckCircle className="text-primary h-6 w-6" />
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+              <CheckCircle className="h-6 w-6 text-primary" />
             </div>
-            <CardTitle className="text-foreground text-xl">
-              {t('checkEmailTitle')}
+            <CardTitle className="text-xl text-foreground">
+              {t("checkEmailTitle")}
             </CardTitle>
             <CardDescription className="text-muted-foreground">
-              {t.rich('checkEmailDesc', {
+              {t.rich("checkEmailDesc", {
                 email,
                 strong: (chunks) => (
                   <span className="text-foreground">{chunks}</span>
@@ -140,14 +123,14 @@ function SignupPageInner() {
               href={
                 inviteToken
                   ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                  : '/login'
+                  : "/login"
               }
             >
               <Button
                 variant="outline"
-                className="border-border text-muted-foreground hover:bg-muted hover:text-foreground w-full"
+                className="w-full border-border text-muted-foreground hover:bg-muted hover:text-foreground"
               >
-                {t('backToSignIn')}
+                {t("backToSignIn")}
               </Button>
             </Link>
           </CardContent>
@@ -157,21 +140,21 @@ function SignupPageInner() {
   }
 
   return (
-    <div className="bg-background flex min-h-screen items-center justify-center px-4">
-      <Card className="border-border bg-card w-full max-w-md">
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
-          <div className="bg-primary/10 mb-2 flex h-12 w-12 items-center justify-center rounded-xl">
+          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             {inviteToken ? (
-              <UsersRound className="text-primary h-6 w-6" />
+              <UsersRound className="h-6 w-6 text-primary" />
             ) : (
-              <MessageSquare className="text-primary h-6 w-6" />
+              <MessageSquare className="h-6 w-6 text-primary" />
             )}
           </div>
-          <CardTitle className="text-foreground text-xl">
-            {inviteToken ? t('titleJoin') : t('title')}
+          <CardTitle className="text-xl text-foreground">
+            {inviteToken ? t("titleJoin") : t("title")}
           </CardTitle>
           <CardDescription className="text-muted-foreground">
-            {inviteToken ? t('descJoin') : t('desc')}
+            {inviteToken ? t("descJoin") : t("desc")}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -184,12 +167,12 @@ function SignupPageInner() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="fullName" className="text-muted-foreground">
-                {t('fullNameLabel')}
+                {t("fullNameLabel")}
               </Label>
               <Input
                 id="fullName"
                 type="text"
-                placeholder={t('fullNamePlaceholder')}
+                placeholder={t("fullNamePlaceholder")}
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
@@ -199,12 +182,12 @@ function SignupPageInner() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="email" className="text-muted-foreground">
-                {t('emailLabel')}
+                {t("emailLabel")}
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder={t('emailPlaceholder')}
+                placeholder={t("emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -214,12 +197,12 @@ function SignupPageInner() {
 
             <div className="flex flex-col gap-2">
               <Label htmlFor="password" className="text-muted-foreground">
-                {t('passwordLabel')}
+                {t("passwordLabel")}
               </Label>
               <Input
                 id="password"
                 type="password"
-                placeholder={t('passwordPlaceholder')}
+                placeholder={t("passwordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -228,16 +211,13 @@ function SignupPageInner() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label
-                htmlFor="confirmPassword"
-                className="text-muted-foreground"
-              >
-                {t('confirmPasswordLabel')}
+              <Label htmlFor="confirmPassword" className="text-muted-foreground">
+                {t("confirmPasswordLabel")}
               </Label>
               <Input
                 id="confirmPassword"
                 type="password"
-                placeholder={t('confirmPasswordPlaceholder')}
+                placeholder={t("confirmPasswordPlaceholder")}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
@@ -248,23 +228,23 @@ function SignupPageInner() {
             <Button
               type="submit"
               disabled={loading}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 mt-2 h-10 w-full disabled:opacity-50"
+              className="mt-2 h-10 w-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {loading ? t('creating') : t('submit')}
+              {loading ? t("creating") : t("submit")}
             </Button>
           </form>
 
-          <p className="text-muted-foreground mt-6 text-center text-sm">
-            {t('haveAccount')}{' '}
+          <p className="mt-6 text-center text-sm text-muted-foreground">
+            {t("haveAccount")}{" "}
             <Link
               href={
                 inviteToken
                   ? `/login?invite=${encodeURIComponent(inviteToken)}`
-                  : '/login'
+                  : "/login"
               }
               className="text-primary hover:text-primary/80"
             >
-              {t('signIn')}
+              {t("signIn")}
             </Link>
           </p>
         </CardContent>

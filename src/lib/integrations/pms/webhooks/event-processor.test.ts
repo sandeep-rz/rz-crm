@@ -7,7 +7,6 @@ import {
 } from '../provider';
 import {
   syncPmsReservation,
-  type PmsContactRecord,
   type PmsReservationSyncStore,
 } from '../reservation-sync';
 import {
@@ -124,7 +123,12 @@ class MemoryEventStore implements PmsWebhookEventStore {
 }
 
 class MemoryReservationStore implements PmsReservationSyncStore {
-  contacts: PmsContactRecord[] = [];
+  contacts: {
+    id: string;
+    phone: string;
+    name: string | null;
+    email: string | null;
+  }[] = [];
   guestMappings = new Map<string, string>();
   reservations = new Map<
     string,
@@ -136,111 +140,57 @@ class MemoryReservationStore implements PmsReservationSyncStore {
     }
   >();
 
-  async findGuestMapping(input: {
-    integrationId: string;
-    externalGuestId: string;
-  }) {
-    const contactId = this.guestMappings.get(
-      `${input.integrationId}:${input.externalGuestId}`
-    );
-    return contactId ? { contactId } : null;
-  }
-
-  async findContactsByPhone(_accountId: string, phone: string) {
-    return this.contacts.filter(
-      (contact) => contact.phone.replace(/\D/g, '') === phone
-    );
-  }
-
-  async findContactsByEmail(_accountId: string, email: string) {
-    return this.contacts.filter(
-      (contact) => contact.email?.toLowerCase() === email
-    );
-  }
-
-  async findContactById(_accountId: string, contactId: string) {
-    return this.contacts.find((contact) => contact.id === contactId) ?? null;
-  }
-
-  async createContact(input: {
-    accountId: string;
-    phone: string;
-    name: string | null;
-    email: string | null;
-  }) {
-    void input.accountId;
-    const contact = {
-      id: `contact-${this.contacts.length + 1}`,
-      phone: input.phone,
-      name: input.name,
-      email: input.email,
-    };
-    this.contacts.push(contact);
-    return { contact, created: true };
-  }
-
-  async enrichContact(input: {
-    accountId: string;
-    contact: PmsContactRecord;
-    phone: string | null;
-    name: string | null;
-    email: string | null;
-  }) {
-    void input.accountId;
-    if (!input.contact.phone && input.phone) input.contact.phone = input.phone;
-    if (!input.contact.name && input.name) input.contact.name = input.name;
-    if (!input.contact.email && input.email) input.contact.email = input.email;
-    return input.contact;
-  }
-
-  async createGuestMapping(input: {
-    accountId: string;
-    integrationId: string;
-    contactId: string;
-    externalGuestId: string;
-  }) {
-    void input.accountId;
-    const key = `${input.integrationId}:${input.externalGuestId}`;
-    if (!this.guestMappings.has(key)) {
-      this.guestMappings.set(key, input.contactId);
+  async upsert(
+    ...[input, guest]: Parameters<PmsReservationSyncStore['upsert']>
+  ) {
+    const key = `${input.integration.integrationId}:${input.reservation.externalId}`;
+    const previous = this.reservations.get(key);
+    if (
+      previous?.externalUpdatedAt &&
+      (!input.reservation.updatedAt ||
+        previous.externalUpdatedAt > input.reservation.updatedAt)
+    ) {
+      return {
+        reservationId: previous.id,
+        contactId: previous.contactId,
+        contactCreated: false,
+        externalGuestMapped: false,
+        skippedStale: true,
+      };
     }
-    return { contactId: this.guestMappings.get(key)! };
-  }
-
-  async findReservation(input: {
-    accountId: string;
-    integrationId: string;
-    externalReservationId: string;
-  }) {
-    void input.accountId;
-    return (
-      this.reservations.get(
-        `${input.integrationId}:${input.externalReservationId}`
-      ) ?? null
-    );
-  }
-
-  async saveReservation(input: {
-    accountId: string;
-    integrationId: string;
-    propertyId: string;
-    contactId: string | null;
-    reservation: PmsReservation;
-    syncedAt: string;
-    existing: { id: string; externalUpdatedAt: string | null } | null;
-  }) {
-    void input.accountId;
-    void input.propertyId;
-    void input.syncedAt;
-    const key = `${input.integrationId}:${input.reservation.externalId}`;
-    const id = input.existing?.id ?? `projection-${this.reservations.size + 1}`;
+    const guestKey =
+      input.reservation.guest.externalId &&
+      `${input.integration.integrationId}:${input.reservation.guest.externalId}`;
+    let contactId =
+      (guestKey && this.guestMappings.get(guestKey)) ||
+      previous?.contactId ||
+      this.contacts.find((c) => guest.phone && c.phone === guest.phone)?.id ||
+      null;
+    const contactCreated = !contactId && Boolean(guestKey || guest.phone);
+    if (contactCreated) {
+      contactId = `contact-${this.contacts.length + 1}`;
+      this.contacts.push({
+        id: contactId,
+        phone: guest.phone ?? '',
+        name: guest.name ?? null,
+        email: guest.email ?? null,
+      });
+    }
+    if (guestKey && contactId) this.guestMappings.set(guestKey, contactId);
+    const id = previous?.id ?? `projection-${this.reservations.size + 1}`;
     this.reservations.set(key, {
       id,
       externalUpdatedAt: input.reservation.updatedAt,
       reservation: input.reservation,
-      contactId: input.contactId,
+      contactId,
     });
-    return { id, skippedStale: false };
+    return {
+      reservationId: id,
+      contactId,
+      contactCreated,
+      externalGuestMapped: Boolean(guestKey && contactId),
+      skippedStale: false,
+    };
   }
 }
 
@@ -518,56 +468,5 @@ describe('PMS webhook event processor', () => {
 
     expect(result).toEqual({ claimed: 2, processed: 1, failed: 1, ignored: 0 });
     expect(events.processed).toEqual(['good']);
-  });
-});
-
-
-describe('guest.updated event dispatch', () => {
-  it('processes a guest update without fetching a reservation twice or scheduling automations', async () => {
-    const events = new MemoryEventStore();
-    const projections = new MemoryReservationStore();
-    const canonical = providerFor(reservation);
-    const scheduleAutomations = vi.fn();
-    const syncGuest = vi.fn(async () => 'updated' as const);
-    const guestEvent = {
-      ...claim,
-      eventType: 'guest.updated',
-      externalResourceId: 'guest-1',
-    };
-    const result = await processPmsWebhookEvent(guestEvent, {
-      ...dependencies(events, projections, canonical.provider),
-      scheduleAutomations,
-      syncGuest,
-    });
-    expect(result.status).toBe('processed');
-    expect(syncGuest).toHaveBeenCalledWith({
-      accountId: claim.accountId,
-      integration: context.integration,
-      propertyId: claim.propertyId,
-      externalPropertyId: '22008',
-      externalGuestId: 'guest-1',
-      occurredAt: claim.occurredAt,
-    }, canonical.provider);
-    expect(canonical.getReservation).not.toHaveBeenCalled();
-    expect(scheduleAutomations).not.toHaveBeenCalled();
-    expect(events.processed).toEqual([claim.id]);
-  });
-
-  it('ignores an unmapped guest without creating a CRM contact or scheduling automations', async () => {
-    const events = new MemoryEventStore();
-    const projections = new MemoryReservationStore();
-    const canonical = providerFor(reservation);
-    const syncGuest = vi.fn(async () => 'unmapped' as const);
-    const scheduleAutomations = vi.fn();
-    const result = await processPmsWebhookEvent({
-      ...claim, eventType: 'guest.updated', externalResourceId: 'unmapped-guest',
-    }, {
-      ...dependencies(events, projections, canonical.provider),
-      syncGuest,
-      scheduleAutomations,
-    });
-    expect(result.status).toBe('ignored');
-    expect(events.ignored).toEqual([claim.id]);
-    expect(scheduleAutomations).not.toHaveBeenCalled();
   });
 });

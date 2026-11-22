@@ -21,6 +21,9 @@
  */
 
 import { NextResponse } from 'next/server';
+import { getT } from '@/lib/i18n/translate';
+
+const t = getT('LibErrors');
 
 export interface RateLimitOptions {
   /** Max requests allowed in `windowMs`. */
@@ -59,7 +62,7 @@ function sweepExpired(now: number) {
 
 export function checkRateLimit(
   key: string,
-  { limit, windowMs }: RateLimitOptions
+  { limit, windowMs }: RateLimitOptions,
 ): RateLimitResult {
   const now = Date.now();
 
@@ -73,12 +76,7 @@ export function checkRateLimit(
 
   if (!entry || entry.resetAt <= now) {
     buckets.set(key, { count: 1, resetAt: now + windowMs });
-    return {
-      success: true,
-      remaining: limit - 1,
-      reset: now + windowMs,
-      limit,
-    };
+    return { success: true, remaining: limit - 1, reset: now + windowMs, limit };
   }
 
   if (entry.count >= limit) {
@@ -114,13 +112,10 @@ export function getClientIp(request: Request): string {
 }
 
 export function rateLimitResponse(result: RateLimitResult): NextResponse {
-  const retryAfterSec = Math.max(
-    1,
-    Math.ceil((result.reset - Date.now()) / 1000)
-  );
+  const retryAfterSec = Math.max(1, Math.ceil((result.reset - Date.now()) / 1000));
   return NextResponse.json(
     {
-      error: 'Rate limit exceeded',
+      error: t('rateLimitExceeded'),
       retry_after_seconds: retryAfterSec,
     },
     {
@@ -131,15 +126,12 @@ export function rateLimitResponse(result: RateLimitResult): NextResponse {
         'X-RateLimit-Remaining': String(result.remaining),
         'X-RateLimit-Reset': String(Math.ceil(result.reset / 1000)),
       },
-    }
+    },
   );
 }
 
 /** Preconfigured budgets, tweak here not at call sites. */
 export const RATE_LIMITS = {
-  whatsappAdmin: { limit: 30, windowMs: 60_000 },
-  whatsappMedia: { limit: 240, windowMs: 60_000 },
-  automationTrigger: { limit: 30, windowMs: 60_000 },
   /** Individual message send. 60/min per user = one per second
    *  sustained, comfortable for a live human typing. */
   send: { limit: 60, windowMs: 60_000 },
@@ -199,6 +191,10 @@ export const RATE_LIMITS = {
    *  capping a stampede; excess inbounds simply don't get an auto-reply
    *  (they still land in the inbox for a human). */
   aiAutoReplyAccount: { limit: 30, windowMs: 60_000 },
+  whatsappAdmin: { limit: 30, windowMs: 60_000 },
+  whatsappHealth: { limit: 30, windowMs: 60_000 },
+  whatsappMedia: { limit: 240, windowMs: 60_000 },
+  automationTrigger: { limit: 30, windowMs: 60_000 },
 } as const;
 
 /** Test-only helper. Clears the in-memory state so unit tests don't

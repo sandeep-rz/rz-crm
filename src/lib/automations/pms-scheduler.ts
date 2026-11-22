@@ -401,6 +401,16 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
   }
 
   async insertEventJob(job: AutomationTriggerJobInsert): Promise<boolean> {
+    if (job.trigger_type === 'reservation_confirmed') {
+      const { data, error } = await this.db.rpc('insert_pms_confirmation_job', {
+        p_job: job,
+      });
+      if (error)
+        throw new PmsAutomationScheduleError(
+          'Confirmation occurrence insert failed.'
+        );
+      return data === true;
+    }
     const { data, error } = await this.db
       .from('automation_trigger_jobs')
       .upsert(job, { onConflict: 'occurrence_key', ignoreDuplicates: true })

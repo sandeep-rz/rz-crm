@@ -233,12 +233,14 @@ export async function processPmsAutomationJob(
       return 'inProgress';
     }
     if (execution.disposition === 'reservation_changed') {
-      await store.markSuppressed(
+      // No execution was acquired. Revalidate the same occurrence on the
+      // next claim rather than discarding it because of a concurrent edit.
+      await store.markRescheduled(
         job,
-        now().toISOString(),
+        job.runAt,
         'Reservation changed after eligibility validation.'
       );
-      return 'suppressed';
+      return 'rescheduled';
     }
     if (execution.disposition === 'ineligible') {
       await store.markSuppressed(

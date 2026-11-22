@@ -25,11 +25,7 @@ describe('every event has a description', () => {
 describe('normalizeEvents', () => {
   it('de-duplicates a valid list', () => {
     expect(
-      normalizeEvents([
-        'message.received',
-        'message.received',
-        'conversation.created',
-      ])
+      normalizeEvents(['message.received', 'message.received', 'conversation.created'])
     ).toEqual(['message.received', 'conversation.created']);
   });
 

@@ -216,9 +216,9 @@ export function ImportModal({
         data: { session },
       } = await supabase.auth.getSession();
       const user = session?.user;
-      if (!user) throw new Error('Not authenticated');
+      if (!user) throw new Error(t('notAuthenticated'));
       if (!accountId)
-        throw new Error('Your profile is not linked to an account.');
+        throw new Error(t('notLinkedToAccount'));
 
       let imported = 0;
       let skipped = 0;
@@ -386,7 +386,7 @@ export function ImportModal({
       if (skippedNames.length > 0) {
         const sample = skippedNames.slice(0, 3).join(', ');
         const more =
-          skippedNames.length > 3 ? ` (+${skippedNames.length - 3} more)` : '';
+          skippedNames.length > 3 ? t('toastTagsSkippedMore', { count: skippedNames.length - 3 }) : '';
         toast.info(t('toastTagsSkipped', { sample, more }));
       }
       if (skipped > 0) {
@@ -429,27 +429,21 @@ export function ImportModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="border-border/80 bg-popover text-popover-foreground flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
-        <div className="border-border/80 shrink-0 space-y-4 border-b px-6 pt-6 pb-5">
+      <DialogContent className="flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden border-border/80 bg-popover p-0 text-popover-foreground sm:max-w-2xl">
+        <div className="shrink-0 space-y-4 border-b border-border/80 px-6 pt-6 pb-5">
           <DialogHeader className="gap-1.5">
-            <DialogTitle className="text-popover-foreground text-lg">
+            <DialogTitle className="text-lg text-popover-foreground">
               {t('title')}
             </DialogTitle>
-            <DialogDescription
-              className="text-muted-foreground leading-relaxed"
+            <DialogDescription className="leading-relaxed text-muted-foreground"
               dangerouslySetInnerHTML={{
                 __html: t.markup('desc', {
-                  phoneCode: (chunks) =>
-                    `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
-                  nameCode: (chunks) =>
-                    `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
-                  emailCode: (chunks) =>
-                    `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
-                  companyCode: (chunks) =>
-                    `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
-                  tagsCode: (chunks) =>
-                    `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
-                }),
+                  phoneCode: (chunks) => `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
+                  nameCode: (chunks) => `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
+                  emailCode: (chunks) => `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
+                  companyCode: (chunks) => `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
+                  tagsCode: (chunks) => `<code class="rounded bg-muted px-1 py-0.5 text-[11px] text-muted-foreground">${chunks}</code>`,
+                })
               }}
             />
           </DialogHeader>
@@ -475,24 +469,24 @@ export function ImportModal({
                   <FileText className="text-primary size-5" />
                 </div>
                 <p
-                  className="text-popover-foreground max-w-full truncate px-2 text-sm font-medium"
+                  className="max-w-full truncate px-2 text-sm font-medium text-popover-foreground"
                   title={file.name}
                 >
                   {truncateFilename(file.name)}
                 </p>
-                <span className="bg-muted text-muted-foreground rounded-full px-2.5 py-0.5 text-[11px] font-medium">
+                <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                   {t('rowsReady', { count: parsedRows.length })}
                 </span>
               </>
             ) : (
               <>
-                <div className="bg-muted/80 ring-border/80 group-hover:bg-muted flex size-10 items-center justify-center rounded-lg ring-1 transition-colors">
-                  <Upload className="text-muted-foreground group-hover:text-foreground size-5" />
+                <div className="flex size-10 items-center justify-center rounded-lg bg-muted/80 ring-1 ring-border/80 transition-colors group-hover:bg-muted">
+                  <Upload className="size-5 text-muted-foreground group-hover:text-foreground" />
                 </div>
-                <p className="text-muted-foreground text-sm">
+                <p className="text-sm text-muted-foreground">
                   {t('uploadDropzone')}
                 </p>
-                <p className="text-muted-foreground text-[11px]">
+                <p className="text-[11px] text-muted-foreground">
                   {t('uploadHint')}
                 </p>
               </>
@@ -512,75 +506,72 @@ export function ImportModal({
           {preview.length > 0 && !result && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-muted-foreground text-[11px] font-semibold tracking-[0.14em] uppercase">
+                <p className="text-[11px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
                   {t('preview', { count: preview.length })}
                 </p>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {tagStats.rowsWithTags > 0 && (
-                    <span className="bg-muted/90 text-muted-foreground inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px]">
+                    <span className="inline-flex items-center gap-1 rounded-md bg-muted/90 px-2 py-0.5 text-[11px] text-muted-foreground">
                       <Tag className="text-primary/80 size-3" />
-                      {t('previewTags', {
-                        tags: tagStats.unique,
-                        contacts: tagStats.rowsWithTags,
-                      })}
+                      {t('previewTags', { tags: tagStats.unique, contacts: tagStats.rowsWithTags })}
                     </span>
                   )}
                 </div>
               </div>
 
-              <div className="border-border ring-border/50 overflow-hidden rounded-xl border ring-1">
+              <div className="overflow-hidden rounded-xl border border-border ring-1 ring-border/50">
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[32rem] text-xs">
                     <thead>
-                      <tr className="border-border bg-background/60 border-b">
-                        <th className="text-muted-foreground px-3 py-2 text-left font-medium whitespace-nowrap">
+                      <tr className="border-b border-border bg-background/60">
+                        <th className="px-3 py-2 text-left font-medium whitespace-nowrap text-muted-foreground">
                           {t('columns.phone')}
                         </th>
-                        <th className="text-muted-foreground px-3 py-2 text-left font-medium whitespace-nowrap">
+                        <th className="px-3 py-2 text-left font-medium whitespace-nowrap text-muted-foreground">
                           {t('columns.name')}
                         </th>
-                        <th className="text-muted-foreground px-3 py-2 text-left font-medium whitespace-nowrap">
+                        <th className="px-3 py-2 text-left font-medium whitespace-nowrap text-muted-foreground">
                           {t('columns.email')}
                         </th>
                         {previewHasCompany && (
-                          <th className="text-muted-foreground px-3 py-2 text-left font-medium whitespace-nowrap">
+                          <th className="px-3 py-2 text-left font-medium whitespace-nowrap text-muted-foreground">
                             {t('columns.company')}
                           </th>
                         )}
                         {previewHasTags && (
-                          <th className="text-muted-foreground px-3 py-2 text-left font-medium whitespace-nowrap">
+                          <th className="px-3 py-2 text-left font-medium whitespace-nowrap text-muted-foreground">
                             {t('columns.tags')}
                           </th>
                         )}
                       </tr>
                     </thead>
-                    <tbody className="divide-border/70 divide-y">
+                    <tbody className="divide-y divide-border/70">
                       {preview.map((row, i) => (
                         <tr
                           key={i}
-                          className="bg-popover/40 hover:bg-muted/30 transition-colors"
+                          className="bg-popover/40 transition-colors hover:bg-muted/30"
                         >
-                          <td className="text-muted-foreground px-3 py-2 whitespace-nowrap">
+                          <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
                             <PreviewCell
                               value={row.phone}
                               mono
                               maxWidth="max-w-[7.5rem]"
                             />
                           </td>
-                          <td className="text-popover-foreground px-3 py-2">
+                          <td className="px-3 py-2 text-popover-foreground">
                             <PreviewCell
                               value={row.name || '—'}
                               maxWidth="max-w-[8.5rem]"
                             />
                           </td>
-                          <td className="text-muted-foreground px-3 py-2">
+                          <td className="px-3 py-2 text-muted-foreground">
                             <PreviewCell
                               value={row.email || '—'}
                               maxWidth="max-w-[10rem]"
                             />
                           </td>
                           {previewHasCompany && (
-                            <td className="text-muted-foreground px-3 py-2">
+                            <td className="px-3 py-2 text-muted-foreground">
                               <PreviewCell
                                 value={row.company || '—'}
                                 maxWidth="max-w-[7rem]"
@@ -603,7 +594,7 @@ export function ImportModal({
               </div>
 
               {parsedRows.length > PREVIEW_LIMIT && (
-                <p className="text-muted-foreground text-center text-[11px]">
+                <p className="text-center text-[11px] text-muted-foreground">
                   {t('moreRows', { count: parsedRows.length - PREVIEW_LIMIT })}
                 </p>
               )}
@@ -611,10 +602,8 @@ export function ImportModal({
           )}
 
           {result && (
-            <div className="border-border bg-background/50 rounded-xl border p-4">
-              <p className="text-popover-foreground text-sm font-medium">
-                {t('importComplete')}
-              </p>
+            <div className="rounded-xl border border-border bg-background/50 p-4">
+              <p className="text-sm font-medium text-popover-foreground">{t('importComplete')}</p>
               <div className="mt-3 flex flex-wrap gap-3">
                 {result.imported > 0 && (
                   <div className="text-primary flex items-center gap-1.5 text-sm">
@@ -640,7 +629,7 @@ export function ImportModal({
                       <AlertTriangle className="size-4 shrink-0" />
                       {t('resultInvalidPhone', { count: result.invalidPhone })}
                     </div>
-                    <p className="text-muted-foreground pl-[1.375rem] text-xs">
+                    <p className="pl-[1.375rem] text-xs text-muted-foreground">
                       {t('invalidPhoneHint')}
                     </p>
                   </div>
@@ -654,17 +643,17 @@ export function ImportModal({
               </div>
 
               {result.failedDetails.length > 0 && (
-                <div className="border-border/80 mt-3 space-y-1 border-t pt-3">
-                  <p className="text-muted-foreground text-[11px] font-semibold tracking-[0.14em] uppercase">
+                <div className="mt-3 space-y-1 border-t border-border/80 pt-3">
+                  <p className="text-[11px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
                     {t('failedRowsHeading')}
                   </p>
                   <ul className="max-h-32 space-y-1 overflow-y-auto text-xs">
                     {result.failedDetails.map((row, i) => (
                       <li
                         key={i}
-                        className="text-muted-foreground flex items-baseline gap-2"
+                        className="flex items-baseline gap-2 text-muted-foreground"
                       >
-                        <span className="text-popover-foreground shrink-0 font-mono">
+                        <span className="shrink-0 font-mono text-popover-foreground">
                           {row.name ? `${row.name} (${row.phone})` : row.phone}
                         </span>
                         <span className="truncate">{row.reason}</span>
@@ -677,7 +666,7 @@ export function ImportModal({
           )}
         </div>
 
-        <DialogFooter className="border-border/80 bg-background/50 mt-0 shrink-0 gap-2 border-t px-6 py-4 sm:justify-end">
+        <DialogFooter className="mt-0 shrink-0 gap-2 border-t border-border/80 bg-background/50 px-6 py-4 sm:justify-end">
           <Button
             type="button"
             variant="outline"
@@ -694,9 +683,7 @@ export function ImportModal({
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {importing && <Loader2 className="size-4 animate-spin" />}
-              {parsedRows.length > 0
-                ? t('importBtn', { count: parsedRows.length })
-                : t('importBtn', { count: 0 })}
+              {parsedRows.length > 0 ? t('importBtn', { count: parsedRows.length }) : t('importBtn', { count: 0 })}
             </Button>
           )}
         </DialogFooter>

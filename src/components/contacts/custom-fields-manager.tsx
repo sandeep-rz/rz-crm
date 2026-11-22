@@ -37,9 +37,7 @@ export function CustomFieldsManager({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-border bg-popover text-popover-foreground sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-popover-foreground">
-            {t('title')}
-          </DialogTitle>
+          <DialogTitle className="text-popover-foreground">{t('title')}</DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {t('desc')}
           </DialogDescription>
@@ -73,7 +71,6 @@ export function CustomFieldsPanel() {
     const { data } = await supabase
       .from('custom_fields')
       .select('*')
-      .eq('account_id', accountId)
       .order('field_name');
     setFields((data as CustomField[] | null) ?? []);
     setLoading(false);
@@ -143,8 +140,7 @@ export function CustomFieldsPanel() {
     const { error } = await supabase
       .from('custom_fields')
       .update({ field_name: name })
-      .eq('id', field.id)
-      .eq('account_id', accountId);
+      .eq('id', field.id);
     setBusyId(null);
     if (error) {
       toast.error(t('toastRenameFailed'));
@@ -155,15 +151,18 @@ export function CustomFieldsPanel() {
   }
 
   async function handleDelete(field: CustomField) {
-    if (!window.confirm(t('deleteConfirm', { name: field.field_name }))) {
+    if (
+      !window.confirm(
+        t('deleteConfirm', { name: field.field_name })
+      )
+    ) {
       return;
     }
     setBusyId(field.id);
     const { error } = await supabase
       .from('custom_fields')
       .delete()
-      .eq('id', field.id)
-      .eq('account_id', accountId);
+      .eq('id', field.id);
     setBusyId(null);
     if (error) {
       toast.error(t('toastDeleteFailed'));
@@ -204,18 +203,18 @@ export function CustomFieldsPanel() {
       </div>
 
       {/* List */}
-      <div className="border-border max-h-72 overflow-y-auto rounded-md border">
+      <div className="max-h-72 overflow-y-auto rounded-md border border-border">
         {loading ? (
-          <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
             {t('loading')}
           </div>
         ) : fields.length === 0 ? (
-          <p className="text-muted-foreground py-8 text-center text-sm">
+          <p className="py-8 text-center text-sm text-muted-foreground">
             {t('empty')}
           </p>
         ) : (
-          <ul className="divide-border divide-y">
+          <ul className="divide-y divide-border">
             {fields.map((field) => (
               <FieldRow
                 key={field.id}
@@ -268,7 +267,7 @@ function FieldRow({
           if (e.key === 'Enter') e.currentTarget.blur();
         }}
         aria-label={t('renameAria', { name: field.field_name })}
-        className="focus:border-primary text-foreground hover:border-border h-8 border-transparent bg-transparent"
+        className="focus:border-primary h-8 border-transparent bg-transparent text-foreground hover:border-border"
       />
       <Button
         variant="ghost"
@@ -276,7 +275,7 @@ function FieldRow({
         disabled={busy}
         onClick={() => onDelete(field)}
         title={t('deleteTitle')}
-        className="text-muted-foreground shrink-0 hover:text-red-400"
+        className="shrink-0 text-muted-foreground hover:text-red-400"
       >
         {busy ? (
           <Loader2 className="size-4 animate-spin" />

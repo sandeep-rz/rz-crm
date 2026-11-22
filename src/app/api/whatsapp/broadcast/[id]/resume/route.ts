@@ -37,6 +37,9 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit';
+import { getT } from '@/lib/i18n/translate';
+
+const t = getT('Api');
 
 // The fan-out below is sequential over up to 1 000 recipients.
 export const maxDuration = 300;
@@ -75,7 +78,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            'A delivery pass is already running for this broadcast. Wait for it to finish before resuming again.',
+            t('broadcast.alreadyRunning'),
         },
         { status: 409 }
       );
@@ -129,9 +132,7 @@ export async function POST(
     // Planning failed after the claim — release it, or the campaign is
     // locked out of resuming until the staleness window expires.
     if (claimedId) {
-      await releaseBroadcastDelivery(supabaseAdmin(), claimedId).catch(
-        () => {}
-      );
+      await releaseBroadcastDelivery(supabaseAdmin(), claimedId).catch(() => {});
     }
     if (error instanceof BroadcastError) {
       return NextResponse.json(

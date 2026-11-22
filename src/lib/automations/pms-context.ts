@@ -51,7 +51,8 @@ function nightsBetween(
 export async function loadReservationAutomationContext(
   reservationId: string,
   accountId: string,
-  db: SupabaseClient = supabaseAdmin()
+  db: SupabaseClient = supabaseAdmin(),
+  requireActiveIntegration = false
 ): Promise<ReservationAutomationContext | null> {
   const { data: reservation, error: reservationError } = await db
     .from('pms_reservations')
@@ -72,14 +73,14 @@ export async function loadReservationAutomationContext(
   ] = await Promise.all([
     db
       .from('pms_properties')
-      .select('id, account_id, pms_integration_id, name, timezone')
+      .select('id, account_id, pms_integration_id, name, timezone, status')
       .eq('id', reservation.pms_property_id)
       .eq('account_id', accountId)
       .eq('pms_integration_id', reservation.pms_integration_id)
       .maybeSingle(),
     db
       .from('pms_integrations')
-      .select('id, account_id, provider')
+      .select('id, account_id, provider, status')
       .eq('id', reservation.pms_integration_id)
       .eq('account_id', accountId)
       .maybeSingle(),
@@ -90,6 +91,11 @@ export async function loadReservationAutomationContext(
     );
   }
   if (!property || !integration) return null;
+  if (
+    requireActiveIntegration &&
+    (property.status !== 'active' || integration.status !== 'connected')
+  )
+    return null;
 
   let guestName: string | null = null;
   if (reservation.contact_id) {

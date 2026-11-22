@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import type { RzPmsWebhookEnvelope } from './envelope';
+import {
+  validateRzPmsWebhookEnvelope,
+  type RzPmsWebhookEnvelope,
+} from './envelope';
 import {
   type PmsPropertyMapping,
   type PmsWebhookStore,
@@ -143,4 +146,14 @@ describe('RZ PMS webhook processing', () => {
       code: 'property_not_connected',
     });
   });
+});
+
+it('preserves the PostgreSQL source-version precision in a signed event envelope', () => {
+  const occurredAt = '2026-11-11T10:06:11.123456Z';
+  const validated = validateRzPmsWebhookEnvelope({
+    ...EVENT,
+    occurred_at: occurredAt,
+  });
+  expect(validated.success).toBe(true);
+  if (validated.success) expect(validated.data.occurred_at).toBe(occurredAt);
 });

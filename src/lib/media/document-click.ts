@@ -1,4 +1,4 @@
-import { isProxiedMediaUrl } from './blob-cache';
+import { isProxiedMediaUrl } from "./blob-cache";
 
 export interface DocumentClickInput {
   button: number;
@@ -11,7 +11,7 @@ export interface DocumentClickInput {
 
 export function shouldDownloadDocumentClick(
   mediaUrl: string | undefined,
-  click: DocumentClickInput
+  click: DocumentClickInput,
 ): boolean {
   if (!mediaUrl || !isProxiedMediaUrl(mediaUrl)) return false;
   if (click.defaultPrevented || click.button !== 0) return false;

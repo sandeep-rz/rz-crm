@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { BarChart3, Bot, PencilLine } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
@@ -23,7 +23,7 @@ import {
 import { Skeleton } from '@/components/dashboard/skeleton';
 import { BarChart } from '@/components/tremor/bar-chart';
 import { formatCompactNumber } from '@/lib/currency';
-import { format, parseISO } from 'date-fns';
+import { parseISO } from 'date-fns';
 
 interface UsageResponse {
   window_days: number;
@@ -56,6 +56,7 @@ const WINDOWS = [7, 30, 90] as const;
  */
 export function AiUsageCard() {
   const t = useTranslations('Agents.usage');
+  const locale = useLocale();
   const { accountId, accountRole, profileLoading } = useAuth();
   const canView = accountRole ? canEditSettings(accountRole) : false;
 
@@ -64,33 +65,30 @@ export function AiUsageCard() {
   const [data, setData] = useState<UsageResponse | null>(null);
   const loadedRef = useRef<string | null>(null);
 
-  const fetchUsage = useCallback(
-    async (windowDays: number) => {
-      setLoading(true);
-      try {
-        const params = new URLSearchParams({
-          days: String(windowDays),
-          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        });
-        const res = await fetch(`/api/ai/usage?${params}`, {
-          cache: 'no-store',
-        });
-        const json = await res.json().catch(() => null);
-        if (!res.ok) {
-          toast.error(json?.error ?? t('loadFailed'));
-          setData(null);
-          return;
-        }
-        setData(json as UsageResponse);
-      } catch {
-        toast.error(t('loadFailed'));
+  const fetchUsage = useCallback(async (windowDays: number) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        days: String(windowDays),
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      const res = await fetch(`/api/ai/usage?${params}`, {
+        cache: 'no-store',
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        toast.error(json?.error ?? t('loadFailed'));
         setData(null);
-      } finally {
-        setLoading(false);
+        return;
       }
-    },
-    [t]
-  );
+      setData(json as UsageResponse);
+    } catch {
+      toast.error(t('loadFailed'));
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
 
   useEffect(() => {
     if (!canView || !accountId) return;
@@ -108,7 +106,7 @@ export function AiUsageCard() {
   const tokensLabel = t('tokens');
   const chartData =
     data?.daily.map((d) => ({
-      day: format(parseISO(d.date), 'MMM d'),
+      day: parseISO(d.date).toLocaleDateString(locale, { month: 'short', day: 'numeric' }),
       [tokensLabel]: d.tokens,
     })) ?? [];
   const hasSpend = (data?.totals.total_tokens ?? 0) > 0;
@@ -119,9 +117,11 @@ export function AiUsageCard() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
-              <BarChart3 className="text-primary h-4 w-4" /> {t('title')}
+              <BarChart3 className="h-4 w-4 text-primary" /> {t('title')}
             </CardTitle>
-            <CardDescription>{t('description')}</CardDescription>
+            <CardDescription>
+              {t('description')}
+            </CardDescription>
           </div>
           <Select
             value={String(days)}
@@ -144,18 +144,17 @@ export function AiUsageCard() {
         {loading || !data ? (
           <Skeleton className="h-[220px] w-full" />
         ) : !hasSpend ? (
-          <div className="text-muted-foreground flex flex-col items-center justify-center gap-2 py-10 text-center text-sm">
+          <div className="flex flex-col items-center justify-center gap-2 py-10 text-center text-sm text-muted-foreground">
             <BarChart3 className="h-8 w-8 opacity-40" />
             <p>{t('empty', { days: data.window_days })}</p>
-            <p className="text-xs">{t('emptyHint')}</p>
+            <p className="text-xs">
+              {t('emptyHint')}
+            </p>
           </div>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat
-                label={t('totalTokens')}
-                value={formatCompactNumber(data.totals.total_tokens)}
-              />
+              <Stat label={t('totalTokens')} value={formatCompactNumber(data.totals.total_tokens)} />
               <Stat label={t('llmCalls')} value={String(data.totals.calls)} />
               <Stat
                 label={t('autoReply')}
@@ -170,14 +169,14 @@ export function AiUsageCard() {
             </div>
 
             <div>
-              <p className="text-muted-foreground mb-2 text-xs font-medium">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">
                 {t('tokensPerDay')}
               </p>
               <BarChart
                 data={chartData}
                 index="day"
                 categories={[tokensLabel]}
-                colors={['primary']}
+                colors={['violet']}
                 valueFormatter={(v) => formatCompactNumber(v)}
                 showLegend={false}
                 yAxisWidth={48}
@@ -187,10 +186,10 @@ export function AiUsageCard() {
 
             {data.by_model.length > 0 && (
               <div>
-                <p className="text-muted-foreground mb-2 text-xs font-medium">
+                <p className="mb-2 text-xs font-medium text-muted-foreground">
                   {t('byModel')}
                 </p>
-                <ul className="divide-border border-border divide-y rounded-md border">
+                <ul className="divide-y divide-border rounded-md border border-border">
                   {data.by_model.map((m) => (
                     <li
                       key={`${m.provider}:${m.model}`}
@@ -198,11 +197,11 @@ export function AiUsageCard() {
                     >
                       <span className="min-w-0 truncate">
                         <span className="text-foreground">{m.model}</span>{' '}
-                        <span className="text-muted-foreground text-xs">
+                        <span className="text-xs text-muted-foreground">
                           ({m.provider})
                         </span>
                       </span>
-                      <span className="text-muted-foreground flex-shrink-0 tabular-nums">
+                      <span className="flex-shrink-0 tabular-nums text-muted-foreground">
                         {t('modelCalls', {
                           tokens: formatCompactNumber(m.tokens),
                           count: m.calls,
@@ -215,7 +214,7 @@ export function AiUsageCard() {
             )}
 
             {data.truncated && (
-              <p className="text-muted-foreground text-xs">
+              <p className="text-xs text-muted-foreground">
                 {t('partialWindow')}
               </p>
             )}
@@ -236,12 +235,12 @@ function Stat({
   icon?: typeof Bot;
 }) {
   return (
-    <div className="border-border rounded-md border p-3">
-      <p className="text-muted-foreground flex items-center gap-1 text-xs">
+    <div className="rounded-md border border-border p-3">
+      <p className="flex items-center gap-1 text-xs text-muted-foreground">
         {Icon && <Icon className="h-3 w-3" />}
         {label}
       </p>
-      <p className="text-foreground mt-1 text-lg font-semibold tabular-nums">
+      <p className="mt-1 text-lg font-semibold tabular-nums text-foreground">
         {value}
       </p>
     </div>

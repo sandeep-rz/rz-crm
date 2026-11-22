@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Plus,
@@ -12,9 +12,6 @@ import {
   Pencil,
   RotateCcw,
   Upload,
-  MessageSquare,
-  CheckCircle2,
-  Globe,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -27,13 +24,15 @@ import {
   type MediaHeaderKind,
 } from '@/lib/whatsapp/media-header-types';
 import { useAuth } from '@/hooks/use-auth';
-import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
+import { fetchAccountTemplates } from '@/lib/settings/account-catalog';
+import { canEditTemplateCategory } from '@/lib/whatsapp/template-category-edit';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { useTranslations } from 'next-intl';
-import { Card, CardContent, CardFooter } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { SettingsPanelHead } from './settings-panel-head';
 import {
   Dialog,
@@ -50,31 +49,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { MessageTemplate, TemplateButton } from '@/types';
+import type {
+  MessageTemplate,
+  TemplateButton,
+  TemplateSampleValues,
+} from '@/types';
 import { templateStatusConfig } from '@/lib/template-status';
-import { TEMPLATE_LIMITS } from '@/lib/whatsapp/template-validators';
-
-import { SemanticTemplateEditor } from './semantic-template-editor';
-import { VariableSelection } from './semantic-variable-picker';
 import {
-  canMapImportedTemplate,
-  hasTemplateTokens,
-  positionalSlots,
-  slotIdentity,
-  renderSemanticText,
-  semanticSegments,
-  type CatalogVariable,
-} from '@/lib/whatsapp/semantic-template';
+  extractVariableIndices,
+  TEMPLATE_LIMITS,
+} from '@/lib/whatsapp/template-validators';
 
 const CATEGORIES = ['Marketing', 'Utility', 'Authentication'] as const;
 type HeaderFormat = 'none' | 'text' | 'image' | 'video' | 'document';
-const HEADER_FORMATS: HeaderFormat[] = [
-  'none',
-  'text',
-  'image',
-  'video',
-  'document',
-];
+const HEADER_FORMATS: HeaderFormat[] = ['none', 'text', 'image', 'video', 'document'];
+
+const categoryColors: Record<string, string> = {
+  Marketing: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
+  Utility: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
+  Authentication: 'bg-amber-600/20 text-amber-400 border-amber-600/30',
+};
 
 interface TemplateFormData {
   name: string;
@@ -83,7 +77,9 @@ interface TemplateFormData {
   header_format: HeaderFormat;
   header_content: string;
   header_media_url: string;
+  header_sample: string;
   body_text: string;
+  body_samples: string[];
   footer_text: string;
   buttons: TemplateButton[];
 }
@@ -95,7 +91,9 @@ const emptyForm: TemplateFormData = {
   header_format: 'none',
   header_content: '',
   header_media_url: '',
+  header_sample: '',
   body_text: '',
+  body_samples: [],
   footer_text: '',
   buttons: [],
 };
@@ -135,28 +133,14 @@ function emptyButton(type: TemplateButton['type']): TemplateButton {
 
 export function TemplateManager() {
   const t = useTranslations('Settings.templates');
+  // Meta's category ids (stored as-is) → display label in the UI language.
+  const categoryLabel = (category: string) =>
+    t.has(`categoryLabels.${category}`) ? t(`categoryLabels.${category}`) : category;
   const supabase = createClient();
   const { user, accountId, loading: authLoading } = useAuth();
-  const whatsapp = useWhatsAppCapability();
 
-  const [catalog, setCatalog] = useState<CatalogVariable[]>([]);
-  const [catalogError, setCatalogError] = useState('');
-  const [mappingTemplate, setMappingTemplate] =
-    useState<MessageTemplate | null>(null);
-  const [mappingSelection, setMappingSelection] = useState<
-    Record<string, string>
-  >({});
-  const [savingMapping, setSavingMapping] = useState(false);
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
-  const connections = whatsapp.connections;
-  const [selectedConnectionId, setWhatsappConfigId] = useState('');
-  const whatsappConfigId = connections.some(
-    (row) => row.id === selectedConnectionId
-  )
-    ? selectedConnectionId
-    : (whatsapp.primaryConnection?.id ?? '');
-
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -166,6 +150,9 @@ export function TemplateManager() {
   // dialog title + CTA. Set to the template id to pre-fill from a row.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const editingTemplate = templates.find((template) => template.id === editingId);
+  const categoryLocked =
+    editingTemplate !== undefined && !canEditTemplateCategory(editingTemplate.status);
   // Template selected for the confirm-delete dialog. The destructive
   // action goes through this two-step so a slip on the trash icon
   // doesn't take the template off Meta as well as locally.
@@ -178,73 +165,46 @@ export function TemplateManager() {
   const [uploadingHeader, setUploadingHeader] = useState(false);
   const headerFileRef = useRef<HTMLInputElement>(null);
 
+  // Body variable indices — `[1, 2, 3]` for "{{1}} {{2}} {{3}}". We
+  // re-run the extractor on every render to keep the sample-value rows
+  // in sync with what the user typed.
+  const bodyVarCount = useMemo(
+    () => extractVariableIndices(form.body_text).length,
+    [form.body_text],
+  );
+  const headerVarCount = useMemo(
+    () =>
+      form.header_format === 'text'
+        ? extractVariableIndices(form.header_content).length
+        : 0,
+    [form.header_format, form.header_content],
+  );
+
+  // Resize body_samples so it always has exactly bodyVarCount entries.
+  // (We mutate via setForm in an effect so React owns the state.)
   useEffect(() => {
-    if (!accountId) return;
-    let cancelled = false;
-    void (async () => {
-      const { data, error } = await createClient()
-        .from('message_variable_catalog')
-        .select(
-          'variable_key,label,description,category,data_type,preview_value,is_sensitive,is_active,sort_order'
-        )
-        .eq('is_active', true)
-        .order('sort_order');
-      if (cancelled) return;
-      if (error) {
-        setCatalogError(error.message);
-        return;
-      }
-      setCatalogError('');
-      setCatalog(
-        (data ?? []).map((row) => ({
-          variableKey: row.variable_key,
-          label: row.label,
-          description: row.description,
-          previewValue: row.preview_value,
-          isActive: row.is_active,
-          category: row.category,
-          sortOrder: row.sort_order,
-        }))
-      );
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [accountId]);
+    setForm((prev) => {
+      if (prev.body_samples.length === bodyVarCount) return prev;
+      const next = prev.body_samples.slice(0, bodyVarCount);
+      while (next.length < bodyVarCount) next.push('');
+      return { ...prev, body_samples: next };
+    });
+  }, [bodyVarCount]);
 
   useEffect(() => {
-    if (authLoading || !user || !accountId || whatsapp.loading) return;
-    if (whatsapp.status === 'error') {
+    if (authLoading) return;
+    if (!user || !accountId) {
       setLoading(false);
       return;
     }
-    void fetchTemplates(accountId, whatsappConfigId);
+    fetchTemplates(accountId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    accountId,
-    authLoading,
-    user?.id,
-    whatsapp.loading,
-    whatsapp.status,
-    whatsappConfigId,
-  ]);
+  }, [authLoading, user?.id, accountId]);
 
-  async function fetchTemplates(
-    activeAccountId: string,
-    connectionId = whatsappConfigId
-  ) {
+  async function fetchTemplates(acctId: string) {
     try {
       setLoading(true);
-      let query = supabase
-        .from('message_templates')
-        .select('*')
-        .eq('account_id', activeAccountId);
-      if (connectionId) query = query.eq('whatsapp_config_id', connectionId);
-      const { data, error } = await query.order('created_at', {
-        ascending: false,
-      });
-      if (error) throw error;
-      setTemplates(data || []);
+      setTemplates(await fetchAccountTemplates(supabase, acctId));
     } catch (err) {
       console.error('Failed to fetch templates:', err);
       toast.error(t('toastLoadFailed'));
@@ -254,89 +214,58 @@ export function TemplateManager() {
   }
 
   function buildSubmitPayload() {
+    const sample_values: TemplateSampleValues = {};
+    if (form.body_samples.some((v) => v.trim())) {
+      sample_values.body = form.body_samples.map((v) => v.trim());
+    }
+    if (form.header_format === 'text' && form.header_sample.trim()) {
+      sample_values.header = [form.header_sample.trim()];
+    }
+
     return {
-      whatsapp_config_id: whatsappConfigId,
       name: form.name.trim(),
       category: form.category,
       language: form.language.trim() || 'en_US',
-      header_type:
-        form.header_format === 'none' ? undefined : form.header_format,
+      header_type: form.header_format === 'none' ? undefined : form.header_format,
+      header_content:
+        form.header_format === 'text' ? form.header_content.trim() : undefined,
       header_media_url:
         form.header_format !== 'none' && form.header_format !== 'text'
           ? form.header_media_url.trim() || undefined
           : undefined,
-      semantic_content: {
-        body_text: form.body_text.trim(),
-        ...(form.header_format === 'text'
-          ? { header_content: form.header_content.trim() }
-          : {}),
-        button_urls: Object.fromEntries(
-          form.buttons.flatMap((button, index) =>
-            button.type === 'URL' ? [[String(index), button.url]] : []
-          )
-        ),
-      },
+      body_text: form.body_text.trim(),
       footer_text: form.footer_text.trim() || undefined,
       buttons: form.buttons.length > 0 ? form.buttons : undefined,
+      sample_values:
+        Object.keys(sample_values).length > 0 ? sample_values : undefined,
     };
   }
 
   function openEdit(template: MessageTemplate) {
-    if (!whatsapp.available) return;
-    if (canMapImportedTemplate(template)) {
-      setMappingTemplate(template);
-      setMappingSelection({});
-      return;
-    }
-    // Only static Meta imports can initialize an editor without semantic content.
-    let content = template.semantic_content;
-    if (!content) {
-      if (template.template_origin !== 'meta' || hasTemplateTokens(template)) {
-        toast.error('This template has no supported semantic content.');
-        return;
-      }
-      content = {
-        body_text: template.body_text,
-        header_content:
-          template.header_type === 'text' ? template.header_content : undefined,
-        button_urls: Object.fromEntries(
-          (template.buttons ?? []).flatMap((button, index) =>
-            button.type === 'URL' ? [[String(index), button.url]] : []
-          )
-        ),
-      };
-    }
     setEditingId(template.id);
     setForm({
       name: template.name,
       category: template.category,
       language: template.language || 'en_US',
       header_format: (template.header_type ?? 'none') as HeaderFormat,
-      header_content: content.header_content ?? '',
+      header_content: template.header_content ?? '',
       header_media_url: template.header_media_url ?? '',
-      body_text: content.body_text,
+      header_sample: template.sample_values?.header?.[0] ?? '',
+      body_text: template.body_text,
+      body_samples: template.sample_values?.body ?? [],
       footer_text: template.footer_text ?? '',
-      buttons: (template.buttons ?? []).map((button, index) =>
-        button.type === 'URL'
-          ? {
-              ...button,
-              url: content.button_urls?.[String(index)] ?? '',
-            }
-          : button
-      ),
+      buttons: template.buttons ?? [],
     });
     setDialogOpen(true);
   }
 
   function openCreate() {
-    if (!whatsapp.available) return;
     setEditingId(null);
     setForm(emptyForm);
     setDialogOpen(true);
   }
 
   async function handleSubmit() {
-    if (!whatsapp.available) return;
     // AUTHENTICATION is blocked by the persistent banner + disabled
     // submit button; this is a defensive second line of defense.
     if (form.category === 'Authentication') return;
@@ -354,10 +283,7 @@ export function TemplateManager() {
       const data = await res.json();
       if (!res.ok) {
         throw new Error(
-          data?.error ||
-            t(isEdit ? 'editFailedHttp' : 'submitFailedHttp', {
-              status: res.status,
-            })
+          data?.error || t(isEdit ? 'editFailedHttp' : 'submitFailedHttp', { status: res.status }),
         );
       }
       // Refresh first, then close — re-opening the dialog
@@ -370,7 +296,7 @@ export function TemplateManager() {
             : t('toastSaveNewDry')
           : isEdit
             ? t('toastSubmitEditSuccess')
-            : t('toastSubmitNewSuccess')
+            : t('toastSubmitNewSuccess'),
       );
       setDialogOpen(false);
       setForm(emptyForm);
@@ -384,45 +310,37 @@ export function TemplateManager() {
   }
 
   async function handleSyncFromMeta() {
-    if (!user || !whatsapp.available) return;
+    if (!user) return;
     setSyncing(true);
     try {
-      const res = await fetch('/api/whatsapp/templates/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ whatsapp_config_id: whatsappConfigId }),
-      });
+      const res = await fetch('/api/whatsapp/templates/sync', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.error || `Sync failed (HTTP ${res.status})`);
+        throw new Error(data?.error || t('syncFailedHttp', { status: res.status }));
       }
       toast.success(
         t('toastSyncCount', { total: data.total }) +
           (data.inserted || data.updated
-            ? t('toastSyncDetails', {
-                inserted: data.inserted,
-                updated: data.updated,
-              })
-            : '')
+            ? t('toastSyncDetails', { inserted: data.inserted, updated: data.updated })
+            : ''),
       );
       if (Array.isArray(data.errors) && data.errors.length > 0) {
-        const preview = data.errors
-          .slice(0, 3)
-          .map(
-            (e: { name: string; language: string; message: string }) =>
-              `${e.name} (${e.language})`
-          );
-        const suffix =
-          data.errors.length > 3 ? `, +${data.errors.length - 3} more` : '';
-        toast.error(
-          t('toastSyncFailed', { preview: preview.join(', ') + suffix })
+        const preview = data.errors.slice(0, 3).map(
+          (e: { name: string; language: string; message: string }) =>
+            `${e.name} (${e.language})`,
         );
+        const suffix =
+          data.errors.length > 3 ? t('syncMoreSuffix', { count: data.errors.length - 3 }) : '';
+        toast.error(t('toastSyncFailed', { preview: preview.join(', ') + suffix }));
       }
       if (data.truncated) {
         // Use error (not warning) so the message survives long
         // enough to read — sonner's `warning` auto-dismisses on
         // the same short timer as `success`.
-        toast.error(t('toastSyncTruncated'), { duration: 10000 });
+        toast.error(
+          t('toastSyncTruncated'),
+          { duration: 10000 },
+        );
       }
       if (accountId) await fetchTemplates(accountId);
     } catch (err) {
@@ -436,7 +354,6 @@ export function TemplateManager() {
   async function confirmDelete() {
     const target = templateToDelete;
     if (!target || deletingId) return;
-    if (target.meta_template_id && !whatsapp.available) return;
     setDeletingId(target.id);
     try {
       // Route handler scopes the Meta delete via hsm_id (so sibling
@@ -447,7 +364,7 @@ export function TemplateManager() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data?.error || `Delete failed (HTTP ${res.status})`);
+        throw new Error(data?.error || t('deleteFailedHttp', { status: res.status }));
       }
       toast.success(t('toastDeleteSuccess'));
       setTemplates((prev) => prev.filter((t) => t.id !== target.id));
@@ -538,10 +455,10 @@ export function TemplateManager() {
     }));
   }
 
-  if (authLoading || (loading && user && accountId)) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="text-primary size-6 animate-spin" />
+        <Loader2 className="size-6 animate-spin text-primary" />
       </div>
     );
   }
@@ -549,7 +466,7 @@ export function TemplateManager() {
   const headerNeedsMedia =
     form.header_format !== 'none' && form.header_format !== 'text';
   const headerMediaKind: MediaHeaderKind | null = isMediaHeaderKind(
-    form.header_format
+    form.header_format,
   )
     ? form.header_format
     : null;
@@ -586,7 +503,7 @@ export function TemplateManager() {
         t('toastMediaTooLarge', {
           size: (file.size / 1024 / 1024).toFixed(1),
           max: Math.round(maxBytes / 1024 / 1024),
-        })
+        }),
       );
       return;
     }
@@ -612,15 +529,13 @@ export function TemplateManager() {
             <Button
               variant="outline"
               onClick={handleSyncFromMeta}
-              disabled={syncing || !whatsapp.available}
+              disabled={syncing}
               title={t('syncTitle')}
             >
-              <RefreshCw
-                className={`size-4 ${syncing ? 'animate-spin' : ''}`}
-              />
+              <RefreshCw className={`size-4 ${syncing ? 'animate-spin' : ''}`} />
               {syncing ? t('syncing') : t('syncFromMeta')}
             </Button>
-            <Button onClick={openCreate} disabled={!whatsapp.available}>
+            <Button onClick={openCreate}>
               <Plus className="size-4" />
               {t('newTemplate')}
             </Button>
@@ -628,198 +543,77 @@ export function TemplateManager() {
         }
       />
 
-      {whatsapp.status === 'unavailable' && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          <span>
-            Connect WhatsApp before creating, syncing, or submitting Meta
-            templates.
-          </span>
-          <a
-            href="/settings?tab=whatsapp"
-            className="shrink-0 font-medium underline underline-offset-2"
-          >
-            Set up WhatsApp
-          </a>
-        </div>
-      )}
-      {whatsapp.status === 'error' && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          <span>WhatsApp availability could not be verified.</span>
-          <button
-            type="button"
-            onClick={whatsapp.refresh}
-            className="shrink-0 font-medium underline underline-offset-2"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
-      {connections.length > 1 && (
-        <select
-          value={whatsappConfigId}
-          onChange={(event) => {
-            const id = event.target.value;
-            setWhatsappConfigId(id);
-            setEditingId(null);
-          }}
-          className="border-border bg-background h-10 w-full max-w-sm rounded-md border px-3 text-sm"
-          aria-label="WhatsApp connection"
-        >
-          {connections.map((connection) => (
-            <option key={connection.id} value={connection.id}>
-              {connection.display_name}
-            </option>
-          ))}
-        </select>
-      )}
-
       {templates.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <p className="text-muted-foreground text-sm">{t('noTemplates')}</p>
-            <p className="text-muted-foreground mt-1 text-xs">
+            <p className="text-muted-foreground text-xs mt-1">
               {t('createFirst')}
             </p>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid items-stretch gap-5 md:grid-cols-2 2xl:grid-cols-3">
+        <div className="grid gap-3 xl:grid-cols-2">
           {templates.map((template) => {
             const statusKey = template.status || 'DRAFT';
             const status = templateStatusConfig[statusKey];
             return (
-              <Card
-                key={template.id}
-                className="gap-0 rounded-2xl py-0 shadow-sm transition-shadow hover:shadow-md"
-              >
-                <CardContent className="flex flex-1 flex-col gap-5 p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div className="bg-primary/10 text-primary flex size-10 shrink-0 items-center justify-center rounded-xl">
-                        <MessageSquare className="size-5" aria-hidden="true" />
-                      </div>
-                      <div className="min-w-0 space-y-1.5">
-                        <h3
-                          className="text-foreground truncate text-base font-semibold"
-                          title={template.name}
+              <Card key={template.id}>
+                <CardContent className="flex items-start justify-between pt-4">
+                  <div className="space-y-2 min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-medium text-foreground">{template.name}</h3>
+                      <Badge
+                        className={`text-xs border ${categoryColors[template.category] || ''}`}
+                      >
+                        {categoryLabel(template.category)}
+                      </Badge>
+                      <Badge className={`text-xs border ${status.classes}`}>
+                        {status.label}
+                      </Badge>
+                      {template.language && (
+                        <span className="text-xs text-muted-foreground uppercase">
+                          {template.language}
+                        </span>
+                      )}
+                      {template.quality_score && (
+                        <span
+                          className={`text-[10px] uppercase font-medium ${
+                            template.quality_score === 'GREEN'
+                              ? 'text-emerald-400'
+                              : template.quality_score === 'YELLOW'
+                                ? 'text-yellow-400'
+                                : 'text-red-400'
+                          }`}
+                          title={t('qualityScoreTitle')}
                         >
-                          {template.name}
-                        </h3>
-                        <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
-                          <span>{template.category}</span>
-                          {template.language && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span
-                                className="inline-flex items-center gap-1"
-                                title={t('language')}
-                              >
-                                <Globe className="size-3" aria-hidden="true" />
-                                {template.language.replace('_', '–')}
-                              </span>
-                            </>
-                          )}
-                          {template.quality_score && (
-                            <span
-                              title={t('qualityScoreTitle')}
-                              className={`font-medium ${template.quality_score === 'GREEN' ? 'text-emerald-700 dark:text-emerald-400' : template.quality_score === 'YELLOW' ? 'text-amber-700 dark:text-amber-400' : 'text-destructive'}`}
-                            >
-                              {template.quality_score}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                          {template.quality_score}
+                        </span>
+                      )}
                     </div>
-                    <Badge
-                      className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] ${status.classes} ${statusKey === 'PENDING' ? 'text-yellow-800 dark:text-yellow-300' : ''}`}
-                    >
-                      {status.label}
-                    </Badge>
-                  </div>
-                  <div className="bg-muted/40 border-border/60 flex-1 space-y-3 rounded-xl border p-4">
-                    <p className="text-muted-foreground text-[10px] font-semibold tracking-widest uppercase">
-                      {t('cardPreview')}
-                    </p>
-                    <p className="text-foreground/85 line-clamp-6 text-sm leading-7 wrap-anywhere whitespace-pre-wrap">
-                      {template.semantic_content
-                        ? semanticSegments(
-                            template.semantic_content.body_text
-                          ).map((segment, index) =>
-                            segment.variableKey ? (
-                              <span
-                                key={index}
-                                className="bg-primary/10 text-primary rounded-md box-decoration-clone px-1.5 py-0.5 text-xs font-medium"
-                              >
-                                {renderSemanticText(
-                                  segment.text,
-                                  catalog,
-                                  'label'
-                                )}
-                              </span>
-                            ) : (
-                              segment.text
-                            )
-                          )
-                        : template.body_text}
+                    <p className="text-sm text-muted-foreground line-clamp-2">
+                      {template.body_text}
                     </p>
                     {template.footer_text && (
-                      <p className="text-muted-foreground border-border/60 border-t pt-3 text-xs whitespace-pre-wrap">
+                      <p className="text-xs text-muted-foreground italic">
                         {template.footer_text}
                       </p>
                     )}
+                    {(template.rejection_reason || template.submission_error) && (
+                      <div className="flex items-start gap-1.5 text-xs text-red-400 bg-red-950/20 border border-red-900/40 rounded px-2 py-1.5">
+                        <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
+                        <span>
+                          {template.rejection_reason || template.submission_error}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  {(template.rejection_reason || template.submission_error) && (
-                    <div className="bg-destructive/5 text-destructive border-destructive/20 flex items-start gap-2 rounded-lg border p-3 text-xs leading-relaxed">
-                      <AlertCircle
-                        className="mt-0.5 size-4 shrink-0"
-                        aria-hidden="true"
-                      />
-                      <span className="min-w-0 wrap-anywhere">
-                        {template.rejection_reason || template.submission_error}
-                      </span>
-                    </div>
-                  )}
-                </CardContent>
-                <CardFooter className="flex flex-wrap items-center justify-between gap-2 bg-transparent px-5 py-3">
-                  <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
-                    {template.variable_configuration_status === 'configured' ? (
-                      <CheckCircle2
-                        className="text-primary size-3.5"
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      <AlertCircle className="size-3.5" aria-hidden="true" />
-                    )}
-                    {template.variable_configuration_status === 'configured'
-                      ? t('variablesConfigured')
-                      : t('needsVariableMapping')}
-                  </span>
-                  <div className="ml-auto flex shrink-0 items-center gap-1">
-                    {canMapImportedTemplate(template) && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setMappingTemplate(template);
-                          setMappingSelection(
-                            Object.fromEntries(
-                              (template.semantic_variable_mapping ?? []).map(
-                                (m) => [slotIdentity(m), m.variable_key]
-                              )
-                            )
-                          );
-                        }}
-                      >
-                        Map variables
-                      </Button>
-                    )}
+                  <div className="flex items-center gap-1 shrink-0 ml-2">
                     {statusKey === 'APPROVED' && (
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => openEdit(template)}
-                        disabled={!whatsapp.available}
                         title={t('editTitle')}
                         aria-label={t('editLabel')}
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
@@ -833,7 +627,6 @@ export function TemplateManager() {
                         variant="ghost"
                         size="sm"
                         onClick={() => openEdit(template)}
-                        disabled={!whatsapp.available}
                         title={t('resubmitTitle')}
                         aria-label={t('resubmitLabel')}
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
@@ -846,10 +639,7 @@ export function TemplateManager() {
                       variant="ghost"
                       size="icon"
                       onClick={() => setTemplateToDelete(template)}
-                      disabled={
-                        deletingId === template.id ||
-                        (!!template.meta_template_id && !whatsapp.available)
-                      }
+                      disabled={deletingId === template.id}
                       aria-label={
                         template.meta_template_id
                           ? t('deleteMetaLocallyAria')
@@ -860,7 +650,7 @@ export function TemplateManager() {
                           ? t('deleteMetaLocallyTitle')
                           : t('deleteLocallyTitle')
                       }
-                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive h-8 w-8"
+                      className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 h-8 w-8"
                     >
                       {deletingId === template.id ? (
                         <Loader2 className="size-4 animate-spin" />
@@ -869,97 +659,12 @@ export function TemplateManager() {
                       )}
                     </Button>
                   </div>
-                </CardFooter>
+                </CardContent>
               </Card>
             );
           })}
         </div>
       )}
-
-      <Dialog
-        open={!!mappingTemplate}
-        onOpenChange={(open) => {
-          if (!open) setMappingTemplate(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Map template variables</DialogTitle>
-            <DialogDescription>
-              Choose a catalog variable for each imported position. Meta
-              approval and message content remain unchanged.
-            </DialogDescription>
-          </DialogHeader>
-          {mappingTemplate &&
-            positionalSlots(mappingTemplate).map((slot) => (
-              <div key={slotIdentity(slot)} className="space-y-1">
-                <Label>
-                  {slot.component}
-                  {slot.button_index === undefined
-                    ? ''
-                    : ` ${slot.button_index + 1}`}{' '}
-                  {`{{${slot.position}}}`}
-                </Label>
-                <VariableSelection
-                  label={`Map ${slotIdentity(slot)}`}
-                  catalog={catalog}
-                  value={mappingSelection[slotIdentity(slot)] ?? ''}
-                  onChange={(key) =>
-                    setMappingSelection({
-                      ...mappingSelection,
-                      [slotIdentity(slot)]: key,
-                    })
-                  }
-                />
-              </div>
-            ))}
-          <DialogFooter>
-            <Button
-              disabled={
-                savingMapping ||
-                !mappingTemplate ||
-                positionalSlots(mappingTemplate).some(
-                  (slot) => !mappingSelection[slotIdentity(slot)]
-                )
-              }
-              onClick={async () => {
-                if (!mappingTemplate) return;
-                setSavingMapping(true);
-                try {
-                  const response = await fetch(
-                    `/api/whatsapp/templates/${mappingTemplate.id}/variables`,
-                    {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        mapping: positionalSlots(mappingTemplate).map(
-                          (slot) => ({
-                            ...slot,
-                            variable_key: mappingSelection[slotIdentity(slot)],
-                          })
-                        ),
-                      }),
-                    }
-                  );
-                  const data = await response.json();
-                  if (!response.ok) throw new Error(data.error);
-                  if (accountId) await fetchTemplates(accountId);
-                  setMappingTemplate(null);
-                  toast.success('Variable mapping saved.');
-                } catch (error) {
-                  toast.error(
-                    error instanceof Error ? error.message : 'Mapping failed.'
-                  );
-                } finally {
-                  setSavingMapping(false);
-                }
-              }}
-            >
-              Save mapping
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog
         open={dialogOpen}
@@ -971,41 +676,39 @@ export function TemplateManager() {
           }
         }}
       >
-        <DialogContent className="bg-popover border-border max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="bg-popover border-border sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-popover-foreground">
               {editingId ? t('dialogEditTitle') : t('dialogNewTitle')}
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              {editingId ? t('dialogEditDesc') : t('dialogNewDesc')}
+              {editingId
+                ? t('dialogEditDesc')
+                : t('dialogNewDesc')}
             </DialogDescription>
           </DialogHeader>
 
           {form.category === 'Authentication' && (
             <div className="flex items-start gap-2 rounded border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
-              <AlertCircle className="mt-0.5 size-4 shrink-0" />
-              <p>
-                {t.rich('authWarning', {
-                  bold: (chunks) => <strong>{chunks}</strong>,
-                })}
-              </p>
+              <AlertCircle className="size-4 mt-0.5 shrink-0" />
+              <p>{t.rich('authWarning', { bold: (chunks) => <strong>{chunks}</strong> })}</p>
             </div>
           )}
 
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label className="text-muted-foreground">
-                {t('templateName')}
-              </Label>
+              <Label className="text-muted-foreground">{t('templateName')}</Label>
               <Input
                 placeholder={t('namePlaceholder')}
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 disabled={editingId !== null}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                className="bg-muted border-border text-foreground placeholder:text-muted-foreground disabled:opacity-60 disabled:cursor-not-allowed"
               />
-              <p className="text-muted-foreground text-[11px]">
-                {editingId ? t('nameFixed') : t('nameHint')}
+              <p className="text-[11px] text-muted-foreground">
+                {editingId
+                  ? t('nameFixed')
+                  : t('nameHint')}
               </p>
             </div>
 
@@ -1020,8 +723,9 @@ export function TemplateManager() {
                       category: val as MessageTemplate['category'],
                     })
                   }
+                  disabled={categoryLocked}
                 >
-                  <SelectTrigger className="bg-muted border-border text-foreground w-full">
+                  <SelectTrigger className="w-full bg-muted border-border text-foreground">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-popover border-border">
@@ -1031,11 +735,16 @@ export function TemplateManager() {
                         value={cat}
                         className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
                       >
-                        {cat}
+                        {categoryLabel(cat)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {categoryLocked && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('categoryFixed')}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -1048,22 +757,18 @@ export function TemplateManager() {
                     setForm({ ...form, language: e.target.value })
                   }
                   disabled={editingId !== null}
-                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground disabled:opacity-60 disabled:cursor-not-allowed"
                 />
                 <datalist id="template-language-codes">
                   {COMMON_LANGUAGE_CODES.map((code) => (
                     <option key={code} value={code} />
                   ))}
                 </datalist>
-                <p className="text-muted-foreground text-[11px]">
+                <p className="text-[11px] text-muted-foreground">
                   {editingId ? (
                     t('langFixed')
                   ) : (
-                    <span>
-                      {t.rich('langHint', {
-                        code: (chunks) => <code>{chunks}</code>,
-                      })}
-                    </span>
+                    <span>{t.rich('langHint', { code: (chunks) => <code>{chunks}</code> })}</span>
                   )}
                 </p>
               </div>
@@ -1075,7 +780,7 @@ export function TemplateManager() {
                 value={form.header_format}
                 onValueChange={(val) =>
                   // Preserve header_content, header_media_url, and
-                  // semantic tokens across format switches. The submit
+                  // header_sample across format switches. The submit
                   // payload builder only reads the field that matches
                   // the active format, so an orphan value on a hidden
                   // field is harmless — and keeping it lets the user
@@ -1086,7 +791,7 @@ export function TemplateManager() {
                   })
                 }
               >
-                <SelectTrigger className="bg-muted border-border text-foreground w-full">
+                <SelectTrigger className="w-full bg-muted border-border text-foreground">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-popover border-border">
@@ -1111,28 +816,41 @@ export function TemplateManager() {
               </Select>
 
               {form.header_format === 'text' && (
-                <div className="mt-2 space-y-2">
-                  <SemanticTemplateEditor
-                    label="Header text"
+                <div className="space-y-2 mt-2">
+                  <Input
+                    id="template-header-text"
+                    aria-label={t('headerTextLabel')}
+                    placeholder={t.raw('headerTextPlaceholder')}
                     value={form.header_content}
-                    catalog={catalog}
-                    onChange={(value) =>
-                      setForm({ ...form, header_content: value })
+                    onChange={(e) =>
+                      setForm({ ...form, header_content: e.target.value })
                     }
+                    maxLength={TEMPLATE_LIMITS.headerTextMaxLength}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                   />
+                  {headerVarCount > 0 && (
+                    <Input
+                      id="template-header-sample"
+                      aria-label={t('headerSampleAria')}
+                      placeholder={t.raw('headerSamplePlaceholder')}
+                      value={form.header_sample}
+                      onChange={(e) =>
+                        setForm({ ...form, header_sample: e.target.value })
+                      }
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                    />
+                  )}
                 </div>
               )}
 
               {headerNeedsMedia && (
-                <div className="mt-2 space-y-2">
+                <div className="space-y-2 mt-2">
                   {headerMediaKind && (
                     <div className="flex items-center gap-2">
                       <input
                         ref={headerFileRef}
                         type="file"
-                        accept={MEDIA_HEADER_SPECS[
-                          headerMediaKind
-                        ].mimeTypes.join(',')}
+                        accept={MEDIA_HEADER_SPECS[headerMediaKind].mimeTypes.join(',')}
                         className="hidden"
                         onChange={(e) => {
                           const f = e.target.files?.[0];
@@ -1154,15 +872,13 @@ export function TemplateManager() {
                         )}
                         {t(uploadLabelKey[headerMediaKind])}
                       </Button>
-                      <span className="text-muted-foreground text-[11px]">
+                      <span className="text-[11px] text-muted-foreground">
                         {t(uploadHintKey[headerMediaKind])}
                       </span>
                     </div>
                   )}
                   <Input
-                    placeholder={t('mediaUrlPlaceholder', {
-                      format: form.header_format,
-                    })}
+                    placeholder={t('mediaUrlPlaceholder', { format: form.header_format })}
                     value={form.header_media_url}
                     onChange={(e) =>
                       setForm({ ...form, header_media_url: e.target.value })
@@ -1173,16 +889,18 @@ export function TemplateManager() {
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={form.header_media_url}
-                      alt="Header sample"
-                      className="border-border max-h-28 rounded-md border object-contain"
+                      alt={t('headerSampleAlt')}
+                      className="max-h-28 rounded-md border border-border object-contain"
                     />
                   )}
-                  <p className="text-muted-foreground text-[11px] leading-relaxed">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
                     {form.header_format === 'image'
                       ? t('imageHint')
                       : t('mediaHint')}
-                    {form.header_format === 'video' && t('videoHint')}
-                    {form.header_format === 'document' && t('documentHint')}
+                    {form.header_format === 'video' &&
+                      t('videoHint')}
+                    {form.header_format === 'document' &&
+                      t('documentHint')}
                   </p>
                 </div>
               )}
@@ -1190,18 +908,44 @@ export function TemplateManager() {
 
             <div className="space-y-2">
               <Label className="text-muted-foreground">{t('bodyText')}</Label>
-              <SemanticTemplateEditor
-                label="Body text"
+              <Textarea
+                placeholder={t.raw('bodyPlaceholder')}
                 value={form.body_text}
-                catalog={catalog}
-                onChange={(value) => setForm({ ...form, body_text: value })}
-                multiline
-                placeholder={t('bodyPlaceholder')}
+                onChange={(e) =>
+                  setForm({ ...form, body_text: e.target.value })
+                }
+                rows={4}
+                maxLength={TEMPLATE_LIMITS.bodyMaxLength}
+                className="bg-muted border-border text-foreground placeholder:text-muted-foreground resize-none"
               />
-              {catalogError && (
-                <p className="text-destructive text-xs">
-                  Variables could not be loaded: {catalogError}
-                </p>
+              <p className="text-[11px] text-muted-foreground">
+                {t.raw('bodyHint')}
+              </p>
+
+              {bodyVarCount > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <Label className="text-[11px] text-muted-foreground">
+                    {t('sampleValues')}
+                  </Label>
+                  {form.body_samples.map((val, i) => {
+                    const inputId = `template-body-sample-${i}`;
+                    return (
+                      <Input
+                        key={i}
+                        id={inputId}
+                        aria-label={t('sampleAria', { var: `{{${i + 1}}}` })}
+                        placeholder={t('samplePlaceholder', { var: `{{${i + 1}}}` })}
+                        value={val}
+                        onChange={(e) => {
+                          const next = [...form.body_samples];
+                          next[i] = e.target.value;
+                          setForm({ ...form, body_samples: next });
+                        }}
+                        className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                      />
+                    );
+                  })}
+                </div>
               )}
             </div>
 
@@ -1226,17 +970,15 @@ export function TemplateManager() {
                   variant="outline"
                   size="sm"
                   onClick={addButton}
-                  disabled={
-                    form.buttons.length >= TEMPLATE_LIMITS.maxButtonsTotal
-                  }
-                  className="border-border text-muted-foreground hover:bg-muted h-7 bg-transparent text-xs"
+                  disabled={form.buttons.length >= TEMPLATE_LIMITS.maxButtonsTotal}
+                  className="border-border bg-transparent text-muted-foreground hover:bg-muted h-7 text-xs"
                 >
                   <Plus className="size-3" />
                   {t('addButton')}
                 </Button>
               </div>
               {form.buttons.length === 0 ? (
-                <p className="text-muted-foreground text-[11px]">
+                <p className="text-[11px] text-muted-foreground">
                   {t('buttonsLimit', { max: TEMPLATE_LIMITS.maxButtonsTotal })}
                 </p>
               ) : (
@@ -1244,7 +986,7 @@ export function TemplateManager() {
                   {form.buttons.map((btn, i) => (
                     <div
                       key={i}
-                      className="border-border bg-muted/50 space-y-2 rounded border p-2"
+                      className="space-y-2 rounded border border-border bg-muted/50 p-2"
                     >
                       <div className="flex items-center gap-2">
                         <Select
@@ -1257,7 +999,7 @@ export function TemplateManager() {
                             changeButtonType(i, val as TemplateButton['type']);
                           }}
                         >
-                          <SelectTrigger className="bg-muted border-border text-foreground h-8 w-40 text-xs">
+                          <SelectTrigger className="w-40 bg-muted border-border text-foreground h-8 text-xs">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="bg-popover border-border">
@@ -1294,28 +1036,38 @@ export function TemplateManager() {
                           onChange={(e) =>
                             updateButton(i, { text: e.target.value })
                           }
-                          className="bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 flex-1 text-xs"
+                          className="flex-1 bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
                         />
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
                           onClick={() => removeButton(i)}
-                          className="text-muted-foreground size-7 hover:bg-red-950/30 hover:text-red-400"
+                          className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 size-7"
                         >
                           <X className="size-3.5" />
                         </Button>
                       </div>
                       {btn.type === 'URL' && (
                         <div className="space-y-1 pl-1">
-                          <SemanticTemplateEditor
-                            label={`Button ${i + 1} URL`}
+                          <Input
+                            placeholder={t.raw('urlPlaceholder')}
                             value={btn.url}
-                            catalog={catalog}
-                            onChange={(value) =>
-                              updateButton(i, { url: value })
+                            onChange={(e) =>
+                              updateButton(i, { url: e.target.value })
                             }
+                            className="bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
                           />
+                          {extractVariableIndices(btn.url).length > 0 && (
+                            <Input
+                              placeholder={t.raw('urlSamplePlaceholder')}
+                              value={btn.example ?? ''}
+                              onChange={(e) =>
+                                updateButton(i, { example: e.target.value })
+                              }
+                              className="bg-muted border-border text-foreground placeholder:text-muted-foreground h-8 text-xs"
+                            />
+                          )}
                         </div>
                       )}
                       {btn.type === 'PHONE_NUMBER' && (
@@ -1355,11 +1107,7 @@ export function TemplateManager() {
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={
-                submitting ||
-                !whatsapp.available ||
-                form.category === 'Authentication'
-              }
+              disabled={submitting || form.category === 'Authentication'}
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {submitting ? (
@@ -1388,9 +1136,7 @@ export function TemplateManager() {
       >
         <DialogContent className="bg-popover border-border sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle className="text-popover-foreground">
-              {t('deleteDialogTitle')}
-            </DialogTitle>
+            <DialogTitle className="text-popover-foreground">{t('deleteDialogTitle')}</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               {templateToDelete?.meta_template_id
                 ? t('deleteMetaDesc', { name: templateToDelete.name })
@@ -1408,11 +1154,8 @@ export function TemplateManager() {
             </Button>
             <Button
               onClick={confirmDelete}
-              disabled={
-                deletingId !== null ||
-                (!!templateToDelete?.meta_template_id && !whatsapp.available)
-              }
-              className="bg-red-600 text-white hover:bg-red-700"
+              disabled={deletingId !== null}
+              className="bg-red-600 hover:bg-red-700 text-white"
             >
               {deletingId !== null ? (
                 <>

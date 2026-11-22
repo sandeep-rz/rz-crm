@@ -83,7 +83,7 @@ describe('runPendingExecutionWorker', () => {
       failed: 0,
     });
     expect(harness.rpc).toHaveBeenCalledWith(
-      'claim_automation_pending_executions',
+      'claim_automation_pending_with_contact_recovery',
       {
         p_batch_size: 50,
         p_now: now.toISOString(),
@@ -127,6 +127,7 @@ describe('runPendingExecutionWorker', () => {
       },
       filters: [
         ['id', 'bad'],
+        ['account_id', 'account-1'],
         ['status', 'running'],
         ['attempt_count', 2],
       ],

@@ -1,5 +1,3 @@
-import { buildTemplateMessageSnapshot } from './template-message-view';
-import type { SendTimeParams } from './template-send-builder';
 // ============================================================
 // Outbound message send — the core that both the dashboard's
 // `/api/whatsapp/send` route and the public `/api/v1/messages`
@@ -21,7 +19,6 @@ import type { SendTimeParams } from './template-send-builder';
 // without duplicating ~250 lines of Meta plumbing.
 // ============================================================
 
-import { SendTiming } from './send-timing';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import {
@@ -31,29 +28,26 @@ import {
   sendInteractiveButtons,
   sendInteractiveList,
   type MediaKind,
-  MetaApiError,
-  MetaSendPolicyError,
 } from '@/lib/whatsapp/meta-api';
 import {
   validateInteractivePayload,
   interactivePayloadPreviewText,
   type InteractiveMessagePayload,
 } from '@/lib/whatsapp/interactive';
-import { encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
-import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
+import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils';
 import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity';
-import type { PreparedTemplateMessage } from '@/lib/message-preparation/types';
-import type { buildMetaTemplateMessagePayload } from '@/lib/whatsapp/meta-template-payload';
+import { applyPendingMessageStatuses } from '@/lib/whatsapp/message-status-sync';
 import type { MessageTemplate } from '@/types';
 import {
   resolveTemplateRow,
-  renderTemplateBody,
   templateBodyParams,
   templateContentText,
+  templateHeaderMediaUrl,
 } from '@/lib/whatsapp/template-body';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
@@ -72,13 +66,7 @@ export const VALID_MESSAGE_TYPES = [
 export class SendMessageError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(
-    code: string,
-    message: string,
-    status: number,
-    readonly acceptedMessageId?: string,
-    readonly failedBeforeMetaRequest = false
-  ) {
+  constructor(code: string, message: string, status: number) {
     super(message);
     this.name = 'SendMessageError';
     this.code = code;
@@ -87,10 +75,7 @@ export class SendMessageError extends Error {
 }
 
 export interface SendMessageParams {
-  /** Trusted request-local instrumentation; never taken from request JSON. */
-  timing?: SendTiming;
   conversationId: string;
-  whatsappConfigId?: string | null;
   messageType: string;
   contentText?: string | null;
   mediaUrl?: string | null;
@@ -104,6 +89,7 @@ export interface SendMessageParams {
   /** Structured payload for `messageType === 'interactive'`. */
   interactivePayload?: InteractiveMessagePayload | null;
   replyToMessageId?: string | null;
+  senderId?: string | null;
 }
 
 export interface SendMessageResult {
@@ -111,9 +97,6 @@ export interface SendMessageResult {
   messageId: string;
   /** Meta's `wamid` for the delivered message. */
   whatsappMessageId: string;
-  contentText?: string | null;
-  templateSnapshot?:
-    import('./template-message-view').TemplateMessageSnapshot | null;
 }
 
 /**
@@ -136,16 +119,10 @@ export function validateSendMessageParams(params: {
   contentText?: string | null;
   mediaUrl?: string | null;
   templateName?: string | null;
-  templateId?: string;
   interactivePayload?: InteractiveMessagePayload | null;
 }): void {
-  const {
-    messageType,
-    contentText,
-    mediaUrl,
-    templateName,
-    interactivePayload,
-  } = params;
+  const { messageType, contentText, mediaUrl, templateName, interactivePayload } =
+    params;
 
   if (!messageType) {
     throw new SendMessageError('bad_request', 'message_type is required', 400);
@@ -169,7 +146,7 @@ export function validateSendMessageParams(params: {
     );
   }
 
-  if (messageType === 'template' && !templateName && !params.templateId) {
+  if (messageType === 'template' && !templateName) {
     throw new SendMessageError(
       'bad_request',
       'template_name is required for template messages',
@@ -212,18 +189,17 @@ export function validateSendMessageParams(params: {
 export async function sendMessageToConversation(
   db: SupabaseClient,
   accountId: string,
-  params: SendMessageParams,
-  manualTemplate?: { templateId?: string; reservationId?: string }
+  params: SendMessageParams
 ): Promise<SendMessageResult> {
   const {
     conversationId,
-    whatsappConfigId,
     messageType,
     contentText,
     mediaUrl,
     filename,
     templateName,
     templateLanguage,
+    senderId,
     templateParams,
     templateMessageParams,
     interactivePayload,
@@ -243,24 +219,18 @@ export async function sendMessageToConversation(
     contentText,
     mediaUrl,
     templateName,
-    templateId: manualTemplate?.templateId,
     interactivePayload,
   });
 
-  const timing = params.timing ?? new SendTiming();
   const isMediaKind = (MEDIA_KINDS as readonly string[]).includes(messageType);
 
   // Conversation + contact, account-scoped.
-  const { data: conversation, error: convError } = await timing.measure(
-    'conversation',
-    async () =>
-      await db
-        .from('conversations')
-        .select('*, contact:contacts(*)')
-        .eq('id', conversationId)
-        .eq('account_id', accountId)
-        .single()
-  );
+  const { data: conversation, error: convError } = await db
+    .from('conversations')
+    .select('*, contact:contacts(*)')
+    .eq('id', conversationId)
+    .eq('account_id', accountId)
+    .single();
 
   if (convError || !conversation) {
     throw new SendMessageError('not_found', 'Conversation not found', 404);
@@ -288,22 +258,25 @@ export async function sendMessageToConversation(
   const hasValidPhone = resolvedTarget.isPhone;
   const sanitizedPhone = hasValidPhone ? sendTarget : '';
 
-  const config = await timing
-    .measure('connection', () =>
-      resolveWhatsAppConnection(db, {
-        accountId,
-        connectionId: whatsappConfigId || conversation.whatsapp_config_id,
-      })
-    )
-    .catch((error: unknown) => {
-      const message =
-        error instanceof Error ? error.message : 'WhatsApp not configured';
-      throw new SendMessageError('whatsapp_not_configured', message, 400);
-    });
-  const accessToken = config.accessToken;
+  // WhatsApp config, account-scoped.
+  const { data: config, error: configError } = await db
+    .from('whatsapp_config')
+    .select('*')
+    .eq('account_id', accountId)
+    .single();
+
+  if (configError || !config) {
+    throw new SendMessageError(
+      'whatsapp_not_configured',
+      'WhatsApp not configured. Please set up your WhatsApp integration first.',
+      400
+    );
+  }
+
+  const accessToken = decrypt(config.access_token);
 
   // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
-  if (isLegacyFormat(config.encryptedAccessToken)) {
+  if (isLegacyFormat(config.access_token)) {
     void db
       .from('whatsapp_config')
       .update({ access_token: encrypt(accessToken) })
@@ -317,8 +290,6 @@ export async function sendMessageToConversation(
         }
       });
   }
-
-  const preparationStarted = performance.now();
 
   // Resolve the reply target to its Meta message_id. The parent must
   // belong to this same conversation — otherwise a caller could quote
@@ -354,34 +325,12 @@ export async function sendMessageToConversation(
   // a row (see resolveTemplateRow).
   let templateRow: MessageTemplate | null = null;
   let sendLanguage = templateLanguage || 'en_US';
-  let sendTemplateName = templateName;
-  let prepared: PreparedTemplateMessage | undefined;
-  let templatePayload:
-    ReturnType<typeof buildMetaTemplateMessagePayload> | undefined;
-  if (messageType === 'template' && manualTemplate?.templateId) {
-    const { data, error } = await db
-      .from('message_templates')
-      .select('*')
-      .eq('id', manualTemplate.templateId)
-      .eq('account_id', accountId)
-      .eq('whatsapp_config_id', config.id)
-      .maybeSingle();
-    if (error || !data)
-      throw new SendMessageError(
-        'template_not_found',
-        'This template is not available for this conversation.',
-        404
-      );
-    templateRow = data as MessageTemplate;
-    sendTemplateName = templateRow.name;
-    sendLanguage = templateRow.language || 'en_US';
-  } else if (messageType === 'template' && templateName) {
+  if (messageType === 'template' && templateName) {
     const resolved = await resolveTemplateRow(
       db,
       accountId,
       templateName,
-      templateLanguage,
-      config.id
+      templateLanguage
     );
     if (resolved.malformed) {
       throw new SendMessageError(
@@ -394,73 +343,24 @@ export async function sendMessageToConversation(
     sendLanguage = resolved.language;
   }
 
-  if (
-    messageType === 'template' &&
-    manualTemplate &&
-    templateRow?.variable_configuration_status === 'configured'
-  ) {
-    if (
-      contact.account_id !== accountId ||
-      contact.id !== conversation.contact_id
-    )
-      throw new SendMessageError(
-        'not_found',
-        'Conversation contact is unavailable for this workspace.',
-        404
-      );
-    const { prepareTemplateMessage } =
-      await import('@/lib/message-preparation/prepare-template-message');
-    const { buildMetaTemplateMessagePayload } =
-      await import('@/lib/whatsapp/meta-template-payload');
-    prepared = await prepareTemplateMessage({
-      accountId,
-      templateId: templateRow.id,
-      context: {
-        contactId: conversation.contact.id,
-        reservationId: manualTemplate.reservationId,
-      },
-    });
-    if (prepared.template.connectionId !== config.id)
-      throw new SendMessageError(
-        'template_connection_invalid',
-        'This template belongs to a different WhatsApp connection.',
-        400
-      );
-    templatePayload = buildMetaTemplateMessagePayload(prepared);
-    sendTemplateName = prepared.template.name;
-    sendLanguage = prepared.template.language;
-  }
-
-  const templateSnapshot =
-    messageType === 'template' && (prepared || templateRow)
-      ? buildTemplateMessageSnapshot(
-          prepared?.template ?? templateRow!,
-          templatePayload?.components,
-          templateMessageParams as SendTimeParams | undefined
-        )
-      : null;
-  timing.record('preparation', performance.now() - preparationStarted);
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
-        phoneNumberId: config.phoneNumberId,
+        phoneNumberId: config.phone_number_id,
         accessToken,
         to: phone,
-        templateName: sendTemplateName!,
+        templateName: templateName!,
         language: sendLanguage,
-        template: prepared ? undefined : (templateRow ?? undefined),
-        messageParams: prepared
-          ? undefined
-          : (templateMessageParams ?? undefined),
-        params: prepared ? undefined : templateParams || [],
+        template: templateRow ?? undefined,
+        messageParams: templateMessageParams ?? undefined,
+        params: templateParams || [],
         contextMessageId,
-        templatePayload,
       });
       return result.messageId;
     }
     if (isMediaKind) {
       const result = await sendMediaMessage({
-        phoneNumberId: config.phoneNumberId,
+        phoneNumberId: config.phone_number_id,
         accessToken,
         to: phone,
         kind: messageType as MediaKind,
@@ -475,7 +375,7 @@ export async function sendMessageToConversation(
       const p = interactivePayload!;
       if (p.kind === 'buttons') {
         const result = await sendInteractiveButtons({
-          phoneNumberId: config.phoneNumberId,
+          phoneNumberId: config.phone_number_id,
           accessToken,
           to: phone,
           bodyText: p.body,
@@ -487,7 +387,7 @@ export async function sendMessageToConversation(
         return result.messageId;
       }
       const result = await sendInteractiveList({
-        phoneNumberId: config.phoneNumberId,
+        phoneNumberId: config.phone_number_id,
         accessToken,
         to: phone,
         bodyText: p.body,
@@ -500,12 +400,11 @@ export async function sendMessageToConversation(
       return result.messageId;
     }
     const result = await sendTextMessage({
-      phoneNumberId: config.phoneNumberId,
+      phoneNumberId: config.phone_number_id,
       accessToken,
       to: phone,
       text: contentText!,
       contextMessageId,
-      ...(params.timing ? { timing } : {}),
     });
     return result.messageId;
   };
@@ -518,13 +417,12 @@ export async function sendMessageToConversation(
   try {
     // Variants only make sense for a phone number — a BSUID is opaque
     // and has exactly one correct form, so it gets a single attempt.
-    const variants =
-      hasValidPhone && !prepared ? phoneVariants(sanitizedPhone) : [sendTarget];
+    const variants = hasValidPhone ? phoneVariants(sanitizedPhone) : [sendTarget];
     let lastError: unknown = null;
 
     for (const variant of variants) {
       try {
-        waMessageId = await timing.measure('provider', () => attempt(variant));
+        waMessageId = await attempt(variant);
         workingPhone = variant;
         lastError = null;
         break;
@@ -534,42 +432,24 @@ export async function sendMessageToConversation(
           throw err;
         }
         lastError = err;
-        console.warn('[send-message] Recipient variant rejected by Meta.');
+        console.warn(
+          `[send-message] variant "${variant}" rejected by Meta, trying next…`
+        );
       }
     }
 
     if (lastError) throw lastError;
   } catch (err) {
-    if (err instanceof MetaSendPolicyError)
-      throw new SendMessageError(
-        err.reason === 'disconnected'
-          ? 'whatsapp_disconnected'
-          : 'rate_limited',
-        err.message,
-        err.httpStatus,
-        undefined,
-        Boolean(prepared)
-      );
     const message =
       err instanceof Error ? err.message : 'Unknown Meta API error';
-    if (
-      prepared &&
-      (!(err instanceof MetaApiError) ||
-        err.httpStatus >= 500 ||
-        err.httpStatus === 408)
-    )
-      throw new SendMessageError(
-        'meta_outcome_unknown',
-        'WhatsApp delivery could not be confirmed. Check the conversation before sending again.',
-        502
-      );
-    console.error('[send-message] Meta send failed.', {
-      code: err instanceof MetaApiError ? err.code : null,
-    });
+    console.error('[send-message] Meta send failed for all variants:', message);
     throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
   }
 
   if (hasValidPhone && workingPhone !== sanitizedPhone) {
+    console.log(
+      `[send-message] Auto-corrected contact phone: ${sanitizedPhone} → ${workingPhone}`
+    );
     await db
       .from('contacts')
       .update({ phone: workingPhone })
@@ -590,74 +470,82 @@ export async function sendMessageToConversation(
     messageType === 'interactive'
       ? interactivePayload!.body
       : messageType === 'template'
-        ? prepared && templatePayload
-          ? renderTemplateBody(
-              prepared.template.body_text,
-              (
-                templatePayload.components?.find(
-                  (component) => component.type === 'body'
-                )?.parameters ?? []
-              ).map((parameter) =>
-                parameter.type === 'text' ? parameter.text : ''
-              )
-            )
-          : templateContentText(
-              templateRow,
-              templateBodyParams(templateParams, templateMessageParams),
-              contentText
-            )
+        ? templateContentText(
+            templateRow,
+            templateBodyParams(templateParams, templateMessageParams),
+            contentText
+          )
         : (contentText ?? null);
 
-  const acceptedPersistenceFailure = () =>
-    new SendMessageError(
-      messageType === 'template'
-        ? 'meta_accepted_persistence_failed'
-        : 'db_error',
-      'WhatsApp accepted this message, but it could not be saved. Check the conversation before sending again.',
-      500,
-      waMessageId
+  const { data: messageRecord, error: msgError } = await db
+    .from('messages')
+    .insert({
+      conversation_id: conversationId,
+      sender_type: 'agent',
+      sender_id: senderId ?? null,
+      content_type: messageType,
+      content_text: persistedText,
+      media_url:
+        messageType === 'template'
+          ? templateHeaderMediaUrl(templateRow, templateMessageParams)
+          : mediaUrl || null,
+      template_name: templateName || null,
+      interactive_payload:
+        messageType === 'interactive' ? interactivePayload : null,
+      message_id: waMessageId,
+      status: 'sent',
+      reply_to_message_id: replyToMessageId || null,
+    })
+    .select()
+    .single();
+
+  if (msgError) {
+    console.error('[send-message] error inserting sent message:', msgError);
+    throw new SendMessageError(
+      'db_error',
+      `Message sent to Meta but failed to save to DB: ${msgError.message}`,
+      500
     );
+  }
+
+  await applyPendingMessageStatuses(supabaseAdmin(), accountId, waMessageId);
+
   const lastMessageText =
     messageType === 'interactive'
       ? interactivePayloadPreviewText(interactivePayload!)
       : persistedText || `[${messageType}]`;
-  let messageId: string;
+
+  await db
+    .from('conversations')
+    .update({
+      last_message_text: lastMessageText,
+      last_message_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', conversationId);
+
+  // Pause any active Flow run for this contact — the agent stepping in
+  // is the strongest "yield, human is here" signal. Best-effort.
   try {
-    const { data, error } = await timing.measure(
-      'persist',
-      async () =>
-        await db.rpc('record_whatsapp_outbound', {
-          p_account: accountId,
-          p_conversation: conversationId,
-          p_preview: lastMessageText,
-          p_message: {
-            content_type: messageType,
-            content_text: persistedText,
-            media_url:
-              templateSnapshot?.header &&
-              templateSnapshot.header.type !== 'text'
-                ? templateSnapshot.header.url
-                : mediaUrl || null,
-            template_snapshot: templateSnapshot,
-            template_name: sendTemplateName || null,
-            interactive_payload:
-              messageType === 'interactive' ? interactivePayload : null,
-            message_id: waMessageId,
-            reply_to_message_id: replyToMessageId || null,
-          },
-        })
+    const { error: pauseErr } = await supabaseAdmin()
+      .from('flow_runs')
+      .update({
+        status: 'paused_by_agent',
+        ended_at: new Date().toISOString(),
+        end_reason: 'agent_replied',
+      })
+      .eq('account_id', accountId)
+      .eq('contact_id', contact.id)
+      .eq('status', 'active');
+    if (pauseErr) {
+      console.error('[flows] pause-on-agent-send failed:', pauseErr.message);
+    }
+  } catch (err) {
+    console.error(
+      '[flows] pause-on-agent-send threw:',
+      err instanceof Error ? err.message : err
     );
-    if (error || typeof data !== 'string') throw acceptedPersistenceFailure();
-    messageId = data;
-  } catch {
-    console.error('[send-message] Could not save accepted message.');
-    throw acceptedPersistenceFailure();
   }
 
-  return {
-    messageId,
-    whatsappMessageId: waMessageId,
-    contentText: persistedText,
-    templateSnapshot,
-  };
+  return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
 }

@@ -1,11 +1,11 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
-import { requireRole, toErrorResponse } from '@/lib/auth/account';
-import { supabaseAdmin } from '@/lib/flows/admin-client';
-import { validateFlowForActivation } from '@/lib/flows/validate';
-import { getT } from '@/lib/i18n/translate';
+import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
+import { supabaseAdmin } from '@/lib/flows/admin-client'
+import { validateFlowForActivation } from '@/lib/flows/validate'
+import { getT } from '@/lib/i18n/translate'
 
-const t = getT('Api');
+const t = getT('Api')
 
 /**
  * POST /api/flows/[id]/activate
@@ -23,40 +23,37 @@ const t = getT('Api');
 
 export async function POST(
   request: Request,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
-  const { id } = await context.params;
+  const { id } = await context.params
 
   // Changing status (activate / draft / archive) is a write — the RLS
   // flows_update policy requires `agent`, but the service-role client
   // below bypasses RLS, so enforce the role here (a viewer passes the
   // membership-only ownership check).
   try {
-    await requireRole('agent');
+    await requireRole('agent')
   } catch (err) {
-    return toErrorResponse(err);
+    return toErrorResponse(err)
   }
 
-  const supabase = await createClient();
+  const supabase = await createClient()
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await supabase.auth.getUser()
   if (!user) {
-    return NextResponse.json(
-      { error: t('common.unauthorized') },
-      { status: 401 }
-    );
+    return NextResponse.json({ error: t('common.unauthorized') }, { status: 401 })
   }
 
-  const body = (await request.json().catch(() => null)) as {
-    status?: 'draft' | 'active' | 'archived';
-  } | null;
-  const status = body?.status;
+  const body = (await request.json().catch(() => null)) as
+    | { status?: 'draft' | 'active' | 'archived' }
+    | null
+  const status = body?.status
   if (!status || !['draft', 'active', 'archived'].includes(status)) {
     return NextResponse.json(
       { error: t('flows.statusInvalid') },
-      { status: 400 }
-    );
+      { status: 400 },
+    )
   }
 
   // Ownership via RLS — caller's client.
@@ -64,12 +61,12 @@ export async function POST(
     .from('flows')
     .select('id')
     .eq('id', id)
-    .maybeSingle();
+    .maybeSingle()
   if (!existing) {
-    return NextResponse.json({ error: t('common.notFound') }, { status: 404 });
+    return NextResponse.json({ error: t('common.notFound') }, { status: 404 })
   }
 
-  const admin = supabaseAdmin();
+  const admin = supabaseAdmin()
 
   if (status === 'active') {
     // Re-load with the full payload the validator needs.
@@ -83,35 +80,32 @@ export async function POST(
         .from('flow_nodes')
         .select('node_key, node_type, config')
         .eq('flow_id', id),
-    ]);
+    ])
     if (!flow) {
-      return NextResponse.json(
-        { error: t('common.notFound') },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: t('common.notFound') }, { status: 404 })
     }
     const issues = validateFlowForActivation(
       flow as {
-        name: string;
-        trigger_type: 'keyword' | 'first_inbound_message' | 'manual';
-        trigger_config: Record<string, unknown>;
-        entry_node_id: string | null;
+        name: string
+        trigger_type: 'keyword' | 'first_inbound_message' | 'manual'
+        trigger_config: Record<string, unknown>
+        entry_node_id: string | null
       },
       (nodes ?? []) as Array<{
-        node_key: string;
-        node_type: string;
-        config: Record<string, unknown>;
-      }>
-    );
-    const blockers = issues.filter((i) => i.severity === 'error');
+        node_key: string
+        node_type: string
+        config: Record<string, unknown>
+      }>,
+    )
+    const blockers = issues.filter((i) => i.severity === 'error')
     if (blockers.length > 0) {
       return NextResponse.json(
         {
           error: t('flows.cannotActivate'),
           issues,
         },
-        { status: 422 }
-      );
+        { status: 422 },
+      )
     }
   }
 
@@ -120,9 +114,9 @@ export async function POST(
     .update({ status, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
-    .maybeSingle();
+    .maybeSingle()
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
   if (status !== 'active') {
@@ -134,11 +128,11 @@ export async function POST(
         end_reason: `flow_${status}`,
       })
       .eq('flow_id', id)
-      .eq('status', 'active');
+      .eq('status', 'active')
     if (runsErr) {
-      console.error('[flows] cancel active runs failed:', runsErr.message);
+      console.error('[flows] cancel active runs failed:', runsErr.message)
     }
   }
 
-  return NextResponse.json({ flow: updated });
+  return NextResponse.json({ flow: updated })
 }

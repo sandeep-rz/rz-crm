@@ -1,5 +1,4 @@
-import { validateTemplateActions } from './validate';
-import { supabaseAdmin } from './admin-client';
+import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
 // Builder payload → flat rows for automation_steps.
@@ -10,68 +9,100 @@ import { supabaseAdmin } from './admin-client';
 // ------------------------------------------------------------
 
 export interface BuilderStepInput {
-  id?: string;
-  step_type: string;
-  step_config: Record<string, unknown>;
-  branches?: { yes?: BuilderStepInput[]; no?: BuilderStepInput[] };
+  id?: string
+  step_type: string
+  step_config: Record<string, unknown>
+  branches?: { yes?: BuilderStepInput[]; no?: BuilderStepInput[] }
   // Legacy flat form (from template seeds):
-  branch?: 'yes' | 'no' | null;
-  parent_index?: number | null;
+  branch?: 'yes' | 'no' | null
+  parent_index?: number | null
 }
 
 interface InsertRow {
-  id: string;
-  automation_id: string;
-  parent_step_id: string | null;
-  branch: 'yes' | 'no' | null;
-  step_type: string;
-  step_config: Record<string, unknown>;
-  position: number;
+  id: string
+  automation_id: string
+  parent_step_id: string | null
+  branch: 'yes' | 'no' | null
+  step_type: string
+  step_config: Record<string, unknown>
+  position: number
 }
 
 const uid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    : Math.random().toString(36).slice(2) + Date.now().toString(36)
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function replaceSteps(
   automationId: string,
-  input: BuilderStepInput[]
+  input: BuilderStepInput[],
 ): Promise<string | null> {
-  const issues = validateTemplateActions(input);
-  if (issues.length)
-    return issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ');
-  const admin = supabaseAdmin();
-  const { error: delErr } = await admin
+  const admin = supabaseAdmin()
+  const { data: existing, error: loadErr } = await admin
     .from('automation_steps')
-    .delete()
-    .eq('automation_id', automationId);
-  if (delErr) return delErr.message;
-  return insertSteps(automationId, input);
+    .select('id')
+    .eq('automation_id', automationId)
+  if (loadErr) return loadErr.message
+  const existingIds = new Set(((existing ?? []) as { id: string }[]).map((r) => r.id))
+
+  const rows = flattenSteps(automationId, input ?? [])
+  const kept = rows.filter((r) => existingIds.has(r.id))
+  const added = rows.filter((r) => !existingIds.has(r.id))
+
+  if (added.length > 0) {
+    const { error } = await admin.from('automation_steps').insert(added)
+    if (error) return error.message
+  }
+  if (kept.length > 0) {
+    const { error } = await admin
+      .from('automation_steps')
+      .upsert(kept, { onConflict: 'id' })
+    if (error) return error.message
+  }
+
+  const keptIds = new Set(rows.map((r) => r.id))
+  const removedIds = [...existingIds].filter((id) => !keptIds.has(id))
+  if (removedIds.length > 0) {
+    const { error } = await admin
+      .from('automation_steps')
+      .delete()
+      .eq('automation_id', automationId)
+      .in('id', removedIds)
+    if (error) return error.message
+  }
+  return null
 }
 
 export async function insertSteps(
   automationId: string,
-  input: BuilderStepInput[]
+  input: BuilderStepInput[],
 ): Promise<string | null> {
-  const issues = validateTemplateActions(input);
-  if (issues.length)
-    return issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ');
-  if (input.length === 0) return null;
+  if (!input || input.length === 0) return null
+  const rows = flattenSteps(automationId, input)
+  if (rows.length === 0) return null
+  const { error } = await supabaseAdmin().from('automation_steps').insert(rows)
+  return error?.message ?? null
+}
 
+export function flattenSteps(automationId: string, input: BuilderStepInput[]): InsertRow[] {
   const looksFlat = input.some(
-    (s) => s.branch !== undefined || s.parent_index !== undefined
-  );
-  const tree = looksFlat ? seedsToTree(input) : input;
+    (s) => s.branch !== undefined || s.parent_index !== undefined,
+  )
+  const tree = looksFlat ? seedsToTree(input) : input
 
-  const rows: InsertRow[] = [];
+  const rows: InsertRow[] = []
+  const usedIds = new Set<string>()
   function walk(
     steps: BuilderStepInput[],
     parentId: string | null,
-    branch: 'yes' | 'no' | null
+    branch: 'yes' | 'no' | null,
   ) {
     steps.forEach((s, idx) => {
-      const id = s.id ?? uid();
+      const id =
+        s.id && UUID_PATTERN.test(s.id) && !usedIds.has(s.id) ? s.id : uid()
+      usedIds.add(id)
       rows.push({
         id,
         automation_id: automationId,
@@ -80,38 +111,35 @@ export async function insertSteps(
         step_type: s.step_type,
         step_config: s.step_config ?? {},
         position: idx,
-      });
+      })
       if (s.step_type === 'condition' && s.branches) {
-        if (s.branches.yes) walk(s.branches.yes, id, 'yes');
-        if (s.branches.no) walk(s.branches.no, id, 'no');
+        if (s.branches.yes) walk(s.branches.yes, id, 'yes')
+        if (s.branches.no) walk(s.branches.no, id, 'no')
       }
-    });
+    })
   }
-  walk(tree, null, null);
-
-  if (rows.length === 0) return null;
-  const { error } = await supabaseAdmin().from('automation_steps').insert(rows);
-  return error?.message ?? null;
+  walk(tree, null, null)
+  return rows
 }
 
 function seedsToTree(seeds: BuilderStepInput[]): BuilderStepInput[] {
   const nodes: BuilderStepInput[] = seeds.map((s) => ({
     ...s,
     branches: { yes: [], no: [] },
-  }));
-  const roots: BuilderStepInput[] = [];
+  }))
+  const roots: BuilderStepInput[] = []
   nodes.forEach((n, i) => {
-    const seed = seeds[i];
+    const seed = seeds[i]
     if (seed.parent_index == null) {
-      roots.push(n);
+      roots.push(n)
     } else {
-      const parent = nodes[seed.parent_index];
-      parent.branches = parent.branches ?? { yes: [], no: [] };
-      const bucket = (seed.branch ?? 'yes') as 'yes' | 'no';
-      (parent.branches[bucket] ??= []).push(n);
+      const parent = nodes[seed.parent_index]
+      parent.branches = parent.branches ?? { yes: [], no: [] }
+      const bucket = (seed.branch ?? 'yes') as 'yes' | 'no'
+      ;(parent.branches[bucket] ??= []).push(n)
     }
-  });
-  return roots;
+  })
+  return roots
 }
 
 /**
@@ -119,53 +147,51 @@ function seedsToTree(seeds: BuilderStepInput[]): BuilderStepInput[] {
  * the builder UI expects. One query, O(n) assembly.
  */
 export interface BuilderStepNode extends BuilderStepInput {
-  id: string;
-  branches: { yes: BuilderStepNode[]; no: BuilderStepNode[] };
+  id: string
+  branches: { yes: BuilderStepNode[]; no: BuilderStepNode[] }
 }
 
 interface DbStep {
-  id: string;
-  parent_step_id: string | null;
-  branch: 'yes' | 'no' | null;
-  step_type: string;
-  step_config: Record<string, unknown>;
-  position: number;
+  id: string
+  parent_step_id: string | null
+  branch: 'yes' | 'no' | null
+  step_type: string
+  step_config: Record<string, unknown>
+  position: number
 }
 
-export async function loadStepsTree(
-  automationId: string
-): Promise<BuilderStepNode[]> {
+export async function loadStepsTree(automationId: string): Promise<BuilderStepNode[]> {
   const { data, error } = await supabaseAdmin()
     .from('automation_steps')
     .select('*')
     .eq('automation_id', automationId)
-    .order('position', { ascending: true });
+    .order('position', { ascending: true })
 
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as DbStep[];
+  if (error) throw new Error(error.message)
+  const rows = (data ?? []) as DbStep[]
 
-  const byId = new Map<string, BuilderStepNode>();
+  const byId = new Map<string, BuilderStepNode>()
   for (const row of rows) {
     byId.set(row.id, {
       id: row.id,
       step_type: row.step_type,
       step_config: row.step_config ?? {},
       branches: { yes: [], no: [] },
-    });
+    })
   }
 
-  const roots: BuilderStepNode[] = [];
+  const roots: BuilderStepNode[] = []
   for (const row of rows) {
-    const node = byId.get(row.id)!;
+    const node = byId.get(row.id)!
     if (row.parent_step_id) {
-      const parent = byId.get(row.parent_step_id);
+      const parent = byId.get(row.parent_step_id)
       if (parent) {
-        const bucket = (row.branch ?? 'yes') as 'yes' | 'no';
-        parent.branches[bucket].push(node);
+        const bucket = (row.branch ?? 'yes') as 'yes' | 'no'
+        parent.branches[bucket].push(node)
       }
     } else {
-      roots.push(node);
+      roots.push(node)
     }
   }
-  return roots;
+  return roots
 }

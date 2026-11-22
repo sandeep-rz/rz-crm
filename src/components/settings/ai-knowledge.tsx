@@ -2,14 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  Loader2,
-  Plus,
-  Trash2,
-  Pencil,
-  RefreshCw,
-  BookOpen,
-} from 'lucide-react';
+import { Loader2, Plus, Trash2, Pencil, RefreshCw, BookOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -63,7 +56,7 @@ export function AiKnowledgeCard({
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, []);
 
   useEffect(() => {
     if (!accountId || loadedAccountIdRef.current === accountId) return;
@@ -112,18 +105,14 @@ export function AiKnowledgeCard({
         {
           method: isNew ? 'POST' : 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: title.trim(),
-            content: content.trim(),
-          }),
-        }
+          body: JSON.stringify({ title: title.trim(), content: content.trim() }),
+        },
       );
       const data = await res.json();
       if (res.ok) {
         // A 200 with `warning` means saved but indexing degraded.
         if (data.warning) toast.warning(data.warning);
-        else
-          toast.success(isNew ? t('saveSuccessNew') : t('saveSuccessUpdate'));
+        else toast.success(isNew ? t('saveSuccessNew') : t('saveSuccessUpdate'));
         cancelEdit();
         await fetchDocs();
       } else {
@@ -157,9 +146,7 @@ export function AiKnowledgeCard({
       const res = await fetch('/api/ai/knowledge/reindex', { method: 'POST' });
       const data = await res.json();
       const failed: string[] = Array.isArray(data.failed) ? data.failed : [];
-      const keywordOnly: string[] = Array.isArray(data.keyword_only)
-        ? data.keyword_only
-        : [];
+      const keywordOnly: string[] = Array.isArray(data.keyword_only) ? data.keyword_only : [];
       if (res.ok && failed.length > 0) {
         const titleById = new Map(docs.map((d) => [d.id, d.title]));
         toast.error(
@@ -168,14 +155,14 @@ export function AiKnowledgeCard({
             total: data.total,
             failedCount: failed.length,
             titles: failed.map((id) => titleById.get(id) ?? id).join(', '),
-          })
+          }),
         );
       } else if (res.ok && data.success && keywordOnly.length > 0) {
         toast.warning(
           t('reindexKeywordOnly', {
             count: data.reindexed,
             keywordOnlyCount: keywordOnly.length,
-          })
+          }),
         );
       } else if (res.ok && data.success) {
         toast.success(t('reindexSuccess', { count: data.reindexed }));
@@ -193,35 +180,35 @@ export function AiKnowledgeCard({
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          <BookOpen className="text-primary h-4 w-4" /> {t('title')}
+          <BookOpen className="h-4 w-4 text-primary" /> {t('title')}
         </CardTitle>
         <CardDescription>
           {t('description', {
-            searchType: hasEmbeddingsKey
-              ? t('semanticSearchOn')
-              : t('keywordSearchOn'),
+            searchType: hasEmbeddingsKey ? t('semanticSearchOn') : t('keywordSearchOn')
           })}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {loading ? (
-          <div className="text-muted-foreground flex items-center py-4 text-sm">
+          <div className="flex items-center py-4 text-sm text-muted-foreground">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t('loading')}
           </div>
         ) : (
           <>
             {docs.length === 0 && editing === null && (
-              <p className="text-muted-foreground text-sm">{t('noDocs')}</p>
+              <p className="text-sm text-muted-foreground">
+                {t('noDocs')}
+              </p>
             )}
 
             {docs.length > 0 && (
-              <ul className="divide-border border-border divide-y rounded-md border">
+              <ul className="divide-y divide-border rounded-md border border-border">
                 {docs.map((doc) => (
                   <li
                     key={doc.id}
                     className="flex items-center justify-between gap-2 px-3 py-2"
                   >
-                    <span className="text-foreground min-w-0 truncate text-sm">
+                    <span className="min-w-0 truncate text-sm text-foreground">
                       {doc.title}
                     </span>
                     {canEdit && (
@@ -238,7 +225,7 @@ export function AiKnowledgeCard({
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="text-destructive hover:text-destructive h-8 w-8 p-0"
+                          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                           onClick={() => void remove(doc.id)}
                           title={t('deleteDoc')}
                         >
@@ -252,7 +239,7 @@ export function AiKnowledgeCard({
             )}
 
             {editing !== null ? (
-              <div className="border-border space-y-3 rounded-md border p-3">
+              <div className="space-y-3 rounded-md border border-border p-3">
                 <div className="space-y-2">
                   <Label htmlFor="kb-title">{t('editDocTitle')}</Label>
                   <Input
@@ -275,17 +262,11 @@ export function AiKnowledgeCard({
                   />
                 </div>
                 <div className="flex justify-end gap-2">
-                  <Button
-                    variant="ghost"
-                    onClick={cancelEdit}
-                    disabled={saving}
-                  >
+                  <Button variant="ghost" onClick={cancelEdit} disabled={saving}>
                     {t('cancel')}
                   </Button>
                   <Button onClick={save} disabled={saving}>
-                    {saving && (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    )}
+                    {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     {t('saveDoc')}
                   </Button>
                 </div>

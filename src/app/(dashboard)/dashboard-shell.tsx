@@ -1,18 +1,14 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
-import { AuthProvider, useAuth } from '@/hooks/use-auth';
-import { Sidebar } from '@/components/layout/sidebar';
-import { Header } from '@/components/layout/header';
-import { AccountAccessAlert } from '@/components/layout/account-access-alert';
-import { PresenceHeartbeat } from '@/components/presence/presence-heartbeat';
-import { BrowserNotificationsListener } from '@/components/notifications/browser-notifications-listener';
-import {
-  WhatsAppCapabilityProvider,
-  useWhatsAppCapability,
-} from '@/hooks/use-whatsapp-capability';
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { Sidebar } from "@/components/layout/sidebar";
+import { Header } from "@/components/layout/header";
+import { AccountAccessAlert } from "@/components/layout/account-access-alert";
+import { PresenceHeartbeat } from "@/components/presence/presence-heartbeat";
+import { BrowserNotificationsListener } from "@/components/notifications/browser-notifications-listener";
 
 // Auth-gated dashboard shell. Extracted from the layout so the layout
 // itself can stay a server component and export metadata (noindex) —
@@ -20,9 +16,8 @@ import {
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
-  const whatsapp = useWhatsAppCapability();
   const router = useRouter();
-  const t = useTranslations('DashboardShell');
+  const t = useTranslations("DashboardShell");
 
   // Sidebar drawer state — only used on mobile. On lg+ the sidebar is
   // always visible and this stays at `false` (ignored by the component).
@@ -31,16 +26,16 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push('/login');
+      router.push("/login");
     }
   }, [user, loading, router]);
 
   if (loading) {
     return (
-      <div className="bg-background flex h-screen items-center justify-center">
+      <div className="flex h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
-          <div className="border-primary h-8 w-8 animate-spin rounded-full border-2 border-t-transparent" />
-          <p className="text-muted-foreground text-sm">{t('loading')}</p>
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm text-muted-foreground">{t("loading")}</p>
         </div>
       </div>
     );
@@ -49,7 +44,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   if (!user) return null;
 
   return (
-    <div className="bg-background flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-background">
       {/* Reports this tab's online/away presence once we know a user is
           signed in. Headless — renders nothing. */}
       <PresenceHeartbeat />
@@ -64,26 +59,6 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           {/* Above every page: writes are being rejected and here's why.
               Renders nothing unless the account/role failed to resolve. */}
           <AccountAccessAlert />
-          {whatsapp.error && (
-            <div
-              role="alert"
-              className="border-border bg-card mb-4 flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
-            >
-              <span>
-                {whatsapp.error}
-                {whatsapp.configured
-                  ? ' Showing the last loaded configuration.'
-                  : ''}
-              </span>
-              <button
-                className="text-primary shrink-0 font-medium"
-                onClick={() => void whatsapp.refresh()}
-                disabled={whatsapp.refreshing}
-              >
-                Retry
-              </button>
-            </div>
-          )}
           {children}
         </main>
       </div>
@@ -94,9 +69,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   return (
     <AuthProvider>
-      <WhatsAppCapabilityProvider>
-        <DashboardShellInner>{children}</DashboardShellInner>
-      </WhatsAppCapabilityProvider>
+      <DashboardShellInner>{children}</DashboardShellInner>
     </AuthProvider>
   );
 }

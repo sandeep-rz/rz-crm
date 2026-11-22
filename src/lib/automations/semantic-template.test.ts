@@ -3,7 +3,11 @@ import type { Automation, AutomationStep } from '@/types';
 import type { PreparedTemplateMessage } from '@/lib/message-preparation/types';
 import { TemplatePreparationError } from '@/lib/message-preparation/errors';
 import { AutomationTemplateSendError } from './template-send-error';
-import { executeAutomationStep, runAutomationForTrigger } from './engine';
+import {
+  executeAutomationStep,
+  resumePendingExecution,
+  runAutomationForTrigger,
+} from './engine';
 import { buildMetaTemplateMessagePayload } from '@/lib/whatsapp/meta-template-payload';
 import { validateStepsForActivation } from './validate';
 import { MetaApiError, MetaSendPolicyError } from '@/lib/whatsapp/meta-api';
@@ -15,6 +19,9 @@ const h = vi.hoisted(() => ({
   text: vi.fn(),
   interactive: vi.fn(),
   safetyError: false,
+  phone: '14155550123',
+  loadReservation: vi.fn(),
+  park: vi.fn(),
   legacy: vi.fn(),
   connection: vi.fn(),
   conversation: vi.fn(),
@@ -57,9 +64,20 @@ vi.mock('@/lib/whatsapp/connection-resolver', async (original) => ({
 vi.mock('@/lib/whatsapp/resolve-conversation', () => ({
   resolveConversationForContact: h.conversation,
 }));
+vi.mock('./pms-context', async (original) => ({
+  ...(await original<object>()),
+  loadReservationAutomationContext: h.loadReservation,
+}));
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     rpc: async (name: string, params: Record<string, unknown>) => {
+      if (name === 'park_pms_contact_continuation') {
+        h.park(params);
+        h.log.steps_executed = params.p_results;
+        return { data: true, error: null };
+      }
+      if (name === 'complete_automation_wait_continuation')
+        return { data: true, error: null };
       if (name === 'record_automation_retry_safety') {
         if (h.safetyError)
           return { data: false, error: { message: 'unavailable' } };
@@ -93,14 +111,20 @@ vi.mock('./admin-client', () => ({
     from: (table: string) => {
       let update: Record<string, unknown> | undefined;
       let nested = false;
+      let lookupStep: unknown;
+      let fromPosition = 0;
       const q = {
         select: () => q,
         eq: (key: string, value: unknown) => {
           if (key === 'parent_step_id') nested = true;
+          if (key === 'id' && table === 'automation_steps') lookupStep = value;
           h.filters.push([table, key, value]);
           return q;
         },
-        gte: () => q,
+        gte: (_key: string, value: number) => {
+          fromPosition = value;
+          return q;
+        },
         order: () => q,
         is: () => q,
         insert: () => q,
@@ -117,20 +141,27 @@ vi.mock('./admin-client', () => ({
           )
             ? { id: 'owned' }
             : table === 'contacts'
-              ? { id: 'recipient' }
+              ? { id: 'recipient', phone_normalized: h.phone }
               : table === 'automations'
                 ? h.automation
                 : table === 'automation_steps'
-                  ? nested
-                    ? h.nestedSteps
-                    : h.steps
+                  ? lookupStep
+                    ? h.steps.find((step) => step.id === lookupStep)
+                    : (nested ? h.nestedSteps : h.steps).filter(
+                        (step) => step.position >= fromPosition
+                      )
                   : table === 'automation_logs'
                     ? h.log
-                    : table === 'conversations'
-                      ? h.conversationFound
-                        ? { id: 'conversation-template' }
-                        : null
-                      : null;
+                    : table === 'automation_trigger_jobs'
+                      ? {
+                          pms_reservation_id: 'canonical-reservation',
+                          trigger_type: 'reservation_confirmed',
+                        }
+                      : table === 'conversations'
+                        ? h.conversationFound
+                          ? { id: 'conversation-template' }
+                          : null
+                        : null;
           return Promise.resolve({ data, error: null }).then(resolve);
         },
       };
@@ -190,6 +221,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   h.filters = [];
   h.safetyError = false;
+  h.phone = '14155550123';
   h.text.mockImplementation(async (input) => {
     await input.onBeforeMeta?.();
     await input.onMetaAccepted?.('text-id');
@@ -798,5 +830,125 @@ describe('whole-execution duplicate retry containment', () => {
     });
     expect(h.log.retry_safety).toMatchObject({ reason: 'whatsapp_accepted' });
     expect(h.send.mock.calls[0][0].onBeforeMeta).toEqual(expect.any(Function));
+  });
+});
+
+describe('PMS contact recovery', () => {
+  const resumed = {
+    id: 'pending',
+    automation_id: 'automation',
+    account_id: 'account',
+    user_id: 'author',
+    log_id: 'log',
+    contact_id: 'old-contact',
+    parent_step_id: null,
+    branch: null,
+    next_step_position: 1,
+    blocked_step_id: 'step',
+    blocked_step_type: 'send_template',
+    context: args().context,
+    attempt_count: 1,
+  };
+  function latest(contactId: string | null, status = 'confirmed') {
+    h.loadReservation.mockResolvedValue({
+      ...args().context.reservation,
+      account_id: 'account',
+      contact_id: contactId,
+      reservation_status: status,
+    });
+    h.log.trigger_job_id = 'job';
+  }
+
+  it('parks before Meta and resumes at the blocked action with the latest recipient without replaying an earlier webhook', async () => {
+    h.phone = '';
+    const first = {
+      ...action(),
+      id: 'earlier',
+      step_type: 'send_webhook',
+      step_config: { url: 'https://example.com/hook' },
+    } as AutomationStep;
+    h.steps = [first, { ...action(), position: 1 }];
+    const webhook = vi.fn(async () => new Response(''));
+    vi.stubGlobal('fetch', webhook);
+    try {
+      await expect(
+        runAutomationForTrigger(
+          'automation',
+          {
+            accountId: 'account',
+            triggerType: 'reservation_confirmed',
+            contactId: 'old-contact',
+            context: args().context,
+          },
+          {
+            triggerJobId: 'job',
+            attemptCount: 1,
+            expectedReservationUpdatedAt: 'version',
+          }
+        )
+      ).resolves.toMatchObject({ status: 'partial' });
+      expect(h.park).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          p_trigger_job_id: 'job',
+          p_step_id: 'step',
+          p_results: [
+            expect.objectContaining({ step_id: 'earlier', status: 'success' }),
+            expect.objectContaining({ step_id: 'step', status: 'failed' }),
+          ],
+        })
+      );
+      expect(h.send).not.toHaveBeenCalled();
+
+      // Editing the tree while parked cannot cause an already successful step
+      // that moved after the cursor to run again.
+      h.steps = [
+        { ...action(), position: 1 },
+        { ...first, position: 2 },
+      ];
+      h.phone = '442079460958';
+      latest('new-contact');
+      await resumePendingExecution(resumed);
+      expect(h.send).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ contactId: 'new-contact' })
+      );
+      expect(webhook).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('parks an existing wait lease without starting a new trigger occurrence', async () => {
+    h.phone = '';
+    latest(null);
+    const wait = {
+      ...action(),
+      id: 'wait',
+      step_type: 'wait',
+    } as AutomationStep;
+    h.steps = [wait, { ...action(), position: 1 }];
+    await expect(
+      resumePendingExecution({
+        ...resumed,
+        blocked_step_id: null,
+        parked_step_id: 'wait',
+        attempt_count: 2,
+      })
+    ).resolves.toBe('blocked');
+    expect(h.park).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        p_pending_id: 'pending',
+        p_trigger_job_id: null,
+        p_attempt: 2,
+        p_step_id: 'step',
+      })
+    );
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it('does not deliver a ready continuation when the reservation was cancelled before execution', async () => {
+    latest('new-contact', 'cancelled');
+    await resumePendingExecution(resumed);
+    expect(h.send).not.toHaveBeenCalled();
+    expect(h.log.error_message).toBe('pms_continuation_no_longer_eligible');
   });
 });

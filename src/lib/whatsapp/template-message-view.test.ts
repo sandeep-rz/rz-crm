@@ -1,117 +1,167 @@
 import { describe, expect, it } from 'vitest';
-import type { MessageTemplate } from '@/types';
+
 import {
-  buildTemplateMessageSnapshot,
   matchMessageTemplate,
   templateMessageView,
+  templateNamesInMessages,
 } from './template-message-view';
-const template = {
-  created_at: '2026-10-27T00:00:00Z',
-  id: 't1',
-  name: 'welcome',
-  user_id: 'u',
-  account_id: 'a',
-  whatsapp_config_id: 'c1',
-  language: 'en',
-  category: 'Utility',
-  body_text: 'Hello {{1}}',
-  header_type: 'text',
-  header_content: 'Welcome {{1}}',
-  footer_text: 'Your host',
-  buttons: [{ type: 'QUICK_REPLY', text: 'Check-in help' }],
-} satisfies MessageTemplate;
-describe('template display snapshots', () => {
-  it('freezes the rendered header/footer/buttons instead of following catalog edits', () => {
-    const snapshot = buildTemplateMessageSnapshot(template, [
-      { type: 'header', parameters: [{ type: 'text', text: 'Taylor' }] },
-    ]);
-    const edited = {
-      ...template,
-      header_content: 'Changed',
-      footer_text: 'Changed',
-    };
-    expect(
-      templateMessageView({ template_snapshot: snapshot }, edited)
-    ).toMatchObject({
-      header: { type: 'text', text: 'Welcome Taylor' },
-      footer: 'Your host',
-      buttons: [{ type: 'QUICK_REPLY', text: 'Check-in help' }],
-      language: 'en',
-      connectionId: 'c1',
-      templateId: 't1',
-    });
-  });
-  it('uses the actual header override instead of an approval sample', () => {
-    const snapshot = buildTemplateMessageSnapshot(
-      {
-        ...template,
-        header_type: 'image',
-        header_media_url: 'https://example.test/static.jpg',
-      },
-      [
-        {
-          type: 'header',
-          parameters: [
-            { type: 'image', image: { link: 'https://example.test/sent.jpg' } },
-          ],
-        },
-      ]
+import type { Message, MessageTemplate } from '@/types';
+
+function template(over: Partial<MessageTemplate>): MessageTemplate {
+  return {
+    id: 'tpl-1',
+    user_id: 'u-1',
+    name: 'order_update',
+    category: 'Utility',
+    language: 'en_US',
+    body_text: 'Your order {{1}} ships on {{2}}',
+    created_at: '2026-01-01T00:00:00Z',
+    ...over,
+  } as MessageTemplate;
+}
+
+const IMAGE_TEMPLATE = template({
+  header_type: 'image',
+  header_media_url: 'https://cdn.example.com/banner.png',
+  footer_text: 'Reply STOP to opt out',
+  buttons: [
+    { type: 'QUICK_REPLY', text: 'Track order' },
+    { type: 'URL', text: 'Open shop', url: 'https://shop.example.com' },
+    { type: 'PHONE_NUMBER', text: 'Call us', phone_number: '+15551234567' },
+  ],
+});
+
+describe('templateMessageView', () => {
+  it('returns the header image, footer and buttons the customer received', () => {
+    const view = templateMessageView(
+      { media_url: 'https://cdn.example.com/sent.png' },
+      IMAGE_TEMPLATE
     );
-    expect(snapshot.header).toEqual({
+    expect(view.header).toEqual({
       type: 'image',
-      url: 'https://example.test/sent.jpg',
+      url: 'https://cdn.example.com/sent.png',
     });
-    expect(JSON.stringify(snapshot)).not.toContain('static.jpg');
+    expect(view.footer).toBe('Reply STOP to opt out');
+    expect(view.buttons.map((b) => b.text)).toEqual([
+      'Track order',
+      'Open shop',
+      'Call us',
+    ]);
   });
-  it('uses the authenticated connection-scoped media proxy for a Meta media ID', () => {
-    const snapshot = buildTemplateMessageSnapshot(
-      { ...template, header_type: 'document' },
-      [
-        {
-          type: 'header',
-          parameters: [{ type: 'document', document: { id: '123' } }],
-        },
-      ]
+
+  it("falls back to the template's media for rows sent before the URL was stored", () => {
+    const view = templateMessageView({}, IMAGE_TEMPLATE);
+    expect(view.header).toEqual({
+      type: 'image',
+      url: 'https://cdn.example.com/banner.png',
+    });
+  });
+
+  it('keeps a media header with no known URL so the bubble can say so', () => {
+    const view = templateMessageView(
+      {},
+      template({ header_type: 'document', header_media_url: undefined })
     );
-    expect(snapshot.header).toEqual({
-      type: 'document',
-      url: '/api/whatsapp/media/123?whatsapp_config_id=c1',
-    });
+    expect(view.header).toEqual({ type: 'document', url: null });
   });
-  it('never substitutes a header sample for an unresolved legacy variable', () => {
-    expect(templateMessageView({}, template).header).toBeNull();
+
+  it('returns a text header', () => {
+    const view = templateMessageView(
+      {},
+      template({ header_type: 'text', header_content: 'Order update' })
+    );
+    expect(view.header).toEqual({ type: 'text', text: 'Order update' });
+  });
+
+  it('is empty when the template is unknown locally', () => {
+    expect(
+      templateMessageView({ media_url: 'https://x.example/a.png' }, null)
+    ).toEqual({ header: null, footer: null, buttons: [] });
+  });
+
+  it('is empty for a body-only template', () => {
+    expect(templateMessageView({}, template({}))).toEqual({
+      header: null,
+      footer: null,
+      buttons: [],
+    });
   });
 });
-describe('legacy template matching', () => {
-  const message = { template_name: 'welcome', content_text: 'Hello Taylor' };
-  it('matches only the correct connection and a matching body', () => {
+
+describe('matchMessageTemplate', () => {
+  const message = (over: Partial<Message>) =>
+    ({
+      template_name: 'order_update',
+      content_text: 'Your order A1 ships on Friday',
+      ...over,
+    }) as Pick<Message, 'template_name' | 'content_text'>;
+
+  it('matches by name', () => {
+    expect(matchMessageTemplate(message({}), [IMAGE_TEMPLATE])).toBe(
+      IMAGE_TEMPLATE
+    );
+  });
+
+  it('returns null for another name or no name', () => {
     expect(
-      matchMessageTemplate(
-        message,
-        [{ ...template, whatsapp_config_id: 'c2' }, template],
-        'c1'
-      )
-    ).toBe(template);
-    expect(matchMessageTemplate(message, [template], 'c2')).toBeNull();
+      matchMessageTemplate(message({ template_name: 'other' }), [IMAGE_TEMPLATE])
+    ).toBeNull();
     expect(
-      matchMessageTemplate(
-        { ...message, content_text: 'Different body' },
-        [template],
-        'c1'
-      )
+      matchMessageTemplate(message({ template_name: undefined }), [
+        IMAGE_TEMPLATE,
+      ])
     ).toBeNull();
   });
-  it('does not guess a language when multiple translations match', () => {
+
+  it('picks the translation whose body matches the stored text', () => {
+    const english = template({ id: 'en', language: 'en_US' });
+    const spanish = template({
+      id: 'es',
+      language: 'es',
+      body_text: 'Tu pedido {{1}} sale el {{2}}',
+    });
     expect(
       matchMessageTemplate(
-        message,
-        [template, { ...template, id: 't2', language: 'es' }],
-        'c1'
-      )
-    ).toBeNull();
+        message({ content_text: 'Tu pedido A1 sale el viernes' }),
+        [english, spanish]
+      )?.id
+    ).toBe('es');
+    expect(matchMessageTemplate(message({}), [spanish, english])?.id).toBe(
+      'en'
+    );
+  });
+
+  it('treats regex characters in the body literally', () => {
+    const priced = template({ id: 'priced', body_text: 'Total (USD): ${{1}}?' });
+    const other = template({ id: 'other', body_text: 'Total USD {{1}}' });
     expect(
-      matchMessageTemplate({ template_name: 'welcome' }, [template], 'c1')
-    ).toBeNull();
-    expect(matchMessageTemplate(message, [template], null)).toBeNull();
+      matchMessageTemplate(message({ content_text: 'Total (USD): $9?' }), [
+        other,
+        priced,
+      ])?.id
+    ).toBe('priced');
+  });
+
+  it('falls back to the first row when no body matches', () => {
+    const a = template({ id: 'a', body_text: 'A {{1}}' });
+    const b = template({ id: 'b', body_text: 'B {{1}}' });
+    expect(
+      matchMessageTemplate(message({ content_text: 'something else' }), [a, b])
+        ?.id
+    ).toBe('a');
+  });
+});
+
+describe('templateNamesInMessages', () => {
+  it('lists each sent template name once, sorted', () => {
+    expect(
+      templateNamesInMessages([
+        { content_type: 'template', template_name: 'welcome' },
+        { content_type: 'text', template_name: undefined },
+        { content_type: 'template', template_name: 'order_update' },
+        { content_type: 'template', template_name: 'welcome' },
+        { content_type: 'template', template_name: undefined },
+      ])
+    ).toEqual(['order_update', 'welcome']);
   });
 });

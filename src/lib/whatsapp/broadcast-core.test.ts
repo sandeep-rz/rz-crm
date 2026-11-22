@@ -1,4 +1,3 @@
-vi.mock('server-only', () => ({}));
 import { describe, it, expect, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -61,39 +60,18 @@ function makeDb(rpcResult: { data: unknown; error: unknown }) {
   };
   const database = {
     from(table: string) {
-      if (table === 'contacts') {
-        const chain = {
-          select: () => chain,
-          eq: () => chain,
-          maybeSingle: async () => ({
-            data: { id: 'c1', account_id: 'acc', phone: '+14155550123' },
-            error: null,
+      if (table === 'whatsapp_config') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () =>
+                Promise.resolve({
+                  data: { phone_number_id: 'pn-1', access_token: 'enc' },
+                  error: null,
+                }),
+            }),
           }),
         };
-        return chain;
-      }
-      if (table === 'whatsapp_config') {
-        const chain: Record<string, unknown> = {};
-        chain.select = () => chain;
-        chain.eq = () => chain;
-        chain.limit = () =>
-          Promise.resolve({
-            data: [
-              {
-                id: 'connection-b',
-                account_id: 'acc',
-                user_id: 'user',
-                display_name: 'Broadcasts',
-                is_primary: true,
-                phone_number_id: 'pn-1',
-                waba_id: 'waba-1',
-                access_token: 'enc',
-                status: 'connected',
-              },
-            ],
-            error: null,
-          });
-        return chain;
       }
       if (table === 'message_templates') {
         const chain: Record<string, unknown> = {
@@ -104,25 +82,15 @@ function makeDb(rpcResult: { data: unknown; error: unknown }) {
         return chain;
       }
       if (table === 'broadcasts' || table === 'broadcast_recipients') {
-        const write = {
-          insert: () => {
-            calls.usedDirectInsert++;
-            return {
-              select: () => ({
-                single: () =>
-                  Promise.resolve({ data: { id: 'orphan' }, error: null }),
-              }),
-            };
-          },
-          update: () => {
-            const chain: Record<string, unknown> = {};
-            chain.eq = () => chain;
-            chain.then = (resolve: (value: { error: null }) => unknown) =>
-              resolve({ error: null });
-            return chain;
-          },
+        calls.usedDirectInsert++;
+        return {
+          insert: () => ({
+            select: () => ({
+              single: () =>
+                Promise.resolve({ data: { id: 'orphan' }, error: null }),
+            }),
+          }),
         };
-        return write;
       }
       throw new Error(`unexpected table: ${table}`);
     },
@@ -152,12 +120,29 @@ describe('createBroadcast recipient validation (#586)', () => {
 
     expect(plan.rejected).toBe(2);
     expect(plan.planned).toEqual([
-      {
-        recipientRowId: 'r-1',
-        contactId: 'c1',
-        phone: '14155550123',
-        params: [],
-      },
+      { recipientRowId: 'r-1', phone: '14155550123', params: [] },
+    ]);
+  });
+
+  it('counts recipients that resolve to an already-listed contact as duplicates', async () => {
+    const { db } = makeDb({
+      data: [{ broadcast_id: 'b-1', recipient_id: 'r-1', contact_id: 'c1' }],
+      error: null,
+    });
+
+    const plan = await createBroadcast(db, 'acc', 'user', {
+      templateName: 'promo',
+      recipients: [
+        { to: '+14155550123', params: ['first'] },
+        { to: '+1 415 555 0123', params: ['second'] },
+        { to: 'invalid' },
+      ],
+    });
+
+    expect(plan.rejected).toBe(1);
+    expect(plan.duplicates).toBe(1);
+    expect(plan.planned).toEqual([
+      { recipientRowId: 'r-1', phone: '14155550123', params: ['first'] },
     ]);
   });
 
@@ -190,13 +175,27 @@ describe('createBroadcast atomicity (#370)', () => {
     expect(calls.usedDirectInsert).toBe(0);
     expect(plan.broadcastId).toBe('b-1');
     expect(plan.planned).toEqual([
-      {
-        recipientRowId: 'r-1',
-        contactId: 'c1',
-        phone: '14155550123',
-        params: [],
-      },
+      { recipientRowId: 'r-1', phone: '14155550123', params: [] },
     ]);
+  });
+
+  it('sends one params array per contact, even for a single-variable template', async () => {
+    const { db, calls } = makeDb({
+      data: [{ broadcast_id: 'b-1', recipient_id: 'r-1', contact_id: 'c1' }],
+      error: null,
+    });
+
+    await createBroadcast(db, 'acc', 'user', {
+      templateName: 'promo',
+      recipients: [{ to: '+14155550123', params: ['Ann'] }],
+    });
+
+    const args = calls.rpc[0].args as {
+      p_contact_ids: string[];
+      p_template_params: unknown;
+    };
+    expect(args.p_contact_ids).toEqual(['c1']);
+    expect(args.p_template_params).toEqual([['Ann']]);
   });
 
   it('throws and leaves no orphaned parent when the atomic create fails', async () => {
@@ -230,7 +229,7 @@ describe('createBroadcast atomicity (#370)', () => {
 function statusDb(
   counts: Record<string, number>,
   total: number,
-  writes: { update?: Record<string, unknown> }
+  writes: { update?: Record<string, unknown> },
 ) {
   return {
     from(table: string) {
@@ -259,10 +258,7 @@ function statusDb(
 describe('finalizeBroadcastStatus', () => {
   it('leaves a capped pass in "sending" while recipients are still pending', async () => {
     const writes: { update?: Record<string, unknown> } = {};
-    await finalizeBroadcastStatus(
-      statusDb({ pending: 25 }, 1025, writes),
-      'b-1'
-    );
+    await finalizeBroadcastStatus(statusDb({ pending: 25 }, 1025, writes), 'b-1');
     // No write at all — the UI keeps offering Resume.
     expect(writes.update).toBeUndefined();
   });
@@ -271,7 +267,7 @@ describe('finalizeBroadcastStatus', () => {
     const writes: { update?: Record<string, unknown> } = {};
     await finalizeBroadcastStatus(
       statusDb({ pending: 0, failed: 10 }, 10, writes),
-      'b-1'
+      'b-1',
     );
     expect(writes.update?.status).toBe('failed');
   });
@@ -280,7 +276,7 @@ describe('finalizeBroadcastStatus', () => {
     const writes: { update?: Record<string, unknown> } = {};
     await finalizeBroadcastStatus(
       statusDb({ pending: 0, failed: 3 }, 10, writes),
-      'b-1'
+      'b-1',
     );
     // 7 people got the message; failed_count carries the other 3.
     expect(writes.update?.status).toBe('sent');
@@ -292,7 +288,7 @@ describe('finalizeBroadcastStatus', () => {
     // failed. Pre-fix this wrote 'failed' off a pass-local counter.
     await finalizeBroadcastStatus(
       statusDb({ pending: 0, failed: 200 }, 1000, writes),
-      'b-1'
+      'b-1',
     );
     expect(writes.update?.status).toBe('sent');
   });

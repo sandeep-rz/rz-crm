@@ -105,6 +105,11 @@ function reservationFrom(value: unknown): PmsReservation {
       fullName: nullableString(guest.full_name),
       email: nullableString(guest.email),
       phone: nullableString(guest.phone),
+      ...(Array.isArray(guest.cleared_fields) && {
+        clearedFields: (['name', 'email', 'phone'] as const).filter((field) =>
+          (guest.cleared_fields as unknown[]).includes(field)
+        ),
+      }),
     },
     occupancy: {
       adults: numberValue(occupancy.adults, 'adults'),

@@ -7,10 +7,7 @@ import {
   type InitialSyncClaim,
   type InitialSyncStore,
 } from './initial-sync';
-import type {
-  PmsContactRecord,
-  PmsReservationSyncStore,
-} from './reservation-sync';
+import type { PmsReservationSyncStore } from './reservation-sync';
 
 const claim: InitialSyncClaim = {
   propertyId: 'property-a',
@@ -80,34 +77,14 @@ class SyncStore implements InitialSyncStore {
 }
 
 class ReservationStore implements PmsReservationSyncStore {
-  async findGuestMapping() {
-    return null;
-  }
-  async findContactsByPhone() {
-    return [];
-  }
-  async findContactsByEmail() {
-    return [];
-  }
-  async findContactById() {
-    return null;
-  }
-  async createContact(): Promise<never> {
-    throw new Error('No contact should be created for null guest data.');
-  }
-  async enrichContact(input: { contact: PmsContactRecord }) {
-    return input.contact;
-  }
-  async createGuestMapping(): Promise<never> {
-    throw new Error('No mapping should be created for null guest data.');
-  }
-  async findReservation() {
-    return null;
-  }
-  async saveReservation(
-    input: Parameters<PmsReservationSyncStore['saveReservation']>[0]
-  ) {
-    return { id: input.reservation.externalId, skippedStale: false };
+  async upsert(input: Parameters<PmsReservationSyncStore['upsert']>[0]) {
+    return {
+      reservationId: input.reservation.externalId,
+      contactId: null,
+      contactCreated: false,
+      externalGuestMapped: false,
+      skippedStale: false,
+    };
   }
 }
 

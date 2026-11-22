@@ -13,9 +13,6 @@ import { Step4ScheduleSend } from '@/components/broadcasts/step4-schedule-send';
 import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
 import { Check } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
-import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
-import type { MessageVariableMapping } from '@/lib/message-variables';
 
 const steps = [
   { label: 'template', key: 'template' },
@@ -28,9 +25,7 @@ export default function NewBroadcastPage() {
   const router = useRouter();
   const t = useTranslations('Broadcasts.new');
   const { accountId } = useAuth();
-  const whatsapp = useWhatsAppCapability();
-  const { createAndSendBroadcast, isProcessing, progress } =
-    useBroadcastSending();
+  const { createAndSendBroadcast, isProcessing, progress } = useBroadcastSending();
 
   const [currentStep, setCurrentStep] = useState(0);
   const [template, setTemplate] = useState<MessageTemplate | null>(null);
@@ -45,22 +40,17 @@ export default function NewBroadcastPage() {
     csvContacts?: { phone: string; name?: string }[];
     excludeTagIds?: string[];
   }>({ type: 'all' });
-  const [variables, setVariables] = useState<MessageVariableMapping[]>([]);
+  const [variables, setVariables] = useState<
+    Record<string, { type: 'static' | 'field' | 'custom_field'; value: string }>
+  >({});
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
-  const connections = whatsapp.connections;
-  const [selectedConnectionId, setWhatsappConfigId] = useState('');
-  const whatsappConfigId = connections.some(
-    (row) => row.id === selectedConnectionId
-  )
-    ? selectedConnectionId
-    : (whatsapp.primaryConnection?.id ?? '');
 
   async function handleSend() {
-    if (!template || !whatsapp.available) return;
+    if (!template) return;
 
     try {
-      const broadcastId = await createAndSendBroadcast({
+      const { broadcastId, interruption } = await createAndSendBroadcast({
         name,
         template,
         audience: {
@@ -72,13 +62,14 @@ export default function NewBroadcastPage() {
         },
         variables,
         headerMediaUrl,
-        whatsappConfigId,
       });
+      if (interruption === 'lease_lost') toast.warning(t('toastSendTakenOver'));
+      if (interruption === 'lease_error') toast.error(t('toastSendInterrupted'));
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
       // Previously swallowed with console.error — the wizard would
       // just no-op, leaving the user confused. Surface the reason.
-      const message = err instanceof Error ? err.message : 'Broadcast failed';
+      const message = err instanceof Error ? err.message : t('broadcastFailed');
       console.error('Broadcast failed:', err);
       toast.error(message);
     }
@@ -112,40 +103,13 @@ export default function NewBroadcastPage() {
       return;
     }
 
-    const validationResponse = await fetch(
-      '/api/whatsapp/broadcast/resolve-variables',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          template_name: template.name,
-          ...(template.variable_configuration_status === 'configured'
-            ? { template_id: template.id }
-            : {}),
-          template_language: template.language ?? 'en_US',
-          whatsapp_config_id: whatsappConfigId,
-          mappings: variables,
-          validate_only: true,
-        }),
-      }
-    );
-    if (!validationResponse.ok) {
-      const result = await validationResponse.json().catch(() => ({}));
-      toast.error(result.error ?? 'Template variable mappings are invalid.');
-      return;
-    }
-
     const { error } = await supabase.from('broadcasts').insert({
       user_id: user.id,
       account_id: accountId,
-      whatsapp_config_id: whatsappConfigId,
       name: name.trim(),
       template_name: template.name,
       template_language: template.language ?? 'en_US',
-      template_variables:
-        template.variable_configuration_status === 'configured'
-          ? { template_id: template.id }
-          : variables,
+      template_variables: variables,
       audience_filter: {
         type: audience.type,
         tagIds: audience.tagIds,
@@ -167,47 +131,15 @@ export default function NewBroadcastPage() {
     router.push('/broadcasts');
   }
 
-  if (!whatsapp.available) {
-    return (
-      <WhatsAppCapabilityGate feature="Broadcasts">
-        <></>
-      </WhatsAppCapabilityGate>
-    );
-  }
-
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-foreground text-2xl font-bold">{t('title')}</h1>
-        <p className="text-muted-foreground mt-1 text-sm">{t('subtitle')}</p>
+        <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {t('subtitle')}
+        </p>
       </div>
-
-      {connections.length > 1 && (
-        <div className="space-y-2">
-          <label
-            htmlFor="broadcast-connection"
-            className="text-foreground text-sm font-medium"
-          >
-            Send from
-          </label>
-          <select
-            id="broadcast-connection"
-            value={whatsappConfigId}
-            onChange={(event) => {
-              setWhatsappConfigId(event.target.value);
-              setTemplate(null);
-            }}
-            className="border-border bg-background h-10 w-full rounded-md border px-3 text-sm"
-          >
-            {connections.map((connection) => (
-              <option key={connection.id} value={connection.id}>
-                {connection.display_name}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
 
       {/* Step Indicator */}
       <div className="flex items-center justify-between">
@@ -223,19 +155,15 @@ export default function NewBroadcastPage() {
                     isCompleted
                       ? 'bg-primary text-primary-foreground'
                       : isActive
-                        ? 'border-primary bg-primary/10 text-primary border-2'
-                        : 'border-border bg-muted text-muted-foreground border'
+                        ? 'border-2 border-primary bg-primary/10 text-primary'
+                        : 'border border-border bg-muted text-muted-foreground'
                   }`}
                 >
                   {isCompleted ? <Check className="h-4 w-4" /> : index + 1}
                 </div>
                 <span
                   className={`hidden text-sm font-medium sm:block ${
-                    isActive
-                      ? 'text-foreground'
-                      : isCompleted
-                        ? 'text-primary'
-                        : 'text-muted-foreground'
+                    isActive ? 'text-foreground' : isCompleted ? 'text-primary' : 'text-muted-foreground'
                   }`}
                 >
                   {t(`steps.${step.label}`)}
@@ -265,14 +193,9 @@ export default function NewBroadcastPage() {
           {currentStep === 0 && (
             <Step1ChooseTemplate
               selectedTemplate={template}
-              onSelect={(selected) => {
-                setTemplate(selected);
-                setVariables([]);
-                setHeaderMediaUrl('');
-              }}
+              onSelect={setTemplate}
               onNext={() => setCurrentStep(1)}
               onBack={() => router.push('/broadcasts')}
-              whatsappConfigId={whatsappConfigId}
             />
           )}
           {currentStep === 1 && (

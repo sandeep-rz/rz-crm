@@ -179,10 +179,7 @@ function isReservedIPv6(b: number[]): boolean {
  * Fails closed: an address this can't parse is reported as reserved.
  */
 export function isPrivateOrReservedIp(ip: string): boolean {
-  const bare = ip
-    .trim()
-    .toLowerCase()
-    .replace(/^\[|\]$/g, '');
+  const bare = ip.trim().toLowerCase().replace(/^\[|\]$/g, '');
 
   const v4 = parseIPv4(bare);
   if (v4) return isReservedIPv4(v4);
@@ -200,21 +197,17 @@ export function isPrivateOrReservedIp(ip: string): boolean {
  * be used without turning arbitrary private addresses into valid targets.
  */
 export interface DeliverableUrlOptions {
-  allowPrivateHosts?: Iterable<string>;
+  allowPrivateHosts?: Iterable<string>
 }
 
 function normalizedHostSet(hosts: Iterable<string> | undefined): Set<string> {
-  const out = new Set<string>();
-  if (!hosts) return out;
+  const out = new Set<string>()
+  if (!hosts) return out
   for (const host of hosts) {
-    const value = host
-      .trim()
-      .toLowerCase()
-      .replace(/^\[|\]$/g, '')
-      .replace(/\.$/, '');
-    if (value) out.add(value);
+    const value = host.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
+    if (value) out.add(value)
   }
-  return out;
+  return out
 }
 
 /**
@@ -226,7 +219,7 @@ function normalizedHostSet(hosts: Iterable<string> | undefined): Set<string> {
  */
 export async function isDeliverableUrl(
   rawUrl: string,
-  options: DeliverableUrlOptions = {}
+  options: DeliverableUrlOptions = {},
 ): Promise<boolean> {
   let host: string;
   try {
@@ -236,8 +229,8 @@ export async function isDeliverableUrl(
   }
 
   const lower = host.toLowerCase().replace(/\.$/, '');
-  const allowPrivateHosts = normalizedHostSet(options.allowPrivateHosts);
-  if (allowPrivateHosts.has(lower)) return true;
+  const allowPrivateHosts = normalizedHostSet(options.allowPrivateHosts)
+  if (allowPrivateHosts.has(lower)) return true
 
   if (isIP(host)) return !isPrivateOrReservedIp(host);
 

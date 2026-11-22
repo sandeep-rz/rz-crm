@@ -134,7 +134,7 @@ describe('PMS automation job worker', () => {
     'check-in date update',
     'other canonical metadata update',
   ])(
-    'suppresses without retry when the final gate detects a %s race',
+    'revalidates the same occurrence when the final gate detects a %s race',
     async () => {
       const store = new MemoryStore();
       const dispatch = vi.fn().mockResolvedValue({
@@ -152,11 +152,9 @@ describe('PMS automation job worker', () => {
           loadContext: async () => reservation,
           dispatch,
         })
-      ).toBe('suppressed');
+      ).toBe('rescheduled');
 
-      expect(store.result).toBe(
-        'suppressed:Reservation changed after eligibility validation.'
-      );
+      expect(store.result).toBe('rescheduled');
       expect(store.failures).toHaveLength(0);
       expect(dispatch).toHaveBeenCalledTimes(1);
     }

@@ -1,16 +1,11 @@
-'use client';
-import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
-import {
-  variableRequiresReservation,
-  type MessageVariableSourceScope,
-} from '@/lib/message-variables/contract';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import type { MessageTemplate } from '@/types';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import type { MessageTemplate } from "@/types";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -18,28 +13,22 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, ChevronRight, LayoutTemplate, Loader2 } from 'lucide-react';
-import { extractVariableIndices } from '@/lib/whatsapp/template-validators';
-import { useLocale, useTranslations } from 'next-intl';
+} from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import {
-  renderSemanticText,
-  type CatalogVariable,
-} from '@/lib/whatsapp/semantic-template';
-import type { MessageVariableResolutionSource } from '@/lib/message-variables/contract';
+  ArrowLeft,
+  ChevronRight,
+  LayoutTemplate,
+  Loader2,
+} from "lucide-react";
 import {
-  loadContactStays,
-  formatStayDateShort,
-  type ContactStay,
-  type StayReadClient,
-} from '@/lib/contacts/pms-stays';
-import { useAuth } from '@/hooks/use-auth';
-import { validatePreparationMapping } from '@/lib/message-preparation/mapping';
+  extractTemplateVariables,
+  extractVariableIndices,
+} from "@/lib/whatsapp/template-validators";
+import { useTranslations } from "next-intl";
 
 export interface TemplateSendValues {
   body: string[];
-  reservationId?: string;
   headerText?: string;
   buttonParams?: Record<number, string>;
 }
@@ -48,15 +37,13 @@ interface TemplatePickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (template: MessageTemplate, values: TemplateSendValues) => void;
-  whatsappConfigId?: string | null;
-  contactId?: string | null;
 }
 
 function renderBodyPreview(body: string, params: string[]): string {
-  return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
-    const idx = Number(raw) - 1;
-    const value = params[idx];
-    return value && value.trim().length > 0 ? value : `{{${raw}}}`;
+  const keys = extractTemplateVariables(body);
+  return body.replace(/\{\{([A-Za-z0-9_]+)\}\}/g, (match, key: string) => {
+    const value = params[keys.indexOf(key)];
+    return value && value.trim().length > 0 ? value : match;
   });
 }
 
@@ -72,57 +59,43 @@ interface UrlButtonSlot {
  * send-message path doesn't 400 on missing parameters.
  */
 function collectVariableSlots(template: MessageTemplate): {
-  bodyVars: number[];
-  headerVarCount: number;
+  bodyVars: string[];
+  headerVar: string | null;
   urlButtonSlots: UrlButtonSlot[];
 } {
-  const bodyVars = extractVariableIndices(template.body_text);
-  const headerVarCount =
-    template.header_type === 'text' && template.header_content
-      ? extractVariableIndices(template.header_content).length
-      : 0;
+  // Positional ({{1}}) or named ({{customer_name}}) — see
+  // extractTemplateVariables. Missing a named variable here means the
+  // send goes out with no parameters and Meta rejects it (#132000).
+  const bodyVars = extractTemplateVariables(template.body_text);
+  const headerVar =
+    template.header_type === "text" && template.header_content
+      ? (extractTemplateVariables(template.header_content)[0] ?? null)
+      : null;
   const urlButtonSlots: UrlButtonSlot[] = [];
   (template.buttons ?? []).forEach((b, i) => {
-    if (b.type === 'URL' && extractVariableIndices(b.url).length > 0) {
+    if (b.type === "URL" && extractVariableIndices(b.url).length > 0) {
       urlButtonSlots.push({ index: i, text: b.text, url: b.url });
     }
   });
-  return { bodyVars, headerVarCount, urlButtonSlots };
+  return { bodyVars, headerVar, urlButtonSlots };
 }
 
 export function TemplatePicker({
   open,
   onOpenChange,
   onSelect,
-  whatsappConfigId,
-  contactId,
 }: TemplatePickerProps) {
-  const t = useTranslations('Inbox.templatePicker');
-  const { accountId } = useAuth();
-  const locale = useLocale();
-  const [catalog, setCatalog] = useState<
-    (CatalogVariable & {
-      resolutionSource: MessageVariableResolutionSource;
-      sourceScope: MessageVariableSourceScope;
-    })[]
-  >([]);
-  const [catalogError, setCatalogError] = useState(false);
-  const [stays, setStays] = useState<ContactStay[]>([]);
-  const [staysLoading, setStaysLoading] = useState(false);
-  const [staysError, setStaysError] = useState(false);
-  const [reservationId, setReservationId] = useState('');
+  const t = useTranslations("Inbox.templatePicker");
 
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<MessageTemplate | null>(null);
   const [params, setParams] = useState<string[]>([]);
-  const whatsapp = useWhatsAppCapability();
-  const fallbackConnectionId = whatsapp.primaryConnection?.id ?? null;
-  const [headerText, setHeaderText] = useState<string>('');
+  const [headerText, setHeaderText] = useState<string>("");
   const [buttonParams, setButtonParams] = useState<Record<number, string>>({});
 
   useEffect(() => {
-    if (!open || (!whatsappConfigId && whatsapp.loading)) return;
+    if (!open) return;
 
     let cancelled = false;
     (async () => {
@@ -132,7 +105,7 @@ export function TemplatePicker({
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user || !accountId) {
+      if (!user) {
         if (!cancelled) {
           setTemplates([]);
           setLoading(false);
@@ -140,44 +113,19 @@ export function TemplatePicker({
         return;
       }
 
-      // Templates are workspace-owned. Filter by the active workspace rather
-      // than creator user_id (which would hide teammate-created templates).
-      const connectionId = whatsappConfigId || fallbackConnectionId;
-      let query = supabase
-        .from('message_templates')
-        .select('*')
-        .eq('account_id', accountId)
-        .eq('status', 'APPROVED');
-      if (connectionId) query = query.eq('whatsapp_config_id', connectionId);
-      const [{ data, error }, definitions] = await Promise.all([
-        query.order('created_at', { ascending: false }),
-        supabase
-          .from('message_variable_catalog')
-          .select(
-            'variable_key,label,preview_value,is_active,category,sort_order,resolution_source,source_scope'
-          )
-          .eq('is_active', true)
-          .order('sort_order'),
-      ]);
-      if (!cancelled) {
-        setCatalogError(Boolean(definitions.error));
-        setCatalog(
-          (definitions.data ?? []).map((row) => ({
-            variableKey: row.variable_key,
-            label: row.label,
-            previewValue: row.preview_value,
-            isActive: row.is_active,
-            category: row.category,
-            sortOrder: row.sort_order,
-            resolutionSource: row.resolution_source,
-            sourceScope: row.source_scope,
-          }))
-        );
-      }
+      // Scope by RLS (message_templates_select → is_account_member), NOT by
+      // user_id. Templates are account-owned, so filtering on the caller's
+      // user_id hid templates that a teammate created — leaving them unable
+      // to send approved templates in a shared account.
+      const { data, error } = await supabase
+        .from("message_templates")
+        .select("*")
+        .eq("status", "APPROVED")
+        .order("created_at", { ascending: false });
 
       if (cancelled) return;
       if (error) {
-        console.error('Failed to fetch templates:', error);
+        console.error("Failed to fetch templates:", error);
         setTemplates([]);
       } else {
         setTemplates((data as MessageTemplate[]) ?? []);
@@ -188,91 +136,12 @@ export function TemplatePicker({
     return () => {
       cancelled = true;
     };
-  }, [
-    accountId,
-    open,
-    whatsappConfigId,
-    fallbackConnectionId,
-    whatsapp.loading,
-  ]);
-
-  const semantic = selected?.variable_configuration_status === 'configured';
-  const mapping = useMemo(() => {
-    if (!semantic || !selected) return null;
-    try {
-      return validatePreparationMapping(selected);
-    } catch {
-      return null;
-    }
-  }, [semantic, selected]);
-  const catalogUnavailable =
-    catalogError ||
-    Boolean(
-      mapping?.some(
-        (entry) =>
-          !catalog.some(
-            (definition) => definition.variableKey === entry.variable_key
-          )
-      )
-    );
-  // Catalog source semantics, not a second variable classification map.
-  const requiresReservation = Boolean(
-    semantic &&
-    !catalogUnavailable &&
-    mapping?.some((entry) =>
-      variableRequiresReservation(
-        catalog.find(
-          (definition) => definition.variableKey === entry.variable_key
-        )
-      )
-    )
-  );
-  useEffect(() => {
-    if (!open || !requiresReservation) return;
-    let cancelled = false;
-    void (async () => {
-      setReservationId('');
-      setStays([]);
-      setStaysError(false);
-      if (!accountId || !contactId) {
-        setStaysError(true);
-        setStaysLoading(false);
-        return;
-      }
-      setStaysLoading(true);
-      try {
-        const rows = await loadContactStays(
-          createClient() as unknown as StayReadClient,
-          { accountId, contactId }
-        );
-        if (cancelled) return;
-        setStays(rows);
-        const relevant = rows.filter((stay) =>
-          ['current', 'upcoming'].includes(stay.timing)
-        );
-        const only =
-          relevant.length === 1
-            ? relevant[0]
-            : rows.length === 1 && rows[0].timing !== 'cancelled'
-              ? rows[0]
-              : undefined;
-        setReservationId(only?.id ?? '');
-      } catch {
-        if (!cancelled) setStaysError(true);
-      } finally {
-        if (!cancelled) setStaysLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, accountId, contactId, requiresReservation]);
+  }, [open]);
 
   function resetSelection() {
     setSelected(null);
-    setReservationId('');
     setParams([]);
-    setHeaderText('');
+    setHeaderText("");
     setButtonParams({});
   }
 
@@ -282,17 +151,10 @@ export function TemplatePicker({
   }
 
   function pickTemplate(template: MessageTemplate) {
-    if (template.variable_configuration_status === 'configured') {
-      setSelected(template);
-      setParams([]);
-      setHeaderText('');
-      setButtonParams({});
-      return;
-    }
     const slots = collectVariableSlots(template);
     const noInputsNeeded =
       slots.bodyVars.length === 0 &&
-      slots.headerVarCount === 0 &&
+      slots.headerVar === null &&
       slots.urlButtonSlots.length === 0;
     if (noInputsNeeded) {
       onSelect(template, { body: [] });
@@ -300,26 +162,18 @@ export function TemplatePicker({
       return;
     }
     setSelected(template);
-    setParams(new Array(slots.bodyVars.length).fill(''));
-    setHeaderText('');
+    setParams(new Array(slots.bodyVars.length).fill(""));
+    setHeaderText("");
     setButtonParams({});
   }
 
   function confirm() {
-    if (!selected || !canConfirm) return;
-    if (semantic) {
-      onSelect(selected, {
-        body: [],
-        ...(requiresReservation ? { reservationId } : {}),
-      });
-      handleOpenChange(false);
-      return;
-    }
+    if (!selected) return;
     const values: TemplateSendValues = { body: params };
     if (headerText.trim()) values.headerText = headerText.trim();
     if (Object.keys(buttonParams).length > 0) {
       values.buttonParams = Object.fromEntries(
-        Object.entries(buttonParams).map(([k, v]) => [Number(k), v.trim()])
+        Object.entries(buttonParams).map(([k, v]) => [Number(k), v.trim()]),
       );
     }
     onSelect(selected, values);
@@ -328,35 +182,29 @@ export function TemplatePicker({
 
   const slots = useMemo(
     () => (selected ? collectVariableSlots(selected) : null),
-    [selected]
+    [selected],
   );
-  const canConfirm = semantic
-    ? mapping !== null &&
-      !catalogUnavailable &&
-      (!requiresReservation ||
-        (!!reservationId && !staysLoading && !staysError))
-    : !!selected &&
-      !!slots &&
-      slots.bodyVars.every((_, i) => (params[i] ?? '').trim().length > 0) &&
-      (slots.headerVarCount === 0 || headerText.trim().length > 0) &&
-      slots.urlButtonSlots.every(
-        (s) => (buttonParams[s.index] ?? '').trim().length > 0
-      );
+  const canConfirm =
+    !!selected &&
+    !!slots &&
+    slots.bodyVars.every((_, i) => (params[i] ?? "").trim().length > 0) &&
+    (slots.headerVar === null || headerText.trim().length > 0) &&
+    slots.urlButtonSlots.every(
+      (s) => (buttonParams[s.index] ?? "").trim().length > 0,
+    );
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="border-border bg-popover sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="text-popover-foreground flex items-center gap-2">
-            <LayoutTemplate className="text-primary h-4 w-4" />
-            {selected ? selected.name : t('sendTemplate')}
+          <DialogTitle className="flex items-center gap-2 text-popover-foreground">
+            <LayoutTemplate className="h-4 w-4 text-primary" />
+            {selected ? selected.name : t("sendTemplate")}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {selected
-              ? semantic
-                ? t('semanticHint')
-                : t('fillPlaceholders')
-              : t('pickTemplate')}
+              ? t("fillPlaceholders")
+              : t("pickTemplate")}
           </DialogDescription>
         </DialogHeader>
 
@@ -364,15 +212,13 @@ export function TemplatePicker({
           <div className="max-h-[60vh] space-y-2 overflow-y-auto">
             {loading ? (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="text-primary h-5 w-5 animate-spin" />
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
               </div>
             ) : templates.length === 0 ? (
-              <div className="border-border bg-background/50 rounded-md border p-6 text-center">
-                <p className="text-popover-foreground text-sm">
-                  {t('noApprovedTemplates')}
-                </p>
-                <p className="text-muted-foreground mt-1 text-xs">
-                  {t('noApprovedTemplatesHint')}
+              <div className="rounded-md border border-border bg-background/50 p-6 text-center">
+                <p className="text-sm text-popover-foreground">{t("noApprovedTemplates")}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("noApprovedTemplatesHint")}
                 </p>
               </div>
             ) : (
@@ -381,35 +227,28 @@ export function TemplatePicker({
                   key={t.id}
                   type="button"
                   onClick={() => pickTemplate(t)}
-                  className="border-border bg-background/50 hover:border-primary/40 hover:bg-popover w-full rounded-md border p-3 text-left transition-colors"
+                  className="w-full rounded-md border border-border bg-background/50 p-3 text-left transition-colors hover:border-primary/40 hover:bg-popover"
                 >
                   <div className="flex items-start gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-popover-foreground truncate text-sm font-medium">
+                        <p className="truncate text-sm font-medium text-popover-foreground">
                           {t.name}
                         </p>
-                        <Badge className="border-primary/30 bg-primary/20 text-primary border text-[10px]">
+                        <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
                           {t.category}
                         </Badge>
                         {t.language && (
-                          <span className="text-muted-foreground text-[10px] uppercase">
+                          <span className="text-[10px] uppercase text-muted-foreground">
                             {t.language}
                           </span>
                         )}
                       </div>
-                      <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                        {t.variable_configuration_status === 'configured' &&
-                        t.semantic_content
-                          ? renderSemanticText(
-                              t.semantic_content.body_text,
-                              catalog,
-                              'label'
-                            )
-                          : t.body_text}
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {t.body_text}
                       </p>
                     </div>
-                    <ChevronRight className="text-muted-foreground h-4 w-4 flex-shrink-0" />
+                    <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                   </div>
                 </button>
               ))
@@ -417,135 +256,66 @@ export function TemplatePicker({
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="border-border bg-background/50 rounded-md border p-3">
-              <p className="text-muted-foreground mb-1 text-xs">
-                {t('preview')}
-              </p>
-              {semantic && (
-                <p className="text-muted-foreground mb-2 text-xs">
-                  {t('previewHint')}
-                </p>
-              )}
-              <p className="text-popover-foreground text-sm whitespace-pre-wrap">
-                {semantic && selected.semantic_content
-                  ? renderSemanticText(
-                      selected.semantic_content.body_text,
-                      catalog,
-                      'label'
-                    )
-                  : renderBodyPreview(selected.body_text, params)}
+            <div className="rounded-md border border-border bg-background/50 p-3">
+              <p className="mb-1 text-xs text-muted-foreground">{t("preview")}</p>
+              <p className="whitespace-pre-wrap text-sm text-popover-foreground">
+                {renderBodyPreview(selected.body_text, params)}
               </p>
               {selected.footer_text && (
-                <p className="text-muted-foreground mt-2 text-xs italic">
+                <p className="mt-2 text-xs italic text-muted-foreground">
                   {selected.footer_text}
                 </p>
               )}
             </div>
-            {semantic && !mapping && (
-              <p className="text-destructive text-xs">{t('invalidMapping')}</p>
-            )}
-            {semantic && catalogUnavailable && (
-              <p className="text-destructive text-xs">
-                {t('contextLoadError')}
-              </p>
-            )}
-            {requiresReservation && (
-              <div className="space-y-2">
-                <Label htmlFor="template-reservation">{t('reservation')}</Label>
-                <select
-                  id="template-reservation"
-                  value={reservationId}
-                  onChange={(event) => setReservationId(event.target.value)}
-                  disabled={staysLoading || staysError}
-                  className="border-border bg-background text-foreground h-9 w-full rounded-md border px-3 text-sm"
-                >
-                  <option value="">
-                    {staysLoading
-                      ? t('loadingReservations')
-                      : t('selectReservation')}
-                  </option>
-                  {stays.map((stay) => (
-                    <option key={stay.id} value={stay.id}>
-                      {stay.reservationCode ||
-                        stay.propertyName ||
-                        t('reservation')}
-                      {stay.checkIn
-                        ? ` · ${formatStayDateShort(stay.checkIn, locale)}`
-                        : ''}
-                      {stay.checkOut
-                        ? ` – ${formatStayDateShort(stay.checkOut, locale)}`
-                        : ''}
-                    </option>
-                  ))}
-                </select>
-                {staysError ? (
-                  <p className="text-destructive text-xs">
-                    {t('contextLoadError')}
-                  </p>
-                ) : !staysLoading && !stays.length ? (
-                  <p className="text-muted-foreground text-xs">
-                    {t('noReservations')}
-                  </p>
-                ) : null}
-              </div>
-            )}
-            {!semantic && slots && slots.headerVarCount > 0 && (
+            {slots?.headerVar && (
               <div className="space-y-1">
-                <Label className="text-popover-foreground text-xs">
-                  {`Header {{1}}`}
+                <Label className="text-xs text-popover-foreground">
+                  {t("headerVarLabel", { var: `{{${slots.headerVar}}}` })}
                 </Label>
                 <Input
                   value={headerText}
                   onChange={(e) => setHeaderText(e.target.value)}
-                  placeholder={t('headerValuePlaceholder')}
+                  placeholder={t("headerValuePlaceholder")}
                   className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
                 />
               </div>
             )}
-            {!semantic &&
-              slots?.bodyVars.map((v, i) => (
-                <div key={v} className="space-y-1">
-                  <Label className="text-popover-foreground text-xs">{`Body {{${v}}}`}</Label>
-                  <Input
-                    value={params[i] ?? ''}
-                    onChange={(e) => {
-                      const next = [...params];
-                      next[i] = e.target.value;
-                      setParams(next);
-                    }}
-                    placeholder={t('bodyValuePlaceholder', { val: `{{${v}}}` })}
-                    className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
-                  />
-                </div>
-              ))}
-            {!semantic &&
-              slots?.urlButtonSlots.map((slot) => (
-                <div key={slot.index} className="space-y-1">
-                  <Label className="text-popover-foreground text-xs">
-                    {`URL button "${slot.text}" — value for `}
-                    {`{{1}}`}
-                  </Label>
-                  <Input
-                    value={buttonParams[slot.index] ?? ''}
-                    onChange={(e) =>
-                      setButtonParams((prev) => ({
-                        ...prev,
-                        [slot.index]: e.target.value,
-                      }))
-                    }
-                    placeholder={t('urlSuffixValuePlaceholder')}
-                    className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
-                  />
-                  <p className="text-muted-foreground text-[10px] break-all">
-                    {t('finalUrl', {
-                      url: slot.url.replace(
-                        /\{\{1\}\}/g,
-                        buttonParams[slot.index] || '{{1}}'
-                      ),
-                    })}
-                  </p>
-                </div>
-              ))}
+            {slots?.bodyVars.map((v, i) => (
+              <div key={v} className="space-y-1">
+                <Label className="text-xs text-popover-foreground">{t("bodyVarLabel", { var: `{{${v}}}` })}</Label>
+                <Input
+                  value={params[i] ?? ""}
+                  onChange={(e) => {
+                    const next = [...params];
+                    next[i] = e.target.value;
+                    setParams(next);
+                  }}
+                  placeholder={t("bodyValuePlaceholder", { val: `{{${v}}}` })}
+                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+            ))}
+            {slots?.urlButtonSlots.map((slot) => (
+              <div key={slot.index} className="space-y-1">
+                <Label className="text-xs text-popover-foreground">
+                  {t("urlButtonVarLabel", { text: slot.text, var: "{{1}}" })}
+                </Label>
+                <Input
+                  value={buttonParams[slot.index] ?? ""}
+                  onChange={(e) =>
+                    setButtonParams((prev) => ({
+                      ...prev,
+                      [slot.index]: e.target.value,
+                    }))
+                  }
+                  placeholder={t("urlSuffixValuePlaceholder")}
+                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+                />
+                <p className="text-[10px] text-muted-foreground break-all">
+                  {t("finalUrl", { url: slot.url.replace(/\{\{1\}\}/g, buttonParams[slot.index] || "{{1}}") })}
+                </p>
+              </div>
+            ))}
           </div>
         )}
 
@@ -558,14 +328,14 @@ export function TemplatePicker({
                 className="border-border text-popover-foreground hover:bg-muted"
               >
                 <ArrowLeft className="h-4 w-4" />
-                {t('back')}
+                {t("back")}
               </Button>
               <Button
                 disabled={!canConfirm}
                 onClick={confirm}
                 className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
-                {t('send')}
+                {t("send")}
               </Button>
             </>
           ) : (
@@ -574,7 +344,7 @@ export function TemplatePicker({
               onClick={() => handleOpenChange(false)}
               className="border-border text-popover-foreground hover:bg-muted"
             >
-              {t('cancel')}
+              {t("cancel")}
             </Button>
           )}
         </DialogFooter>

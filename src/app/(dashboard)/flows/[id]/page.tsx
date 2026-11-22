@@ -1,16 +1,14 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
-import { useTranslations } from 'next-intl';
+import { useTranslations } from "next-intl";
 
-import { FlowEditorShell } from '@/components/flows/flow-editor-shell';
-import type { FlowRow, FlowNodeRow } from '@/lib/flows/types';
-import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
-import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-state';
+import { FlowEditorShell } from "@/components/flows/flow-editor-shell";
+import type { FlowRow, FlowNodeRow } from "@/lib/flows/types";
 
 /**
  * Flow editor shell.
@@ -27,8 +25,7 @@ import { WhatsAppCapabilityGate } from '@/components/whatsapp/whatsapp-required-
 export default function FlowEditorPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
-  const t = useTranslations('Flows.edit');
-  const whatsapp = useWhatsAppCapability();
+  const t = useTranslations("Flows.edit");
 
   const [flow, setFlow] = useState<FlowRow | null>(null);
   const [nodes, setNodes] = useState<FlowNodeRow[]>([]);
@@ -36,7 +33,7 @@ export default function FlowEditorPage() {
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
-    if (!params.id || !whatsapp.available) return;
+    if (!params.id) return;
     let cancelled = false;
     (async () => {
       try {
@@ -57,7 +54,7 @@ export default function FlowEditorPage() {
       } catch (err) {
         if (!cancelled) {
           console.error(err);
-          toast.error(t('loadError'));
+          toast.error(t("loadError"));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -66,33 +63,25 @@ export default function FlowEditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [params.id, t, whatsapp.available]);
-
-  if (!whatsapp.available) {
-    return (
-      <WhatsAppCapabilityGate feature="Flows">
-        <></>
-      </WhatsAppCapabilityGate>
-    );
-  }
+  }, [params.id]);
 
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <Loader2 className="text-muted-foreground h-6 w-6 animate-spin" />
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
   if (notFound || !flow) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
-        <p className="text-muted-foreground text-sm">{t('notFound')}</p>
+        <p className="text-sm text-muted-foreground">{t("notFound")}</p>
         <button
           type="button"
-          onClick={() => router.push('/flows')}
-          className="text-primary text-sm hover:opacity-80"
+          onClick={() => router.push("/flows")}
+          className="text-sm text-primary hover:opacity-80"
         >
-          {t('backToFlows')}
+          {t("backToFlows")}
         </button>
       </div>
     );

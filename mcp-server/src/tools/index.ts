@@ -11,11 +11,7 @@ import { registerReadTools } from './read.js';
 import { registerWriteTools } from './write.js';
 import { registerBroadcastTools } from './broadcast.js';
 
-export function registerTools(
-  server: McpServer,
-  client: WacrmClient,
-  config: Config
-): string[] {
+export function registerTools(server: McpServer, client: WacrmClient, config: Config): string[] {
   const enabled: string[] = ['read'];
   registerReadTools(server, client);
 

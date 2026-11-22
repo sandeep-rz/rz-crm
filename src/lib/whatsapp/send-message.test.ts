@@ -193,9 +193,12 @@ vi.mock('@/lib/flows/admin-client', () => ({
   }),
 }));
 
+const applyPendingMessageStatuses = vi.hoisted(() => vi.fn(async () => []));
+vi.mock('@/lib/whatsapp/message-status-sync', () => ({
+  applyPendingMessageStatuses,
+}));
+
 interface CapturedWrites {
-  reads?: string[];
-  rpcCalls?: string[];
   message?: Record<string, unknown>;
   conversation?: Record<string, unknown>;
 }
@@ -213,7 +216,6 @@ function sendPathDb(
 ): SupabaseClient {
   const conversation = {
     id: 'cv-1',
-    whatsapp_config_id: 'cfg-1',
     contact,
   };
   const config = {
@@ -223,20 +225,7 @@ function sendPathDb(
   };
 
   return {
-    rpc: async (name: string, args: Record<string, unknown>) => {
-      captured.rpcCalls?.push(name);
-      if (name !== 'record_whatsapp_outbound')
-        throw new Error('Unexpected RPC');
-      captured.message = {
-        conversation_id: args.p_conversation,
-        sender_type: 'agent',
-        ...(args.p_message as object),
-      };
-      captured.conversation = { last_message_text: args.p_preview };
-      return { data: 'msg-1', error: null };
-    },
     from(table: string) {
-      captured.reads?.push(table);
       const builder: Record<string, unknown> = {
         select: () => builder,
         eq: () => builder,
@@ -249,23 +238,6 @@ function sendPathDb(
           return builder;
         },
         maybeSingle: async () => ({ data: null, error: null }),
-        limit: async () => ({
-          data:
-            table === 'whatsapp_config'
-              ? [
-                  {
-                    ...config,
-                    account_id: 'acct-1',
-                    user_id: 'user-1',
-                    display_name: 'Main',
-                    is_primary: true,
-                    waba_id: 'waba-1',
-                    status: 'connected',
-                  },
-                ]
-              : [],
-          error: null,
-        }),
         single: async () => {
           if (table === 'conversations') {
             return { data: conversation, error: null };
@@ -324,18 +296,37 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
     );
   });
 
+  it('records which teammate sent the message', async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'template',
+      templateName: 'order_update',
+      templateMessageParams: { body: ['A1', 'Friday'] },
+      senderId: 'user-42',
+    });
+    expect(captured.message?.sender_id).toBe('user-42');
+  });
+
+  it('leaves sender_id empty when no teammate is known', async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'template',
+      templateName: 'order_update',
+      templateMessageParams: { body: ['A1', 'Friday'] },
+    });
+    expect(captured.message?.sender_id).toBeNull();
+  });
+
   it('reads body values out of the structured params shape too', async () => {
     const captured: CapturedWrites = {};
-    await sendMessageToConversation(
-      sendPathDb([TEMPLATE_ROW], captured),
-      'acct-1',
-      {
-        conversationId: 'cv-1',
-        messageType: 'template',
-        templateName: 'order_update',
-        templateMessageParams: { body: ['B456', 'Monday'] },
-      }
-    );
+    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'template',
+      templateName: 'order_update',
+      templateMessageParams: { body: ['B456', 'Monday'] },
+    });
     expect(captured.message?.content_text).toBe(
       'Your order B456 ships on Monday'
     );
@@ -343,39 +334,30 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
 
   it("does not override the composer's pre-rendered text", async () => {
     const captured: CapturedWrites = {};
-    await sendMessageToConversation(
-      sendPathDb([TEMPLATE_ROW], captured),
-      'acct-1',
-      {
-        conversationId: 'cv-1',
-        messageType: 'template',
-        templateName: 'order_update',
-        templateParams: ['A123', 'Friday'],
-        contentText: 'rendered by the composer',
-      }
-    );
+    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'template',
+      templateName: 'order_update',
+      templateParams: ['A123', 'Friday'],
+      contentText: 'rendered by the composer',
+    });
     expect(captured.message?.content_text).toBe('rendered by the composer');
   });
 
   it("sends the local row's language when the caller names none", async () => {
     sendTemplateMessage.mockClear();
     const captured: CapturedWrites = {};
-    await sendMessageToConversation(
-      sendPathDb([TEMPLATE_ROW], captured),
-      'acct-1',
-      {
-        conversationId: 'cv-1',
-        messageType: 'template',
-        templateName: 'order_update',
-        templateParams: ['A123', 'Friday'],
-      }
-    );
+    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'template',
+      templateName: 'order_update',
+      templateParams: ['A123', 'Friday'],
+    });
     // Previously pinned to 'en_US', which matched no row and made Meta
     // reject the send as a missing translation.
     expect(
-      (
-        sendTemplateMessage.mock.calls[0] as unknown as [{ language: string }]
-      )[0].language
+      (sendTemplateMessage.mock.calls[0] as unknown as [{ language: string }])[0]
+        .language
     ).toBe('en');
   });
 
@@ -391,6 +373,44 @@ describe('sendMessageToConversation — template persistence (#483)', () => {
     // name rather than inventing a body.
     expect(captured.message?.content_text).toBeNull();
     expect(captured.conversation?.last_message_text).toBe('[template]');
+  });
+
+  it('stores the header image so the Inbox can render it (#655)', async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(
+      sendPathDb(
+        [
+          {
+            ...TEMPLATE_ROW,
+            header_type: 'image',
+            header_media_url: 'https://cdn.example.com/banner.png',
+          },
+        ],
+        captured
+      ),
+      'acct-1',
+      {
+        conversationId: 'cv-1',
+        messageType: 'template',
+        templateName: 'order_update',
+        templateParams: ['A123', 'Friday'],
+      }
+    );
+    expect(captured.message?.media_url).toBe(
+      'https://cdn.example.com/banner.png'
+    );
+  });
+
+  it('stores no media for a template without a media header', async () => {
+    const captured: CapturedWrites = {};
+    await sendMessageToConversation(sendPathDb([TEMPLATE_ROW], captured), 'acct-1', {
+      conversationId: 'cv-1',
+      messageType: 'template',
+      templateName: 'order_update',
+      templateParams: ['A123', 'Friday'],
+      mediaUrl: 'https://cdn.example.com/ignored.png',
+    });
+    expect(captured.message?.media_url).toBeNull();
   });
 });
 
@@ -492,17 +512,21 @@ describe('sendMessageToConversation — BSUID recipients (#519)', () => {
   });
 });
 
-it('loads the thread once and commits message, preview and agent handoff in one database request', async () => {
-  const captured: CapturedWrites = { reads: [], rpcCalls: [] };
-  await sendMessageToConversation(sendPathDb([], captured), 'acct-1', {
-    conversationId: 'cv-1',
-    messageType: 'text',
-    contentText: 'Hello',
+describe('sendMessageToConversation — statuses that beat the insert', () => {
+  it('applies any status Meta delivered before the row existed', async () => {
+    applyPendingMessageStatuses.mockClear();
+
+    await sendMessageToConversation(
+      sendPathDb([], {}, { id: 'ct-1', phone: '+15551234567' }),
+      'acct-1',
+      { conversationId: 'cv-1', messageType: 'text', contentText: 'hi' }
+    );
+
+    expect(applyPendingMessageStatuses).toHaveBeenCalledTimes(1);
+    expect(applyPendingMessageStatuses).toHaveBeenCalledWith(
+      expect.anything(),
+      'acct-1',
+      'wamid.text'
+    );
   });
-  expect(
-    captured.reads?.filter((table) => table === 'conversations')
-  ).toHaveLength(1);
-  expect(captured.reads).not.toContain('messages');
-  expect(captured.rpcCalls).toEqual(['record_whatsapp_outbound']);
-  expect(captured.message?.content_text).toBe('Hello');
 });

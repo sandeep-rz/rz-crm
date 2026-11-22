@@ -23,10 +23,7 @@ const templateSchema = z
   })
   .describe('Template payload — required when type is "template".');
 
-export function registerWriteTools(
-  server: McpServer,
-  client: WacrmClient
-): void {
+export function registerWriteTools(server: McpServer, client: WacrmClient): void {
   server.registerTool(
     'send_message',
     {
@@ -34,11 +31,7 @@ export function registerWriteTools(
       description:
         'Send a WhatsApp message to a phone number (E.164, e.g. +14155550123). The contact and conversation are found-or-created automatically. Use type "text" for a free-form message (only valid inside the 24-hour customer-service window), or "template" to send an approved template (required to open a new conversation). Media types (image/video/document/audio) require a media_url. This sends a real message to a real person — confirm the recipient and content with the user before calling.',
       inputSchema: {
-        to: z
-          .string()
-          .describe(
-            'Recipient phone number in E.164 format, e.g. +14155550123.'
-          ),
+        to: z.string().describe('Recipient phone number in E.164 format, e.g. +14155550123.'),
         type: z
           .enum(['text', 'template', 'image', 'video', 'document', 'audio'])
           .default('text')
@@ -46,35 +39,22 @@ export function registerWriteTools(
         text: z
           .string()
           .optional()
-          .describe(
-            'Message body for "text", or the caption for a media type.'
-          ),
+          .describe('Message body for "text", or the caption for a media type.'),
         media_url: z
           .string()
           .url()
           .optional()
-          .describe(
-            'Publicly reachable URL of the media file (required for media types).'
-          ),
-        filename: z
-          .string()
-          .optional()
-          .describe('File name for a "document" send.'),
+          .describe('Publicly reachable URL of the media file (required for media types).'),
+        filename: z.string().optional().describe('File name for a "document" send.'),
         template: templateSchema.optional(),
         reply_to_message_id: z
           .string()
           .optional()
-          .describe(
-            'Optional id of a message in the same conversation to reply to.'
-          ),
+          .describe('Optional id of a message in the same conversation to reply to.'),
       },
-      annotations: {
-        title: 'Send WhatsApp message',
-        readOnlyHint: false,
-        openWorldHint: true,
-      },
+      annotations: { title: 'Send WhatsApp message', readOnlyHint: false, openWorldHint: true },
     },
-    handle(async (args) => jsonResult(await client.sendMessage(args)))
+    handle(async (args) => jsonResult(await client.sendMessage(args))),
   );
 
   server.registerTool(
@@ -82,26 +62,17 @@ export function registerWriteTools(
     {
       title: 'Create contact',
       description:
-        'Create a contact by phone number (E.164, required). Find-or-create: if a contact with that phone already exists it is returned unchanged. Optional: name, email, company, and tags (tag names, created if missing).',
+        'Create a contact by phone number (E.164, required). Find-or-create: if a contact with that phone already exists, its name, email and company are left unchanged and any tags you pass are added to the tags it already has (none are removed). Optional: name, email, company, and tags (tag names, created if missing).',
       inputSchema: {
-        phone: z
-          .string()
-          .describe('Phone number in E.164 format, e.g. +14155550123.'),
+        phone: z.string().describe('Phone number in E.164 format, e.g. +14155550123.'),
         name: z.string().optional(),
         email: z.string().email().optional(),
         company: z.string().optional(),
-        tags: z
-          .array(z.string())
-          .optional()
-          .describe('Tag names; created if they do not exist.'),
+        tags: z.array(z.string()).optional().describe('Tag names; created if they do not exist. Added to an existing contact’s tags, never replacing them.'),
       },
-      annotations: {
-        title: 'Create contact',
-        readOnlyHint: false,
-        openWorldHint: true,
-      },
+      annotations: { title: 'Create contact', readOnlyHint: false, openWorldHint: true },
     },
-    handle(async (args) => jsonResult(await client.createContact(args)))
+    handle(async (args) => jsonResult(await client.createContact(args))),
   );
 
   server.registerTool(
@@ -115,19 +86,10 @@ export function registerWriteTools(
         name: z.string().optional(),
         email: z.string().email().optional(),
         company: z.string().optional(),
-        tags: z
-          .array(z.string())
-          .optional()
-          .describe('Replaces the contact’s tags.'),
+        tags: z.array(z.string()).optional().describe('Replaces the contact’s tags.'),
       },
-      annotations: {
-        title: 'Update contact',
-        readOnlyHint: false,
-        openWorldHint: true,
-      },
+      annotations: { title: 'Update contact', readOnlyHint: false, openWorldHint: true },
     },
-    handle(async ({ id, ...body }) =>
-      jsonResult(await client.updateContact(id, body))
-    )
+    handle(async ({ id, ...body }) => jsonResult(await client.updateContact(id, body))),
   );
 }

@@ -62,14 +62,11 @@ BEGIN
       'create_broadcast_with_recipients still has the ambiguous RETURNING — migration 041 did not apply';
   END IF;
 
-  -- 86: the JSONB-array overload must be replaced rather than overloaded;
-  -- PostgREST otherwise resolves nested recipient params ambiguously.
-  IF to_regprocedure('public.create_broadcast_with_recipients(uuid,uuid,text,text,text,integer,uuid[],jsonb[])') IS NOT NULL OR
-     has_function_privilege('authenticated','public.claim_ai_reply_slot(uuid,integer)','EXECUTE') OR
-     NOT has_function_privilege('service_role','public.claim_ai_reply_slot(uuid,integer)','EXECUTE') OR
-     NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='flow_runs' AND column_name='transition_seq') OR
-     NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='automation_pending_executions' AND column_name='parked_step_id') THEN
-    RAISE EXCEPTION 'Upstream integrity contracts or service-only privileges are missing (migration 86)';
+  IF to_regprocedure(
+       'public.create_broadcast_with_recipients(uuid,uuid,text,text,text,integer,uuid[],jsonb[])'
+     ) IS NOT NULL THEN
+    RAISE EXCEPTION
+      'the JSONB[] overload of create_broadcast_with_recipients still exists — migration 049 did not apply';
   END IF;
 
   -- The failure-reason columns (042) are only ever written by the
@@ -85,72 +82,85 @@ BEGIN
       'messages.error_code/error_title/error_details are missing — migration 042 did not apply';
   END IF;
 
-  -- 79: private durable intake and shared allowance must be available to the
-  -- worker while remaining inaccessible through public client credentials.
-  IF has_function_privilege('anon','public.inspect_whatsapp_coexistence_failures(uuid)','EXECUTE') OR
-     has_function_privilege('authenticated','public.retry_whatsapp_coexistence_event(uuid,bigint)','EXECUTE') OR
-     NOT has_function_privilege('service_role','public.process_whatsapp_coexistence_event(integer,integer)','EXECUTE') OR
-     to_regclass('public.whatsapp_send_budgets') IS NULL OR
-     NOT has_function_privilege('service_role','public.capture_whatsapp_deliveries(jsonb)','EXECUTE') OR
-     has_function_privilege('anon','public.acquire_whatsapp_send(text)','EXECUTE') OR
-     has_function_privilege('authenticated','public.begin_whatsapp_authorization(uuid,uuid,uuid,text,uuid)','EXECUTE') THEN
-    RAISE EXCEPTION 'WhatsApp worker security boundary is missing (migration 79)';
-  END IF;
-
-  -- Scoped Storage metadata access must not expose object listings to anon.
   IF EXISTS (
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'storage' AND tablename = 'objects'
       AND cmd IN ('SELECT', 'ALL')
-      AND roles && ARRAY['public', 'anon']::name[]
+      AND (roles && ARRAY['public', 'anon']::name[])
       AND (qual LIKE '%avatars%' OR qual LIKE '%flow-media%' OR qual LIKE '%chat-media%')
-  ) OR (SELECT COUNT(*) FROM pg_policies
+  ) THEN
+    RAISE EXCEPTION
+      'a storage SELECT policy on avatars/flow-media/chat-media still applies to anon — migration 043 did not apply';
+  END IF;
+  IF (
+    SELECT COUNT(*) FROM pg_policies
     WHERE schemaname = 'storage' AND tablename = 'objects' AND cmd = 'SELECT'
       AND roles = ARRAY['authenticated']::name[]
-      AND policyname IN ('Users can read their own avatar', 'Members can read flow media', 'Members can read chat media')
+      AND policyname IN (
+        'Users can read their own avatar',
+        'Members can read flow media',
+        'Members can read chat media'
+      )
   ) <> 3 THEN
-    RAISE EXCEPTION 'scoped storage SELECT policies are missing or exposed to anon';
+    RAISE EXCEPTION
+      'the scoped storage SELECT policies are missing — migration 043 did not apply';
   END IF;
 
   IF EXISTS (
-    SELECT 1 FROM unnest(ARRAY[
+    SELECT 1
+    FROM unnest(ARRAY[
       'public._bcast_bump(uuid,text,integer)',
       'public.recompute_broadcast_counts(uuid)',
       'public.claim_ai_reply_slot(uuid,integer)',
-      'public.record_webhook_failure(uuid,integer)'
-    ]::regprocedure[]) AS f(fn)
-    WHERE has_function_privilege('anon', f.fn, 'EXECUTE')
-      OR has_function_privilege('authenticated', f.fn, 'EXECUTE')
-      OR NOT has_function_privilege('service_role', f.fn, 'EXECUTE')
-  ) OR EXISTS (
-    SELECT 1 FROM unnest(ARRAY[
+      'public.record_webhook_failure(uuid,integer)',
       'public.merge_duplicate_contacts()',
       'public.merge_duplicate_conversations()'
     ]::regprocedure[]) AS f(fn)
     WHERE has_function_privilege('anon', f.fn, 'EXECUTE')
-      OR has_function_privilege('authenticated', f.fn, 'EXECUTE')
-      OR has_function_privilege('service_role', f.fn, 'EXECUTE')
+       OR has_function_privilege('authenticated', f.fn, 'EXECUTE')
+       OR NOT has_function_privilege('service_role', f.fn, 'EXECUTE')
   ) THEN
-    RAISE EXCEPTION 'internal function grants do not preserve the RZ runtime/dedupe boundary';
+    RAISE EXCEPTION
+      'an internal SECURITY DEFINER function is still executable by anon/authenticated — migration 044 did not apply';
   END IF;
 
-  IF has_function_privilege('authenticated','public.clear_unfinished_whatsapp_signup(uuid,uuid,uuid)','EXECUTE') OR
-     NOT has_function_privilege('service_role','public.assert_whatsapp_connection_slot(uuid,uuid,text)','EXECUTE') OR
-     NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.whatsapp_config'::regclass AND tgname='enforce_one_whatsapp_connection' AND tgenabled='O') THEN
-    RAISE EXCEPTION 'WhatsApp single-connection policy is missing (migration 84)';
+  -- 045 widens the automation_pending_executions status CHECK. It is a
+  -- DROP + ADD by name, so a wrong constraint name would leave the old
+  -- CHECK in place and every "wait for reply" park would be rejected at
+  -- runtime, not at migration time.
+  IF pg_get_constraintdef(
+       (SELECT oid FROM pg_constraint
+        WHERE conname = 'automation_pending_executions_status_check')
+     ) NOT LIKE '%awaiting_reply%' THEN
+    RAISE EXCEPTION
+      'automation_pending_executions_status_check does not allow awaiting_reply — migration 045 did not apply';
+  END IF;
+  IF to_regclass('public.idx_automation_pending_awaiting_reply') IS NULL THEN
+    RAISE EXCEPTION
+      'idx_automation_pending_awaiting_reply is missing — migration 045 did not apply';
   END IF;
 
-  IF has_function_privilege('anon','public.record_whatsapp_outbound(uuid,uuid,jsonb,text)','EXECUTE') OR
-     NOT has_function_privilege('authenticated','public.record_whatsapp_outbound(uuid,uuid,jsonb,text)','EXECUTE') OR
-     NOT has_function_privilege('service_role','public.record_whatsapp_outbound(uuid,uuid,jsonb,text)','EXECUTE') THEN
-    RAISE EXCEPTION 'Outbound persistence permission boundary is missing (migration 85)';
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND column_default LIKE '%uuid_generate_v%'
+  ) THEN
+    RAISE EXCEPTION
+      'a public column default still calls uuid-ossp; use gen_random_uuid() so a fresh hosted db push does not hit 42883';
   END IF;
 
-  IF has_function_privilege('anon','public.dashboard_response_metrics(uuid)','EXECUTE') OR
-     NOT has_function_privilege('authenticated','public.dashboard_response_metrics(uuid)','EXECUTE') OR
-     has_function_privilege('service_role','public.dashboard_response_metrics(uuid)','EXECUTE') OR
-     (SELECT prosecdef FROM pg_proc WHERE oid='public.dashboard_response_metrics(uuid)'::regprocedure) THEN
-    RAISE EXCEPTION 'Response metrics must be authenticated and RLS scoped (migration 88)';
+  IF to_regprocedure('public.dashboard_overview(integer,text)') IS NULL THEN
+    RAISE EXCEPTION 'public.dashboard_overview(integer, text) is missing — migration 059 did not apply';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'messages_track_conversation_times') THEN
+    RAISE EXCEPTION 'messages_track_conversation_times trigger is missing — migration 059 did not apply';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'conversations_stamp_closed_at')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'deals_stamp_closed_at') THEN
+    RAISE EXCEPTION 'closed_at triggers are missing — migration 059 did not apply';
+  END IF;
+  IF has_function_privilege('anon', 'public.dashboard_overview(integer,text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'anon can execute dashboard_overview — migration 059 grants are wrong';
   END IF;
 
   RAISE NOTICE 'schema verification passed';

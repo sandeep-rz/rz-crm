@@ -40,7 +40,9 @@ describe('GET /api/v1/conversations', () => {
   it('filters by a valid contact_id', async () => {
     const contactId = '3f2b8c1e-9a4d-4e2f-b6a1-0c9d8e7f6a5b';
     const res = await GET(
-      new Request(`https://x.test/api/v1/conversations?contact_id=${contactId}`)
+      new Request(
+        `https://x.test/api/v1/conversations?contact_id=${contactId}`
+      )
     );
     expect(res.status).toBe(200);
     expect(mocks.eqCalls).toContainEqual(['contact_id', contactId]);

@@ -3,14 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useTranslations } from 'next-intl';
-import {
-  Bot,
-  RotateCcw,
-  Send,
-  Loader2,
-  UserCircle2,
-  ArrowRight,
-} from 'lucide-react';
+import { Bot, RotateCcw, Send, Loader2, UserCircle2, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
@@ -89,15 +82,15 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
   };
 
   return (
-    <div className="border-border bg-card flex h-[60vh] min-h-[420px] flex-col rounded-xl border">
+    <div className="flex h-[60vh] min-h-[420px] flex-col rounded-xl border border-border bg-card">
       {/* Header */}
-      <div className="border-border flex items-center justify-between border-b px-4 py-3">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          <Bot className="text-primary h-4 w-4" />
-          <span className="text-foreground text-sm font-medium">
-            {t('title')}
+          <Bot className="h-4 w-4 text-primary" />
+          <span className="text-sm font-medium text-foreground">{t('title')}</span>
+          <span className="text-xs text-muted-foreground">
+            {t('subtitle')}
           </span>
-          <span className="text-muted-foreground text-xs">{t('subtitle')}</span>
         </div>
         <Button
           variant="ghost"
@@ -113,10 +106,12 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
       {/* Transcript */}
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-4">
         {turns.length === 0 && (
-          <div className="text-muted-foreground flex h-full flex-col items-center justify-center text-center text-sm">
-            <Bot className="text-muted-foreground/60 mb-2 h-8 w-8" />
+          <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
+            <Bot className="mb-2 h-8 w-8 text-muted-foreground/60" />
             <p>{t('emptyTitle')}</p>
-            <p className="mt-1 text-xs">{t('emptyDesc')}</p>
+            <p className="mt-1 text-xs">
+              {t('emptyDesc')}
+            </p>
             {onGoToSetup && (
               <Button
                 variant="link"
@@ -135,28 +130,26 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
             key={i}
             className={cn(
               'flex gap-2',
-              turn.role === 'user' ? 'justify-end' : 'justify-start'
+              turn.role === 'user' ? 'justify-end' : 'justify-start',
             )}
           >
             {turn.role === 'assistant' && (
-              <Bot className="text-primary mt-1 h-5 w-5 shrink-0" />
+              <Bot className="mt-1 h-5 w-5 shrink-0 text-primary" />
             )}
             <div
               className={cn(
                 'max-w-[80%] rounded-2xl px-3.5 py-2 text-sm',
                 turn.role === 'user'
-                  ? 'bg-primary text-primary-foreground rounded-br-sm'
-                  : 'bg-muted text-foreground rounded-bl-sm'
+                  ? 'rounded-br-sm bg-primary text-primary-foreground'
+                  : 'rounded-bl-sm bg-muted text-foreground',
               )}
             >
-              {turn.content && (
-                <p className="whitespace-pre-wrap">{turn.content}</p>
-              )}
+              {turn.content && <p className="whitespace-pre-wrap">{turn.content}</p>}
               {turn.role === 'assistant' && turn.handoff && (
                 <p
                   className={cn(
                     'flex items-center gap-1 text-xs text-amber-500',
-                    turn.content && 'border-border/50 mt-1.5 border-t pt-1.5'
+                    turn.content && 'mt-1.5 border-t border-border/50 pt-1.5',
                   )}
                 >
                   <UserCircle2 className="h-3.5 w-3.5" />
@@ -165,28 +158,28 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
               )}
             </div>
             {turn.role === 'user' && (
-              <UserCircle2 className="text-muted-foreground mt-1 h-5 w-5 shrink-0" />
+              <UserCircle2 className="mt-1 h-5 w-5 shrink-0 text-muted-foreground" />
             )}
           </div>
         ))}
 
         {sending && (
-          <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Bot className="text-primary h-5 w-5" />
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Bot className="h-5 w-5 text-primary" />
             <Loader2 className="h-4 w-4 animate-spin" /> {t('thinking')}
           </div>
         )}
       </div>
 
       {/* Composer */}
-      <div className="border-border flex items-end gap-2 border-t p-3">
+      <div className="flex items-end gap-2 border-t border-border p-3">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={t('placeholder')}
           rows={1}
-          className="border-border bg-muted text-foreground placeholder-muted-foreground focus:border-primary/50 flex-1 resize-none rounded-xl border px-4 py-2.5 text-sm outline-none"
+          className="flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
         />
         <Button
           size="sm"

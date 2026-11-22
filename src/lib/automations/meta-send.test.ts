@@ -1,280 +1,193 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { engineSendTemplate, engineSendText } from './meta-send';
-import type { PreparedTemplateMessage } from '@/lib/message-preparation/types';
-import { buildMetaTemplateMessagePayload } from '@/lib/whatsapp/meta-template-payload';
-const h = vi.hoisted(() => ({
-  send: vi.fn(),
-  text: vi.fn(),
-  connection: vi.fn(),
-  inserts: [] as Record<string, unknown>[],
-  updates: [] as Record<string, unknown>[],
-  lookup: vi.fn(),
-  insertError: null as unknown,
-  previewError: null as unknown,
-  contact: {
-    id: 'contact',
-    phone: '+919876543210',
-    wa_user_id: null,
-  } as Record<string, unknown> | null,
-}));
-vi.mock('server-only', () => ({}));
-vi.mock('@/lib/whatsapp/meta-api', () => ({
-  sendTemplateMessage: h.send,
-  sendTextMessage: h.text,
-}));
-vi.mock('@/lib/whatsapp/connection-resolver', () => ({
-  resolveWhatsAppConnection: h.connection,
-}));
-vi.mock('@/lib/whatsapp/conversation-scope', () => ({
-  assertConversationInAccount: vi.fn(),
-}));
-vi.mock('@/lib/whatsapp/template-body', async (original) => ({
-  ...(await original<object>()),
-  resolveTemplateRow: h.lookup,
-}));
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const state = vi.hoisted(() => ({
+  templateRows: [] as unknown[],
+  insertedMessage: null as Record<string, unknown> | null,
+}))
+
+vi.mock('@/lib/whatsapp/encryption', () => ({
+  decrypt: (v: string) => v,
+}))
+
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
-    from: (table: string) => {
-      const q = {
-        select: () => q,
-        eq: () => q,
-        maybeSingle: () => q,
-        insert: (data: Record<string, unknown>) => {
-          h.inserts.push(data);
-          return q;
+    from(table: string) {
+      const builder: Record<string, unknown> = {
+        select: () => builder,
+        eq: () => builder,
+        update: () => builder,
+        insert: (row: Record<string, unknown>) => {
+          if (table === 'messages') state.insertedMessage = row
+          return builder
         },
-        update: (data: Record<string, unknown>) => {
-          h.updates.push(data);
-          return q;
+        maybeSingle: async () => {
+          if (table === 'contacts') {
+            return { data: { id: 'ct-1', phone: '15551234567', wa_user_id: null }, error: null }
+          }
+          if (table === 'conversations') return { data: { id: 'cv-1' }, error: null }
+          return { data: null, error: null }
         },
-        then: (resolve: (value: unknown) => unknown) =>
-          Promise.resolve({
-            data: table === 'contacts' ? h.contact : null,
-            error:
-              table === 'messages'
-                ? h.insertError
-                : table === 'conversations'
-                  ? h.previewError
-                  : null,
-          }).then(resolve),
-      };
-      return q;
+        single: async () => {
+          if (table === 'whatsapp_config') {
+            return { data: { phone_number_id: 'pn-1', access_token: 'token' }, error: null }
+          }
+          return { data: null, error: null }
+        },
+        then: (resolve: (r: { data: unknown; error: null }) => unknown) =>
+          resolve({
+            data: table === 'message_templates' ? state.templateRows : null,
+            error: null,
+          }),
+      }
+      return builder
     },
   }),
-}));
-const prepared: PreparedTemplateMessage = {
-  template: {
-    id: 'template',
-    name: 'booking',
-    language: 'en_GB',
-    connectionId: 'selected',
-    body_text: 'Hi {{1}}, total {{2}}',
-  },
-  context: { reservationId: 'reservation' },
-  resolvedVariables: {
-    'contact.first_name': 'Guest from reservation',
-    'reservation.total': '0',
-  },
-  mapping: [
-    { component: 'BODY', position: 2, variable_key: 'reservation.total' },
-    { component: 'BODY', position: 1, variable_key: 'contact.first_name' },
+}))
+
+import { engineSendTemplate } from './meta-send'
+
+type FetchResult = { ok: boolean; json: () => Promise<unknown> }
+
+const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<FetchResult>>(
+  async () => ({
+    ok: true,
+    json: async () => ({ messages: [{ id: 'wamid.auto' }] }),
+  }),
+)
+
+function sentTemplate(): Record<string, unknown> {
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  const init = fetchMock.mock.calls[0][1]
+  return JSON.parse(String(init?.body)).template
+}
+
+const BASE_ROW = {
+  id: 'tpl-1',
+  user_id: 'u-1',
+  name: 'order_update',
+  category: 'Utility',
+  language: 'en_US',
+  body_text: 'Your order {{1}} ships on {{2}}',
+  created_at: '2026-01-01T00:00:00Z',
+}
+
+const SEND_ARGS = {
+  accountId: 'acct-1',
+  userId: 'u-1',
+  conversationId: 'cv-1',
+  contactId: 'ct-1',
+  templateName: 'order_update',
+  language: 'en_US',
+  params: ['A123', 'Friday'],
+}
+
+const BODY_COMPONENT = {
+  type: 'body',
+  parameters: [
+    { type: 'text', text: 'A123' },
+    { type: 'text', text: 'Friday' },
   ],
-};
-const args = () => ({
-  accountId: 'account',
-  userId: 'author',
-  contactId: 'contact',
-  conversationId: 'conversation',
-  templateName: prepared.template.name,
-  language: prepared.template.language,
-  connectionId: 'selected',
-  preparedTemplate: prepared,
-  templatePayload: buildMetaTemplateMessagePayload(prepared),
-});
+}
+
 beforeEach(() => {
-  vi.resetAllMocks();
-  h.inserts = [];
-  h.updates = [];
-  h.insertError = null;
-  h.previewError = null;
-  h.contact = { id: 'contact', phone: '+919876543210', wa_user_id: null };
-  h.connection.mockResolvedValue({
-    id: 'selected',
-    phoneNumberId: 'phone-id',
-    accessToken: 'secret',
-    status: 'connected',
-  });
-  h.send.mockResolvedValue({ messageId: 'provider-id' });
-});
-describe('existing automation sender with semantic payload', () => {
-  it('uses explicit credentials and assembled payload without name-based template lookup', async () => {
-    await expect(engineSendTemplate(args())).resolves.toEqual({
-      whatsapp_message_id: 'provider-id',
-    });
-    expect(h.connection).toHaveBeenCalledWith(expect.anything(), {
-      accountId: 'account',
-      conversationId: 'conversation',
-      connectionId: 'selected',
-    });
-    expect(h.send).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        phoneNumberId: 'phone-id',
-        accessToken: 'secret',
-        templatePayload: args().templatePayload,
-      })
-    );
-    expect(h.lookup).not.toHaveBeenCalled();
-  });
-  it('persists substituted body and actual provider id/status in the existing inbox', async () => {
-    await engineSendTemplate(args());
-    expect(h.inserts).toEqual([
-      {
-        conversation_id: 'conversation',
-        sender_type: 'bot',
-        content_type: 'template',
-        content_text: 'Hi Guest from reservation, total 0',
-        template_name: 'booking',
-        media_url: null,
-        template_snapshot: {
-          version: 1,
-          templateId: 'template',
-          name: 'booking',
-          language: 'en_GB',
-          connectionId: 'selected',
-          header: null,
-          footer: null,
-          buttons: [],
+  state.templateRows = []
+  state.insertedMessage = null
+  vi.stubGlobal('fetch', fetchMock)
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('engineSendTemplate — header component', () => {
+  it.each(['image', 'video', 'document'] as const)(
+    'sends the stored %s header as a header parameter',
+    async (headerType) => {
+      state.templateRows = [
+        {
+          ...BASE_ROW,
+          header_type: headerType,
+          header_media_url: `https://cdn.example.com/header.${headerType}`,
         },
-        message_id: 'provider-id',
-        status: 'sent',
-      },
-    ]);
-    expect(h.updates).toContainEqual(
-      expect.objectContaining({
-        last_message_text: 'Hi Guest from reservation, total 0',
-        last_message_at: expect.any(String),
-        updated_at: expect.any(String),
+      ]
+
+      await engineSendTemplate(SEND_ARGS)
+
+      expect(sentTemplate()).toEqual({
+        name: 'order_update',
+        language: { code: 'en_US' },
+        components: [
+          {
+            type: 'header',
+            parameters: [
+              {
+                type: headerType,
+                [headerType]: { link: `https://cdn.example.com/header.${headerType}` },
+              },
+            ],
+          },
+          BODY_COMPONENT,
+        ],
       })
-    );
-  });
-  it('Meta rejection never inserts a sent message', async () => {
-    h.send.mockRejectedValue(new Error('failed'));
-    await expect(engineSendTemplate(args())).rejects.toThrow('failed');
-    expect(h.inserts).toEqual([]);
-  });
-  it('known post-send persistence error is sanitized and terminal', async () => {
-    h.insertError = { message: 'PRIVATE DATABASE DETAIL' };
-    await expect(engineSendTemplate(args())).rejects.toMatchObject({
-      code: 'meta_sent_message_persistence_failed',
-      retryable: false,
-    });
-    expect(h.send).toHaveBeenCalledTimes(1);
-    expect(h.updates).toEqual([]);
-  });
-  it('disconnected template connection blocks Meta', async () => {
-    h.connection.mockResolvedValue({ status: 'disconnected' });
-    await expect(engineSendTemplate(args())).rejects.toMatchObject({
-      code: 'template_connection_not_connected',
-      retryable: false,
-    });
-    expect(h.send).not.toHaveBeenCalled();
-  });
-  it('BSUID recipient continues through existing recipient resolver', async () => {
-    h.contact = { id: 'contact', phone: null, wa_user_id: 'US.12345678' };
-    await engineSendTemplate(args());
-    expect(h.send.mock.calls[0][0].to).toBe('US.12345678');
-  });
-  it.each([null, { id: 'contact', phone: null, wa_user_id: null }])(
-    'unusable contact blocks sender',
-    async (contact) => {
-      h.contact = contact;
-      await expect(engineSendTemplate(args())).rejects.toMatchObject({
-        retryable: false,
-      });
-      expect(h.send).not.toHaveBeenCalled();
-    }
-  );
-  it('text sending and persistence remain available', async () => {
-    h.text.mockResolvedValue({ messageId: 'text-id' });
-    await engineSendText({
-      accountId: 'account',
-      userId: 'author',
-      conversationId: 'conversation',
-      contactId: 'contact',
-      text: 'Hello',
-    });
-    expect(h.text).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Hello', to: '919876543210' })
-    );
-    expect(h.inserts[0]).toMatchObject({
-      content_text: 'Hello',
-      content_type: 'text',
-      message_id: 'text-id',
-    });
-    expect(h.lookup).not.toHaveBeenCalled();
-  });
-});
+      expect(state.insertedMessage?.media_url).toBe(
+        `https://cdn.example.com/header.${headerType}`,
+      )
+    },
+  )
 
-it('records Meta acceptance before any local persistence and preserves wamid on insert failure', async () => {
-  h.insertError = { message: 'unavailable' };
-  const onMetaAccepted = vi.fn(async (id: string) => {
-    expect(id).toBe('provider-id');
-    expect(h.inserts).toEqual([]);
-    expect(h.updates).toEqual([]);
-  });
-  await expect(
-    engineSendTemplate({ ...args(), onMetaAccepted })
-  ).rejects.toMatchObject({
-    code: 'meta_sent_message_persistence_failed',
-    retryable: false,
-  });
-  expect(onMetaAccepted).toHaveBeenCalledOnce();
-});
-it('does not proceed with local persistence when acceptance evidence cannot be saved', async () => {
-  await expect(
-    engineSendTemplate({
-      ...args(),
-      onMetaAccepted: async () => {
-        throw new Error('safety write failed');
-      },
+  it('fails before calling Meta when a text header variable has no value', async () => {
+    state.templateRows = [
+      { ...BASE_ROW, header_type: 'text', header_content: 'Hi {{1}}' },
+    ]
+
+    await expect(engineSendTemplate(SEND_ARGS)).rejects.toThrow(
+      /Header text variable \{\{1\}\} requires a value/,
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('sends no header component for a static text header', async () => {
+    state.templateRows = [
+      { ...BASE_ROW, header_type: 'text', header_content: 'Order update' },
+    ]
+
+    await engineSendTemplate(SEND_ARGS)
+
+    expect(sentTemplate().components).toEqual([BODY_COMPONENT])
+  })
+})
+
+describe('engineSendTemplate — templates without a header keep their payload', () => {
+  it('sends only the body component for a header-less template', async () => {
+    state.templateRows = [BASE_ROW]
+
+    await engineSendTemplate(SEND_ARGS)
+
+    expect(sentTemplate()).toEqual({
+      name: 'order_update',
+      language: { code: 'en_US' },
+      components: [BODY_COMPONENT],
     })
-  ).rejects.toThrow('safety write failed');
-  expect(h.send).toHaveBeenCalledOnce();
-  expect(h.inserts).toEqual([]);
-});
+  })
 
-it('never calls Meta when the durable before-request guard fails', async () => {
-  await expect(
-    engineSendTemplate({
-      ...args(),
-      onBeforeMeta: async () => {
-        throw new Error('guard unavailable');
-      },
+  it('sends no components for a fully static template', async () => {
+    state.templateRows = [{ ...BASE_ROW, body_text: 'Thanks for your order' }]
+
+    await engineSendTemplate({ ...SEND_ARGS, params: [] })
+
+    expect(sentTemplate()).toEqual({
+      name: 'order_update',
+      language: { code: 'en_US' },
     })
-  ).rejects.toThrow('guard unavailable');
-  expect(h.send).not.toHaveBeenCalled();
-  expect(h.inserts).toEqual([]);
-});
+  })
 
-it('persists the normalized BODY parameters sent to Meta instead of raw semantic values', async () => {
-  const value = structuredClone(prepared);
-  value.resolvedVariables['contact.first_name'] = 'Sandeep\nSharma\t';
-  const templatePayload = buildMetaTemplateMessagePayload(value);
-  await engineSendTemplate({
-    ...args(),
-    preparedTemplate: value,
-    templatePayload,
-  });
-  expect(h.inserts[0].content_text).toBe('Hi Sandeep Sharma , total 0');
-  expect(h.send).toHaveBeenCalledOnce();
-});
+  it('falls back to the body-only payload when the account has no local row', async () => {
+    await engineSendTemplate(SEND_ARGS)
 
-it('preview failure after Meta acceptance is non-retryable and sends only once', async () => {
-  h.previewError = { message: 'PRIVATE DB DETAIL' };
-  await expect(engineSendTemplate(args())).rejects.toMatchObject({
-    code: 'meta_sent_conversation_persistence_failed',
-    retryable: false,
-  });
-  expect(h.send).toHaveBeenCalledOnce();
-  expect(h.inserts[0].message_id).toBe('provider-id');
-});
+    expect(sentTemplate()).toEqual({
+      name: 'order_update',
+      language: { code: 'en_US' },
+      components: [BODY_COMPONENT],
+    })
+  })
+})

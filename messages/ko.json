@@ -17,13 +17,12 @@
     "linkInvalid": "이 링크로는 로그인할 수 없습니다. 이메일 인증 중이었다면 이미 인증이 완료되었을 수 있으니 아래에서 로그인하세요. 비밀번호 재설정은 새 링크를 요청한 뒤 요청한 브라우저에서 열어 주세요."
   },
   "Sidebar": {
-    "title": "RZ CRM",
+    "title": "WhatsApp용 CRM 템플릿",
     "primaryNav": "기본 메뉴",
     "dashboard": "대시보드",
     "inbox": "인박스",
     "notifications": "알림",
     "contacts": "연락처",
-    "reservations": "예약",
     "pipelines": "파이프라인",
     "broadcasts": "브로드캐스트",
     "automations": "자동화",
@@ -49,18 +48,12 @@
     "inbox": "인박스",
     "notifications": "알림",
     "contacts": "연락처",
-    "reservations": "예약",
     "pipelines": "파이프라인",
     "broadcasts": "브로드캐스트",
     "automations": "자동화",
     "settings": "설정",
     "openMenu": "메뉴 열기",
     "openAccountMenu": "계정 메뉴 열기",
-    "openWorkspaceMenu": "워크스페이스 메뉴 열기",
-    "workspaces": "워크스페이스",
-    "createWorkspace": "워크스페이스 만들기",
-    "workspaceFallback": "워크스페이스",
-    "workspaceSwitchFailed": "워크스페이스를 전환하지 못했습니다",
     "defaultUser": "사용자",
     "defaultAvatar": "아바타",
     "menuProfile": "프로필",
@@ -71,46 +64,13 @@
     "switchMode": "{mode} 모드로 전환"
   },
   "AccountAccess": {
-    "noWorkspaceTitle": "아직 워크스페이스가 없습니다",
-    "noWorkspaceBody": "아직 워크스페이스에 참여하지 않았습니다. 초대를 완료하거나 직접 워크스페이스를 만드세요.",
-    "createWorkspace": "워크스페이스 만들기",
     "unlinkedTitle": "이 사용자가 계정에 연결되어 있지 않음",
     "unlinkedBody": "이 문제가 해결되기 전에는 변경 사항이 저장되지 않습니다. 계정이나 역할이 없는 사용자의 모든 쓰기 요청은 데이터베이스가 거부합니다. 팀에 초대된 경우 소유자에게 초대를 다시 보내달라고 요청하세요. 자체 호스팅 환경이라면 이 사용자에 대해 계정 부트스트랩 마이그레이션이 실행되었는지 확인하세요.",
     "errorTitle": "권한을 불러올 수 없음",
     "errorBody": "계정 역할을 불러오지 못해 모든 작업이 읽기 전용으로 처리되며 변경 사항은 저장되지 않습니다. 연결을 확인한 후 다시 시도하세요.",
     "retry": "다시 시도"
   },
-  "CreateWorkspace": {
-    "title": "워크스페이스 만들기",
-    "description": "팀, 연락처 및 WhatsApp 대화를 위한 새 워크스페이스를 만드세요.",
-    "nameLabel": "워크스페이스 이름",
-    "namePlaceholder": "One Tree",
-    "nameRequired": "워크스페이스 이름을 입력하세요",
-    "nameTooLong": "워크스페이스 이름은 {max}자 이하여야 합니다",
-    "createFailed": "워크스페이스를 만들 수 없습니다",
-    "success": "{name} 워크스페이스가 활성화되었습니다",
-    "cancel": "취소",
-    "submit": "워크스페이스 만들기"
-  },
   "Dashboard": {
-    "page": {
-      "title": "대시보드",
-      "description": "대화, 연락처, 딜, 브로드캐스트, 자동화 전반의 실시간 분석입니다.",
-      "activeConversations": "진행 중인 대화",
-      "newContactsToday": "오늘의 신규 연락처",
-      "openDealsValue": "진행 중인 딜 금액",
-      "messagesSentToday": "오늘 보낸 메시지",
-      "newTodayVsYesterday": "어제 대비 신규",
-      "vsYesterday": "어제 대비",
-      "openDeals": "진행 중인 딜 {count}건",
-      "noChange": "변동 없음 {suffix}"
-    },
-    "quickActions": {
-      "newContact": "새 연락처",
-      "newDeal": "새 딜",
-      "newBroadcast": "새 브로드캐스트",
-      "newAutomation": "새 자동화"
-    },
     "activityFeed": {
       "title": "최근 활동",
       "viewAll": "전체 보기 →",
@@ -143,41 +103,6 @@
         "aContact": "연락처",
         "automationFallback": "자동화"
       }
-    },
-    "conversationsChart": {
-      "title": "기간별 대화 추이",
-      "description": "방향별 일일 메시지 볼륨",
-      "days": "{count}일",
-      "noActivity": "이 기간에는 메시지 활동이 없습니다",
-      "noActivityHint": "메시지를 주고받으면 이 차트가 채워지기 시작합니다.",
-      "incoming": "수신",
-      "outgoing": "발신",
-      "tooltipIncoming": "수신 {count}건",
-      "tooltipOutgoing": "발신 {count}건",
-      "ariaLabel": "일별 대화 수"
-    },
-    "pipelineDonut": {
-      "title": "파이프라인 금액",
-      "description": "단계별 진행 중인 딜",
-      "noOpenDeals": "아직 진행 중인 딜이 없습니다",
-      "noOpenDealsHint": "파이프라인에서 딜을 만들면 단계별 분포를 여기서 확인할 수 있습니다.",
-      "dealCount": "딜 {count}건",
-      "total": "합계",
-      "ariaLabel": "단계별 파이프라인 금액"
-    },
-    "responseTimeChart": {
-      "title": "평균 첫 답변 시간",
-      "description": "요일별 CRM 담당자 또는 AI의 답변 소요 시간",
-      "target": "목표 {minutes}분",
-      "thisWeek": "이번 주:",
-      "lastWeek": "지난 주:",
-      "noReplies": "아직 기록된 응답이 없습니다",
-      "noRepliesHint": "CRM 담당자 또는 AI의 답변이 기록되면 차트가 표시됩니다.",
-      "humanReplies": "CRM 팀",
-      "aiReplies": "AI",
-      "loadFailed": "답변 지표를 불러오지 못했습니다.",
-      "retry": "다시 시도",
-      "measurementNote": "CRM 발신자가 기록되었거나 AI가 보낸 답변만 측정합니다. 가져온 기록, 앱에서 보낸 메시지, 자동 확인 메시지는 제외됩니다."
     },
     "emptyState": {
       "title": "아직 데이터가 충분하지 않습니다"
@@ -404,18 +329,6 @@
     }
   },
   "Inbox": {
-    "deleteConversation": {
-      "title": "채팅 삭제",
-      "description": "이 채팅과 메시지를 CRM에서 영구적으로 삭제합니다. 되돌릴 수 없습니다. 연락처, 거래, 예약 및 공유 파일은 유지됩니다. 새 메시지를 받으면 새 채팅이 열립니다.",
-      "confirmation": "확인하려면 DELETE를 입력하세요",
-      "cancel": "취소",
-      "delete": "영구 삭제",
-      "deleting": "삭제 중…",
-      "deleted": "채팅이 삭제되었습니다",
-      "failed": "채팅을 삭제하지 못했습니다. 다시 시도하세요.",
-      "cleanupPending": "채팅은 삭제되었지만 일부 첨부 파일을 삭제하지 못했습니다.",
-      "retryCleanup": "정리 다시 시도"
-    },
     "page": {
       "whatsappNotConnected": "WhatsApp®이 연결되어 있지 않습니다. 설정으로 이동해 계정을 연결하세요."
     },
@@ -423,6 +336,9 @@
       "searchPlaceholder": "대화 검색...",
       "filterAll": "전체",
       "filterUnread": "읽지 않음",
+      "filterWaiting": "답장 대기",
+      "filterUnassigned": "미배정",
+      "filterExpiring": "응답 창 종료 임박",
       "filterOpen": "열림",
       "filterPending": "대기 중",
       "filterClosed": "닫힘",
@@ -432,10 +348,7 @@
       "clearAll": "모두 지우기",
       "noConversations": "대화를 찾을 수 없습니다",
       "noMessagesYet": "아직 메시지가 없습니다",
-      "unknown": "알 수 없음",
-      "filterWaiting": "답장 대기",
-      "filterUnassigned": "미배정",
-      "filterExpiring": "응답 창 종료 임박"
+      "unknown": "알 수 없음"
     },
     "messageThread": {
       "backToConversations": "대화 목록으로 돌아가기",
@@ -444,6 +357,9 @@
       "hideContact": "연락처 숨기기",
       "showContact": "연락처 표시",
       "refresh": "새로고침",
+      "loadOlder": "이전 메시지 불러오기",
+      "loadingOlder": "불러오는 중…",
+      "loadOlderFailed": "이전 메시지를 불러오지 못했습니다.",
       "refreshConversation": "대화 새로고침",
       "status": "상태",
       "statusOpen": "열림",
@@ -467,9 +383,7 @@
       "waitForSending": "메시지 전송이 끝날 때까지 기다려 주세요",
       "reactionFailed": "반응 추가 실패: {reason}",
       "assignmentUpdateFailed": "담당자 변경에 실패했습니다",
-      "loadOlder": "이전 메시지 불러오기",
-      "loadingOlder": "불러오는 중…",
-      "loadOlderFailed": "이전 메시지를 불러오지 못했습니다.",
+      "assigneeNoLongerMember": "해당 팀원은 더 이상 이 계정의 멤버가 아닙니다",
       "networkError": "네트워크 오류",
       "documentFallback": "문서",
       "you": "나"
@@ -593,14 +507,6 @@
       "back": "뒤로",
       "cancel": "취소",
       "send": "템플릿 보내기",
-      "semanticHint": "전송 시 값이 자동으로 입력됩니다.",
-      "reservation": "예약",
-      "selectReservation": "예약 선택",
-      "loadingReservations": "예약 불러오는 중…",
-      "contextLoadError": "템플릿 또는 예약 정보를 불러올 수 없습니다. 닫고 다시 열어 시도하세요.",
-      "noReservations": "이 연락처에 연결된 예약이 없습니다. 전송 전에 동기화된 예약을 확인하세요.",
-      "invalidMapping": "이 템플릿의 변수 설정이 완료되지 않았습니다. 전송 전에 메시지 템플릿에서 설정하세요.",
-      "previewHint": "미리보기에는 변수 이름이 표시됩니다. 값은 전송 시 자동으로 채워집니다.",
       "headerVarLabel": "헤더 {var}",
       "bodyVarLabel": "본문 {var}",
       "urlButtonVarLabel": "URL 버튼 \"{text}\" — {var} 값"
@@ -611,6 +517,11 @@
       "notes": "메모",
       "deals": "딜",
       "noTags": "태그 없음",
+      "addTags": "태그 추가",
+      "availableTags": "사용 가능한 태그",
+      "noAvailableTags": "아직 생성된 태그가 없습니다.",
+      "removeTag": "{tag} 태그 제거",
+      "tagUpdateFailed": "연락처 태그를 업데이트하지 못했습니다.",
       "noDeals": "딜 없음",
       "addNotePlaceholder": "메모 추가..."
     },
@@ -717,8 +628,6 @@
         "custom": "커스텀 필드",
         "deals": "딜",
         "tags": "태그",
-        "stays": "숙박",
-        "staysCount": "숙박 ({count})",
         "noTags": "태그 없음",
         "noDeals": "딜 없음",
         "addNotePlaceholder": "메모 추가..."
@@ -730,7 +639,6 @@
       },
       "contactInfo": "연락처 정보",
       "unnamed": "알 수 없음",
-      "guestBadge": "투숙객",
       "contactDetailsDesc": "연락처 정보",
       "name": "이름",
       "phone": "전화번호",
@@ -753,71 +661,6 @@
       },
       "dealsTab": {
         "noDeals": "아직 딜이 없습니다"
-      },
-      "staysTab": {
-        "loading": "숙박 정보를 불러오는 중",
-        "empty": "아직 예약이 없습니다",
-        "emptyHint": "숙소 시스템의 숙박 정보가 여기에 표시됩니다.",
-        "loadError": "숙박 정보를 불러오지 못했습니다.",
-        "detailLoadError": "이 예약을 열 수 없습니다.",
-        "summary": "숙박 요약",
-        "stayCount": "숙박 {count}건",
-        "upcomingCount": "예정 {count}건",
-        "totalStays": "총 숙박",
-        "nextStay": "다음 숙박",
-        "lastStay": "최근 숙박",
-        "bookingValue": "예약 금액",
-        "stayedAt": "숙박한 숙소",
-        "guestSince": "{date}부터 투숙객",
-        "viewAll": "숙박 {count}건 모두 보기",
-        "currentGroup": "현재",
-        "upcomingGroup": "예정",
-        "upcomingCurrent": "예정 및 투숙 중",
-        "past": "지난 숙박",
-        "cancelled": "취소됨",
-        "current": "투숙 중",
-        "upcoming": "예정",
-        "currentStay": "투숙 중",
-        "nights": "{count}박",
-        "guests": "투숙객 {count}명",
-        "nightsLabel": "숙박일",
-        "adults": "성인 {count}명",
-        "adultsLabel": "성인",
-        "children": "어린이 {count}명",
-        "childrenLabel": "어린이",
-        "infants": "유아 {count}명",
-        "infantsLabel": "유아",
-        "pets": "반려동물 {count}마리",
-        "petsLabel": "반려동물",
-        "back": "모든 숙박",
-        "stay": "숙박",
-        "booking": "예약",
-        "bookingReference": "예약 {reference}",
-        "reservationDetails": "예약 상세",
-        "guest": "투숙객",
-        "payment": "결제",
-        "system": "시스템",
-        "financial": "금액",
-        "sync": "동기화",
-        "property": "숙소",
-        "propertyName": "숙소 이름",
-        "checkIn": "체크인",
-        "checkOut": "체크아웃",
-        "status": "상태",
-        "reference": "예약 번호",
-        "channel": "채널",
-        "providerStatus": "공급자 상태",
-        "total": "합계",
-        "currency": "통화",
-        "lastSynced": "마지막 동기화",
-        "presentation": {
-          "inHouse": "투숙 중",
-          "upcoming": "예정",
-          "confirmed": "확정",
-          "completed": "완료 / 지난 숙박",
-          "cancelled": "취소됨",
-          "pending": "대기 중"
-        }
       },
       "tagsTab": {
         "clickTagDesc": "태그를 클릭해 이 연락처에 추가하거나 제거하세요.",
@@ -959,6 +802,7 @@
       "titlePlaceholder": "딜 제목",
       "contact": "연락처",
       "selectContact": "연락처 선택",
+      "searchContacts": "이름 또는 전화번호로 연락처 검색",
       "linkToConversation": "대화에 연결",
       "value": "금액",
       "currency": "통화",
@@ -1131,7 +975,9 @@
       "toastNotLinked": "프로필이 계정에 연결되어 있지 않습니다.",
       "toastFailedDraft": "초안 저장 실패: {error}",
       "toastDraftSaved": "초안이 저장되었습니다",
-      "broadcastFailed": "브로드캐스트 실패"
+      "broadcastFailed": "브로드캐스트 실패",
+      "toastSendTakenOver": "다른 전송 작업이 이 브로드캐스트를 넘겨받아 이 탭에서는 전송을 중단했습니다. 브로드캐스트를 열어 진행 상황을 확인하세요.",
+      "toastSendInterrupted": "서버 연결이 끊겨 전송이 중단되었습니다. 브로드캐스트를 열고 이어서 발송을 눌러 남은 수신자에게 보내세요. 버튼은 5분 이내에 표시됩니다."
     },
     "wizard": {
       "next": "다음",
@@ -1301,17 +1147,8 @@
       "back": "자동화로 돌아가기"
     },
     "logs": {
-      "retry": "재시도",
-      "retrying": "재시도 중…",
-      "retryQueued": "대기 중",
-      "retrySuccess": "자동화 재시도가 예약되었습니다.",
-      "retryCompleted": "이 자동화는 이미 완료되었습니다.",
-      "retryAlreadyQueued": "이 실행은 이미 대기 중입니다.",
-      "retryIneligible": "이 실행은 더 이상 재시도할 수 없습니다.",
-      "retryError": "실행을 대기열에 추가할 수 없습니다. 다시 시도하세요.",
-      "attempt": "시도 {count}",
-      "title": "활동",
-      "loadError": "활동을 불러올 수 없습니다.",
+      "title": "실행 로그",
+      "loadError": "로그를 불러오지 못했습니다",
       "emptyTitle": "아직 실행 기록이 없습니다",
       "emptyDesc": "이 자동화를 실행시켜 여기서 결과를 확인하세요.",
       "unknownContact": "알 수 없는 연락처",
@@ -1319,114 +1156,12 @@
       "stepPlural": "단계 {count}개",
       "noSteps": "기록된 단계가 없습니다.",
       "status": {
-        "processing": "처리 중",
         "success": "성공",
         "partial": "부분 성공",
-        "failed": "실패",
-        "completed": "완료",
-        "queued": "예약됨 / 대기 중"
+        "failed": "실패"
       },
       "back": "뒤로",
-      "backAria": "뒤로",
-      "timeline": "실행 단계",
-      "automationTriggered": "자동화 시작됨",
-      "reservation": "예약 {reference}",
-      "inProgress": "자동화 실행 중",
-      "waiting": "다음 단계 대기 중",
-      "executionFailed": "자동화를 계속할 수 없습니다",
-      "failure": {
-        "connection": "WhatsApp 연결을 확인하고 필요한 경우 다시 연결하세요.",
-        "template": "템플릿을 전송할 수 없습니다. 승인 상태와 변수 설정을 확인하세요.",
-        "variables": "메시지에 필요한 정보를 불러올 수 없습니다. 예약과 연동을 확인하세요.",
-        "reservation": "예약 정보가 없습니다. 예약 동기화를 확인하세요.",
-        "recipient": "다시 시도하기 전에 게스트 연락처를 확인하세요.",
-        "templateSend": "WhatsApp 템플릿을 전송할 수 없습니다. 템플릿과 WhatsApp 연결을 확인하세요.",
-        "generic": "자동화를 완료할 수 없습니다. 다시 시도하기 전에 설정을 확인하세요."
-      },
-      "timelineSteps": {
-        "other": {
-          "skipped": "단계 건너뜀",
-          "success": "단계 완료됨",
-          "failed": "단계 실패"
-        },
-        "send_template": {
-          "success": "WhatsApp 템플릿 전송됨",
-          "failed": "WhatsApp 템플릿 실패"
-        },
-        "send_message": {
-          "success": "WhatsApp 메시지 전송됨",
-          "failed": "WhatsApp 메시지 실패"
-        },
-        "send_buttons": {
-          "success": "WhatsApp 버튼 전송됨",
-          "failed": "WhatsApp 버튼 실패"
-        },
-        "send_list": {
-          "success": "WhatsApp 목록 전송됨",
-          "failed": "WhatsApp 목록 실패"
-        },
-        "condition": {
-          "success": "조건 확인됨",
-          "failed": "조건 확인 실패"
-        },
-        "wait": {
-          "success": "대기 예약됨",
-          "failed": "대기를 예약할 수 없습니다"
-        },
-        "add_tag": {
-          "success": "연락처 태그 추가됨",
-          "failed": "연락처 태그 추가 실패"
-        },
-        "remove_tag": {
-          "success": "연락처 태그 제거됨",
-          "failed": "연락처 태그 제거 실패"
-        },
-        "assign_conversation": {
-          "success": "대화 담당자 지정됨",
-          "failed": "대화 담당자 지정 실패"
-        },
-        "update_contact_field": {
-          "success": "연락처 업데이트됨",
-          "failed": "연락처 업데이트 실패"
-        },
-        "create_deal": {
-          "success": "거래 생성됨",
-          "failed": "거래 생성 실패"
-        },
-        "send_webhook": {
-          "success": "연결된 서비스에 알림 전송됨",
-          "failed": "연결된 서비스 알림 실패"
-        },
-        "close_conversation": {
-          "success": "대화 종료됨",
-          "failed": "대화 종료 실패"
-        }
-      },
-      "columns": {
-        "automation": "자동화",
-        "trigger": "트리거",
-        "contact": "연락처",
-        "reservation": "예약",
-        "time": "실행 시간",
-        "status": "상태",
-        "attempt": "시도",
-        "actions": "작업"
-      },
-      "filters": {
-        "search": "활동 검색",
-        "searchPlaceholder": "연락처 또는 예약…",
-        "all": "모든 상태",
-        "count": "전체 {total}개 중 {shown}개 실행",
-        "noMatches": "일치하는 실행이 없습니다",
-        "adjust": "다른 상태 또는 검색어를 사용해 보세요.",
-        "limit": "최근 실행 100개를 표시합니다. 완료는 자동화 종료를 의미하며 메시지 전달을 확인하는 것은 아닙니다."
-      },
-      "details": "{name} 실행 상세 보기",
-      "retryUnsafe": "이미 외부 작업이 수행되었을 수 있으므로 재시도할 수 없습니다.",
-      "retryBlocked": {
-        "external": "이미 외부 작업이 수행되었을 수 있습니다. 재시도하면 중복될 수 있어 재시도할 수 없습니다.",
-        "whatsapp": "WhatsApp에서 이미 메시지를 수락했을 수 있어 재시도할 수 없습니다."
-      }
+      "backAria": "뒤로"
     },
     "relative": {
       "never": "없음",
@@ -1481,75 +1216,12 @@
           "hint": "연락처에 태그가 추가되었을 때"
         },
         "time_based": {
-          "label": "기존 일정",
-          "hint": "기존 반복 자동화용"
-        },
-        "reservation_confirmed": {
-          "label": "예약 확정",
-          "hint": "예약이 확정될 때"
-        },
-        "reservation_updated": {
-          "label": "예약 업데이트",
-          "hint": "예약 정보가 변경될 때"
-        },
-        "reservation_cancelled": {
-          "label": "예약 취소",
-          "hint": "예약이 취소될 때"
-        },
-        "before_checkin": {
-          "label": "체크인 전",
-          "hint": "게스트 도착 전"
-        },
-        "checkin_day": {
-          "label": "체크인 당일",
-          "hint": "게스트 도착일"
-        },
-        "after_checkout": {
-          "label": "체크아웃 후",
-          "hint": "게스트 퇴실 후"
+          "label": "시간 기반",
+          "hint": "반복 일정에 따라"
         }
       },
       "trigger": "트리거",
       "triggerType": "트리거 유형",
-      "triggerGroups": {
-        "crm": "CRM",
-        "whatsapp": "WHATSAPP",
-        "reservations": "예약",
-        "stayTiming": "숙박 일정"
-      },
-      "pms": {
-        "properties": "숙소",
-        "allProperties": "모든 숙소",
-        "propertyCount": "숙소 {count}개",
-        "unknownProperty": "사용할 수 없는 숙소",
-        "noProperties": "이 워크스페이스에 연결된 PMS 숙소가 없습니다.",
-        "channels": "예약 채널",
-        "anyChannel": "모든 채널",
-        "channelCount": "채널 {count}개",
-        "reservationStatuses": "예약 상태",
-        "anyStatus": "모든 상태",
-        "statusCount": "상태 {count}개",
-        "when": "시점",
-        "days": "{count}일",
-        "beforeCheckin": "체크인 전",
-        "afterCheckout": "체크아웃 후",
-        "sendAt": "전송 시간",
-        "chooseSendTime": "이 자동화를 실행할 시간을 선택하세요.",
-        "propertyLocalTime": "각 숙소의 현지 시간을 사용합니다.",
-        "missingPropertyTimezone": "이 일정을 활성화하기 전에 RZ PMS에서 {properties}의 현지 시간대를 설정하세요.",
-        "addCondition": "조건 추가",
-        "removeCondition": "삭제"
-      },
-      "whatsapp": {
-        "sendFrom": "WhatsApp 발신 계정",
-        "chooseConnection": "WhatsApp 계정 선택",
-        "connectionRequired": "이 자동화에 WhatsApp 작업이 있지만 연결된 WhatsApp 계정이 없습니다.",
-        "connectionRequiredShort": "WhatsApp 연결 필요",
-        "connectBeforeUsing": "이 작업을 사용하려면 WhatsApp 계정을 연결하세요.",
-        "checkingConnection": "WhatsApp 연결 확인 중…",
-        "reconnectOrChoose": "WhatsApp을 다시 연결하거나 다른 연결을 선택하세요.",
-        "connect": "WhatsApp 연결"
-      },
       "keywords": "키워드",
       "keywordsHint": "쉼표로 구분된 목록 (예: hello, help, buy)",
       "replyIds": "응답 ID",
@@ -1568,7 +1240,6 @@
         "saved": "자동화가 저장되었습니다",
         "created": "자동화가 생성되었습니다",
         "saveFailed": "저장 실패",
-        "schedulePaused": "향후 예약 일정을 업데이트하지 못했습니다. 잘못된 작업을 방지하기 위해 자동화를 일시 중지했습니다. 검토한 후 다시 활성화해 주세요.",
         "issueAt": "위치: {path}"
       },
       "tags": {
@@ -1648,6 +1319,7 @@
         },
         "operandLabel": "피연산자",
         "placeholderTime": "HH:mm-HH:mm",
+        "timezoneLabel": "시간대",
         "placeholderContact": "이름 / 이메일 / 회사",
         "placeholderTag": "태그 id",
         "urlLabel": "URL",
@@ -1660,10 +1332,9 @@
         "matchWord": "단어 단위 일치",
         "matchWordHint": "키워드가 독립된 단어일 때만 일치하므로 \"k\"가 \"thanks\"에서 실행되지 않습니다. 공백으로 단어를 구분하는 언어의 짧은 키워드에 적합하며, 공백 없이 표기하는 언어에는 \"포함\"을 사용하세요.",
         "matchExact": "정확히 일치",
-        "closeConversationHint": "대화 상태를 \"닫힘\"으로 설정합니다. 추가 설정이 필요 없습니다.",
-        "timezoneLabel": "시간대",
         "waitForReply": "계속하기 전에 답장 기다리기",
-        "waitForReplyHint": "고객이 버튼을 누르거나 답장할 때까지 여기서 멈춥니다(최대 24시간). 이후 단계(메시지 내용 조건 포함)는 그 답장을 사용합니다."
+        "waitForReplyHint": "고객이 버튼을 누르거나 답장할 때까지 여기서 멈춥니다(최대 24시간). 이후 단계(메시지 내용 조건 포함)는 그 답장을 사용합니다.",
+        "closeConversationHint": "대화 상태를 \"닫힘\"으로 설정합니다. 추가 설정이 필요 없습니다."
       },
       "preview": {
         "noText": "아직 텍스트 없음",
@@ -1738,8 +1409,8 @@
       "statusHandedOff": "인계됨",
       "statusTimedOut": "시간 초과",
       "statusPaused": "상담원이 일시 중지함",
-      "statusFailed": "실패",
-      "statusCancelled": "취소됨"
+      "statusCancelled": "취소됨",
+      "statusFailed": "실패"
     },
     "builder": {
       "triggerTitle": "트리거",
@@ -1769,7 +1440,6 @@
       "noNodeDesc": "캔버스에서 노드를 선택해 설정을 편집하세요.",
       "editorView": "편집기 보기",
       "form": {
-        "bodyTextPlaceholder": "변수를 삽입하려면 '{{'를 사용하세요",
         "advancesTo": "다음 진행",
         "textToCustomer": "고객에게 전송되는 텍스트",
         "promptToCustomer": "고객에게 전송되는 질문",
@@ -2062,9 +1732,6 @@
       }
     },
     "templates": {
-      "cardPreview": "메시지 미리보기",
-      "variablesConfigured": "변수 설정 완료",
-      "needsVariableMapping": "변수 매핑 필요",
       "title": "메시지 템플릿",
       "description": "템플릿을 만들어 Meta에 승인을 요청하세요. 다른 곳에서 승인된 템플릿을 가져오려면 \"Meta에서 동기화\"를 사용하세요.",
       "syncFromMeta": "Meta에서 동기화",
@@ -2099,6 +1766,7 @@
       "category": "카테고리",
       "language": "언어",
       "langFixed": "템플릿이 Meta에 존재하면 언어가 고정됩니다.",
+      "categoryFixed": "승인된 템플릿의 카테고리는 변경할 수 없습니다.",
       "langHint": "Meta의 정확한 코드와 일치해야 합니다 — <code>en_US</code>와 <code>en</code>은 다른 코드입니다.",
       "header": "헤더",
       "headerNone": "없음",
@@ -2121,7 +1789,7 @@
       "videoHint": " MP4 또는 3GPP, 16MB 이하, 60초 이하 권장.",
       "documentHint": " PDF, Word, PowerPoint, Excel 또는 텍스트, 링크는 100MB 이하(여기서 업로드 시 16MB 이하).",
       "bodyText": "본문 텍스트",
-      "bodyPlaceholder": "변수를 삽입하려면 '{{'를 사용하세요",
+      "bodyPlaceholder": "안녕하세요 {{1}}님, 주문 {{2}}이(가) 확정되었습니다.",
       "sampleValues": "샘플 값 (Meta가 템플릿 검토에 사용합니다)",
       "bodyHint": "변수에는 {{1}}, {{2}}를 사용하세요 ({{1}}부터 연속되어야 합니다).",
       "sampleAria": "본문 변수 {var}의 샘플 값",
@@ -2303,10 +1971,10 @@
       "templates": "템플릿",
       "quick-replies": "빠른 답장",
       "fields": "필드 & 태그",
-      "deals": "거래, 통화 및 시간대",
+      "deals": "딜 & 통화",
+      "inbox": "인박스",
       "members": "팀원",
-      "api": "API 키",
-      "inbox": "인박스"
+      "api": "API 키"
     },
     "groups": {
       "account": "계정",
@@ -2375,7 +2043,33 @@
       "active": "사용 중",
       "accentColor": "강조 색상",
       "useTheme": "{name} 테마 사용",
-      "themeId": "테마 ID: {id}"
+      "themeId": "테마 ID: {id}",
+      "modes": {
+        "light": "라이트",
+        "dark": "다크"
+      },
+      "themes": {
+        "violet": {
+          "name": "바이올렛",
+          "tagline": "자신감에 경쾌함을 더한 기본 테마입니다."
+        },
+        "emerald": {
+          "name": "에메랄드",
+          "tagline": "성장과 메시징을 떠올리게 하면서 WhatsApp의 녹색과는 차별화했습니다."
+        },
+        "cobalt": {
+          "name": "코발트",
+          "tagline": "기업용 앱에 어울리는 깔끔하고 차분한 파란색입니다."
+        },
+        "amber": {
+          "name": "앰버",
+          "tagline": "따뜻하고 친근한 분위기로 중소기업 팀에 잘 어울립니다."
+        },
+        "rose": {
+          "name": "로즈",
+          "tagline": "소비자 브랜드, 크리에이터, 라이프스타일에 어울리는 대담하고 현대적인 색상입니다."
+        }
+      }
     },
     "security": {
       "title": "로그인 & 보안",
@@ -2444,24 +2138,35 @@
       "networkError": "서버에 연결할 수 없습니다"
     },
     "deals": {
-      "title": "거래, 통화 및 시간대",
-      "description": "이 워크스페이스의 기본 통화 및 시간대입니다.",
+      "title": "딜 & 통화",
+      "description": "새 딜과 파이프라인, 대시보드 합계에 사용되는 통화입니다.",
       "defaultCurrency": "기본 통화",
       "defaultCurrencyDesc": "새 딜은 이 통화를 기본값으로 사용하며, 파이프라인과 대시보드 합계도 이 통화로 표시됩니다. 기존 딜은 저장 당시의 통화를 그대로 유지합니다.",
       "currencyLabel": "통화",
-      "adminOnlyHint": "관리자만 통화 및 시간대를 변경할 수 있습니다.",
+      "adminOnlyHint": "계정 관리자만 기본 통화를 변경할 수 있습니다.",
       "save": "저장",
       "saving": "저장 중...",
-      "saveFailed": "기본 설정을 저장하지 못했습니다",
-      "saveSuccess": "기본 설정이 업데이트되었습니다",
-      "timezoneLabel": "워크스페이스 시간대",
-      "timezoneSearch": "시간대 검색…",
-      "timezoneNoResults": "일치하는 시간대가 없습니다",
-      "timezoneDesc": "워크스페이스의 모든 사용자에게 적용됩니다. 언제든지 변경할 수 있습니다."
+      "saveFailed": "기본 통화를 저장하지 못했습니다",
+      "saveSuccess": "기본 통화가 업데이트되었습니다"
+    },
+    "inbox": {
+      "title": "인박스",
+      "description": "대시보드가 팀의 답장 시간을 측정하는 기준입니다.",
+      "replyTarget": "답장 시간 목표",
+      "replyTargetDesc": "첫 답장을 이 시간보다 오래 기다린 대화를 대시보드에 표시하고, 답장 중앙값을 이 목표와 비교합니다.",
+      "minutesLabel": "분",
+      "hint": "1에서 1440(24시간) 사이의 정수입니다.",
+      "invalid": "1에서 1440 사이의 정수를 입력하세요.",
+      "adminOnlyHint": "계정 관리자만 답장 시간 목표를 변경할 수 있습니다.",
+      "save": "저장",
+      "saving": "저장 중...",
+      "saveFailed": "답장 시간 목표를 저장하지 못했습니다",
+      "saveSuccess": "답장 시간 목표가 업데이트되었습니다",
+      "loadFailed": "답장 시간 목표를 불러오지 못했습니다"
     },
     "aiConfig": {
       "title": "에이전트 설정",
-      "description": "직접 발급받은 OpenAI 또는 Anthropic 키를 사용하세요. wacrm은 회원님의 키로 공급자에 직접 요청하므로 좌석당 AI 비용이 없고 데이터도 온전히 회원님의 것입니다. 인박스의 AI 답장 초안, 자동 응답 봇, 플레이그라운드에 사용됩니다.",
+      "description": "OpenAI, Anthropic 또는 OpenAI 호환 API 키를 직접 사용하세요. wacrm은 입력한 키로 제공업체를 직접 호출하므로 좌석당 AI 요금이 없으며 데이터는 그대로 유지됩니다. 받은 키는 받은편지함 AI 초안, 자동 응답 봇, Playground에 사용됩니다.",
       "adminOnlyConfig": "관리자와 소유자만 AI 설정을 변경할 수 있습니다.",
       "loadFailed": "AI 설정을 불러오지 못했습니다",
       "providerAndKey": "공급자 & 키",
@@ -2514,6 +2219,8 @@
       "removeFailed": "제거하지 못했습니다.",
       "reindexSuccess": "문서 {count}개를 재색인했습니다.",
       "reindexFailed": "재색인에 실패했습니다.",
+      "reindexWithFailures": "문서 {total}개 중 {reindexed}개를 재색인했습니다. {failedCount}개 실패: {titles}. 재색인을 사용해 다시 시도하세요.",
+      "reindexKeywordOnly": "문서 {count}개를 재색인했지만 {keywordOnlyCount}개는 키워드로만 검색할 수 있습니다(의미 기반 색인 실패). 재색인을 사용해 다시 시도하세요.",
       "title": "지식베이스",
       "description": "FAQ, 정책, 제품 정보를 추가하세요. 어시스턴트가 초안 작성과 자동 응답 시 관련된 부분을 검색해 인계 대신 직접 답변할 수 있습니다.{searchType}",
       "semanticSearchOn": " 의미 기반 검색이 켜져 있습니다 (임베딩 키 설정됨).",
@@ -2530,24 +2237,7 @@
       "reindexTooltip": "모든 문서를 다시 임베딩합니다 (예: 임베딩 키 추가 후)",
       "editDoc": "수정",
       "deleteDoc": "삭제",
-      "loading": "불러오는 중…",
-      "reindexWithFailures": "문서 {total}개 중 {reindexed}개를 재색인했습니다. {failedCount}개 실패: {titles}. 재색인을 사용해 다시 시도하세요.",
-      "reindexKeywordOnly": "문서 {count}개를 재색인했지만 {keywordOnlyCount}개는 키워드로만 검색할 수 있습니다(의미 기반 색인 실패). 재색인을 사용해 다시 시도하세요."
-    },
-    "inbox": {
-      "title": "인박스",
-      "description": "대시보드가 팀의 답장 시간을 측정하는 기준입니다.",
-      "replyTarget": "답장 시간 목표",
-      "replyTargetDesc": "첫 답장을 이 시간보다 오래 기다린 대화를 대시보드에 표시하고, 답장 중앙값을 이 목표와 비교합니다.",
-      "minutesLabel": "분",
-      "hint": "1에서 1440(24시간) 사이의 정수입니다.",
-      "invalid": "1에서 1440 사이의 정수를 입력하세요.",
-      "adminOnlyHint": "계정 관리자만 답장 시간 목표를 변경할 수 있습니다.",
-      "save": "저장",
-      "saving": "저장 중...",
-      "saveFailed": "답장 시간 목표를 저장하지 못했습니다",
-      "saveSuccess": "답장 시간 목표가 업데이트되었습니다",
-      "loadFailed": "답장 시간 목표를 불러오지 못했습니다"
+      "loading": "불러오는 중…"
     },
     "quickReplies": {
       "nameRequired": "빠른 답장의 이름을 입력하세요.",
@@ -2571,7 +2261,6 @@
     }
   },
   "SignupPage": {
-    "signupFailed": "계정을 만들 수 없습니다",
     "passwordsMismatch": "비밀번호가 일치하지 않습니다",
     "passwordTooShort": "비밀번호는 6자 이상이어야 합니다",
     "checkEmailTitle": "이메일을 확인하세요",
@@ -2633,12 +2322,16 @@
       "usedBody": "이 초대는 이미 수락되었습니다. 본인이 아니라면 계정 관리자에게 새 링크를 요청하세요.",
       "expiredTitle": "초대가 만료되었습니다",
       "expiredBody": "이 초대는 만료되었습니다. 계정 관리자에게 새 초대를 요청하세요 — 몇 초면 생성됩니다.",
+      "rateLimitedTitle": "시도 횟수가 너무 많습니다",
+      "rateLimitedBody": "짧은 시간에 이 초대를 너무 여러 번 확인했습니다. 1분 정도 기다린 후 다시 시도하세요.",
       "serverErrorTitle": "문제가 발생했습니다",
       "serverErrorBody": "지금은 이 초대를 확인할 수 없습니다. 잠시 후 페이지를 새로 고쳐 보세요."
     },
+    "conflictDefault": "이미 다른 계정에 속해 있습니다. 이 계정에 참여하려면 다른 이메일로 로그인하세요.",
     "acceptFailed": "초대를 수락하지 못했습니다",
     "welcome": "팀에 오신 것을 환영합니다",
     "serverUnreachable": "서버에 연결할 수 없습니다",
+    "signOutFailed": "로그아웃할 수 없습니다. 페이지를 새로 고쳐 보세요.",
     "verifying": "초대 확인 중…",
     "tryAgain": "다시 시도",
     "createNewAccount": "대신 새 계정 만들기",
@@ -2647,18 +2340,20 @@
     "joinAs": "<badge>{role}</badge> 역할로 참여합니다. 링크는 {date}까지 유효합니다.",
     "accepting": "수락 중…",
     "acceptInvitation": "초대 수락",
-    "acceptNote": "수락하면 {name}이 워크스페이스에 추가되고 활성화됩니다. 기존 워크스페이스는 그대로 유지됩니다.",
-    "createAndJoin": "계정 만들고 참여하기",
-    "haveAccount": "이미 계정이 있습니다",
-    "conflictDefault": "이미 다른 계정에 속해 있습니다. 이 계정에 참여하려면 다른 이메일로 로그인하세요.",
-    "signOutFailed": "로그아웃할 수 없습니다. 페이지를 새로 고쳐 보세요.",
+    "acceptNote": "수락하면 로그인 계정이 {name}으로 이동합니다. 가입 시 만들어진 빈 개인 계정은 정리됩니다.",
     "conflictTitle": "이 계정으로는 {name}에 참여할 수 없습니다",
     "conflictBody": "<account>{name}</account>에 참여하려면 로그아웃한 뒤 다른 이메일 주소로 다시 가입하세요. 초대 링크는 만료되지 않은 한 계속 유효합니다.",
     "staySignedIn": "로그인 유지",
     "signingOut": "로그아웃 중…",
-    "signOutSwitch": "로그아웃 후 다른 이메일 사용"
+    "signOutSwitch": "로그아웃 후 다른 이메일 사용",
+    "createAndJoin": "계정 만들고 참여하기",
+    "haveAccount": "이미 계정이 있습니다"
   },
   "Notifications": {
+    "assignedTitle": "새 대화가 배정되었습니다",
+    "assignedBody": "{actor}님이 {contact}님과의 대화를 배정했습니다",
+    "unknownActor": "누군가",
+    "unknownContact": "고객",
     "title": "알림",
     "description": "다른 팀원이 나에게 배정한 대화가 여기에 표시됩니다.",
     "markAllRead": "모두 읽음으로 표시",
@@ -2735,14 +2430,6 @@
   "DashboardShell": {
     "loading": "불러오는 중..."
   },
-  "TimePicker": {
-    "from": "시작",
-    "to": "종료",
-    "overnight": "다음 날 종료됩니다.",
-    "sameTime": "시작 시간과 종료 시간을 다르게 선택하세요.",
-    "chooseTime": "시간 선택…",
-    "noTimes": "일치하는 시간이 없습니다"
-  },
   "UiPrimitives": {
     "close": "닫기"
   },
@@ -2758,6 +2445,20 @@
       "createDeals": "거래를 만들",
       "sendMessages": "메시지를 보낼"
     }
+  },
+  "Presence": {
+    "online": "온라인 — 현재 활동 중",
+    "away": "자리 비움 — 비활성 상태",
+    "offline": "오프라인 — 마지막 활동: {time}",
+    "unknown": "얼마 전",
+    "justNow": "방금",
+    "minutesAgo": "{count}분 전",
+    "hoursAgo": "{count}시간 전",
+    "daysAgo": "{count}일 전"
+  },
+  "Handoff": {
+    "summary": "🤖 AI 에이전트가 {count, plural, =0 {답변하지 않고} other {#회 답변 후}} 대화를 상담원에게 전달했습니다.",
+    "lastMessage": " 고객의 마지막 메시지: “{message}”"
   },
   "Metadata": {
     "description": "직접 호스팅할 수 있는 WhatsApp용 CRM 템플릿입니다."
@@ -2940,6 +2641,7 @@
       "duplicateNodeKey": "중복된 node_key \"{key}\".",
       "unreachable": "노드 \"{key}\"은(는) 시작 노드에서 도달할 수 없습니다.",
       "autoAdvanceCycle": "노드 {keys}이(가) 고객 응답을 기다리지 않고 서로 반복되어 플로우가 메시지를 계속 보내게 됩니다. 반복 구간에 버튼, 목록 또는 질문 단계를 추가하거나 반복을 끊으세요.",
+      "autoAdvanceChainTooLong": "노드 \"{key}\"부터 고객 응답을 기다리지 않는 단계가 {count}개 연속으로 이어집니다. 플로우는 대기 전에 이런 단계를 최대 {max}개까지 실행할 수 있습니다. 버튼, 목록 또는 질문 단계를 추가해 구간을 나누세요.",
       "keywordsRequired": "키워드 트리거에는 키워드가 하나 이상 필요합니다.",
       "blankKeywords": "키워드 {count}개가 비어 있습니다 — 아무것과도 일치하지 않습니다.",
       "startNeedsNext": "시작 노드는 다음 노드를 가리켜야 합니다.",
@@ -3197,6 +2899,7 @@
       "statusInvalid": "상태는 'draft', 'active', 'archived' 중 하나여야 합니다",
       "cannotActivate": "플로우를 활성화할 수 없습니다 — 먼저 아래 문제를 해결하세요.",
       "cannotSaveActive": "이 플로우는 활성 상태이므로 이 문제가 있는 상태로 저장할 수 없습니다. 문제를 해결하거나 먼저 플로우를 일시 중지하세요.",
+      "timeoutHoursInvalid": "on_timeout_hours는 0보다 크고 {max} 이하인 숫자여야 합니다.",
       "nameEmpty": "이름은 비워둘 수 없습니다",
       "unknownTemplate": "알 수 없는 플로우 템플릿 \"{slug}\"",
       "insertFailed": "플로우를 생성하지 못했습니다",
@@ -3261,6 +2964,7 @@
       "neverSubmitted": "이 템플릿은 Meta에 제출된 적이 없습니다 — 새 템플릿을 사용해 제출하세요.",
       "statusNotEditable": "{status} 상태의 템플릿은 수정할 수 없습니다. 허용: APPROVED, REJECTED, PAUSED.",
       "authNotEditable": "AUTHENTICATION 템플릿은 여기서 수정할 수 없습니다 — Meta WhatsApp 관리자에서 관리하세요.",
+      "categoryLockedApproved": "Meta는 승인된 템플릿의 카테고리 변경을 허용하지 않습니다. 대신 새 템플릿을 만드세요.",
       "validationFailed": "유효성 검사에 실패했습니다.",
       "headerUploadFailed": "헤더 미디어 업로드에 실패했습니다.",
       "metaEditFailed": "Meta에서 수정하지 못했습니다.",
@@ -3274,6 +2978,7 @@
       "metaSubmitFailed": "Meta에 제출하지 못했습니다.",
       "rateLimit": "Meta 요청 한도에 도달했습니다(시간당 템플릿 생성 100개). 나중에 다시 시도하세요.",
       "submittedSaveFailed": "Meta에 제출되었지만 로컬에 저장하지 못했습니다: {message}. 복구하려면 \"Meta에서 동기화\"를 실행하세요.",
+      "alreadyExists": "이 계정에 {name} ({language}) 템플릿이 이미 있습니다. 새로 만들지 말고 기존 템플릿을 수정하거나 다시 제출하세요.",
       "submitFailed": "템플릿을 제출하지 못했습니다.",
       "metaApiStatus": "Meta API 오류: {status}",
       "syncFailed": "템플릿을 동기화하지 못했습니다"

@@ -8,7 +8,6 @@ import {
   type PmsProvider,
 } from './provider';
 import { createPmsProvider } from './registry';
-import { syncPmsGuestContact, PmsGuestSyncError } from './guest-sync';
 import {
   PmsReservationSyncError,
   SupabasePmsReservationSyncStore,
@@ -20,7 +19,6 @@ export const PMS_RECONCILIATION_BATCH_SIZE = 10;
 export const PMS_RECONCILIATION_PAGE_SIZE = 200;
 export const PMS_RECONCILIATION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 export const PMS_RECONCILIATION_STALE_MS = 15 * 60 * 1000;
-export const PMS_GUEST_RECOVERY_BATCH_SIZE = 100;
 
 export interface PmsReconciliationClaim {
   propertyId: string;
@@ -49,34 +47,7 @@ export interface PmsReconciliationStore {
   ): Promise<void>;
 }
 
-export interface PmsGuestRecoveryCandidate {
-  externalGuestId: string;
-}
-
-export interface PmsGuestRecoveryStore {
-  listCandidates(claim: PmsReconciliationClaim, limit: number): Promise<PmsGuestRecoveryCandidate[]>;
-}
-
-export class SupabasePmsGuestRecoveryStore implements PmsGuestRecoveryStore {
-  constructor(private readonly admin: SupabaseClient = supabaseAdmin()) {}
-
-  async listCandidates(claim: PmsReconciliationClaim, limit: number) {
-    const { data, error } = await this.admin.rpc('list_pms_reconciliation_guest_candidates', {
-      p_account_id: claim.accountId,
-      p_integration_id: claim.integration.integrationId,
-      p_property_id: claim.propertyId,
-      p_limit: limit,
-    });
-    if (error) throw new PmsGuestSyncError('Guest reconciliation candidates query failed.');
-    return (data ?? []).map((row: { external_guest_id: string }) => ({
-      externalGuestId: row.external_guest_id,
-    }));
-  }
-}
-
 export interface PmsReconciliationDependencies {
-  guestRecoveryStore?: PmsGuestRecoveryStore;
-  syncGuest?: typeof syncPmsGuestContact;
   store?: PmsReconciliationStore;
   reservationStore?: PmsReservationSyncStore;
   createProvider?: (provider: string) => PmsProvider;
@@ -87,7 +58,6 @@ export interface PmsPropertyReconciliationResult {
   propertyId: string;
   status: 'completed' | 'failed';
   reservationsProcessed: number;
-  guestsChecked: number;
 }
 
 export interface PmsReconciliationWorkerResult {
@@ -95,7 +65,6 @@ export interface PmsReconciliationWorkerResult {
   completed: number;
   failed: number;
   reservationsProcessed: number;
-  guestsChecked: number;
 }
 
 class PmsReconciliationStoreError extends Error {
@@ -108,9 +77,6 @@ class PmsReconciliationStoreError extends Error {
 function safeFailure(error: unknown): string {
   if (error instanceof PmsProviderError) {
     return `provider_${error.code}: PMS reservation listing failed.`;
-  }
-  if (error instanceof PmsGuestSyncError) {
-    return 'CRM mapped guest reconciliation failed.';
   }
   if (error instanceof PmsReservationSyncError) {
     return 'CRM reservation synchronization failed.';
@@ -133,7 +99,6 @@ export async function reconcilePmsProperty(
     dependencies.reservationStore ?? new SupabasePmsReservationSyncStore();
   const now = dependencies.now ?? (() => new Date());
   let reservationsProcessed = 0;
-  let guestsChecked = 0;
 
   try {
     const provider = (dependencies.createProvider ?? createPmsProvider)(
@@ -177,41 +142,13 @@ export async function reconcilePmsProperty(
       cursor = page.nextCursor;
     }
 
-    // Rotate through existing mapped PMS guests; no directory-only guests.
-    // Use the start-of-run timestamp as a conservative checkpoint. A webhook
-    // emitted after the run starts has a newer source timestamp and still wins.
-    const recoveryStore =
-      dependencies.guestRecoveryStore ?? new SupabasePmsGuestRecoveryStore();
-    const candidates = await recoveryStore.listCandidates(
-      claim,
-      PMS_GUEST_RECOVERY_BATCH_SIZE
-    );
-    const reconcileAt = claim.processingStartedAt;
-    for (const candidate of candidates) {
-      const outcome = await (dependencies.syncGuest ?? syncPmsGuestContact)(
-        {
-          accountId: claim.accountId,
-          integration: claim.integration,
-          propertyId: claim.propertyId,
-          externalPropertyId: claim.externalPropertyId,
-          externalGuestId: candidate.externalGuestId,
-          occurredAt: reconcileAt,
-        },
-        provider
-      );
-      if (outcome !== 'updated') {
-        // Do not advance the property watermark if an expected mapping vanished.
-        throw new PmsGuestSyncError('Mapped reconciliation guest became unavailable.');
-      }
-      guestsChecked++;
-    }
-
-    await store.markCompleted(claim, now().toISOString());
+    // Keep the next inclusive boundary at the start of this scan. An update
+    // committed while pages were being fetched must be eligible next time.
+    await store.markCompleted(claim, claim.processingStartedAt);
     return {
       propertyId: claim.propertyId,
       status: 'completed',
       reservationsProcessed,
-      guestsChecked,
     };
   } catch (error) {
     const failedAt = now();
@@ -230,7 +167,6 @@ export async function reconcilePmsProperty(
       propertyId: claim.propertyId,
       status: 'failed',
       reservationsProcessed,
-      guestsChecked,
     };
   }
 }
@@ -259,7 +195,6 @@ export async function runPmsReservationReconciliationWorker(
     completed: 0,
     failed: 0,
     reservationsProcessed: 0,
-    guestsChecked: 0,
   };
 
   for (const claim of claims) {
@@ -272,7 +207,6 @@ export async function runPmsReservationReconciliationWorker(
       });
       summary[result.status]++;
       summary.reservationsProcessed += result.reservationsProcessed;
-      summary.guestsChecked += result.guestsChecked;
     } catch {
       // A single claim must not prevent later properties in the bounded batch
       // from running. Its processing lease remains recoverable when stale.

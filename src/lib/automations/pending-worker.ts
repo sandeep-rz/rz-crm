@@ -20,6 +20,10 @@ export interface PendingExecutionRow {
   branch: 'yes' | 'no' | null;
   next_step_position: number;
   parked_step_id?: string | null;
+  blocked_step_id?: string | null;
+  blocked_step_type?: string | null;
+  pms_reservation_id?: string | null;
+  contact_recovery_expires_at?: string | null;
   context: AutomationContext | null;
   attempt_count: number;
 }
@@ -34,6 +38,7 @@ export interface PendingWorkerResult {
   claimed: number;
   completed: number;
   retried: number;
+  blocked: number;
   failed: number;
 }
 
@@ -50,7 +55,7 @@ export async function runPendingExecutionWorker(
   const db = dependencies.db ?? supabaseAdmin();
   const resume = dependencies.resume ?? resumePendingExecution;
   const now = dependencies.now ?? new Date();
-  const { data, error } = await db.rpc('claim_automation_pending_executions', {
+  const { data, error } = await db.rpc('claim_automation_pending_with_contact_recovery', {
     p_batch_size: PENDING_BATCH_SIZE,
     p_now: now.toISOString(),
     p_stale_before: new Date(now.getTime() - PENDING_LEASE_MS).toISOString(),
@@ -64,13 +69,15 @@ export async function runPendingExecutionWorker(
     claimed: rows.length,
     completed: 0,
     retried: 0,
+    blocked: 0,
     failed: 0,
   };
 
   for (const row of rows) {
     try {
-      await resume({ ...row, context: row.context ?? {} });
-      result.completed++;
+      const outcome = await resume({ ...row, context: row.context ?? {} });
+      if (outcome === 'blocked') result.blocked++;
+      else result.completed++;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       // Preserve the Wait cursor/queue, but never replay an uncertain segment.

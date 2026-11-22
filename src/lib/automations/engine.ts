@@ -43,7 +43,7 @@ import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { resolveConversationForContact } from '@/lib/whatsapp/resolve-conversation';
-import type { ReservationAutomationContext } from './pms-context';
+import { loadReservationAutomationContext, reservationContextVars, type ReservationAutomationContext } from './pms-context';
 import { matchesReservationTriggerConfig } from './pms-scheduler';
 import { validateTemplateActions } from './validate';
 import { AutomationTemplateSendError } from './template-send-error';
@@ -267,8 +267,12 @@ export async function resumePendingExecution(pending: {
   next_step_position: number;
   attempt_count?: number;
   parked_step_id?: string | null;
+  blocked_step_id?: string | null;
+  blocked_step_type?: string | null;
+  pms_reservation_id?: string | null;
+  contact_recovery_expires_at?: string | null;
   context: AutomationContext;
-}): Promise<void> {
+}): Promise<void | 'blocked'> {
   const db = supabaseAdmin();
   const { data: automation, error } = await db
     .from('automations')
@@ -298,7 +302,7 @@ export async function resumePendingExecution(pending: {
   }
   const { data: log, error: logError } = await db
     .from('automation_logs')
-    .select('completed_wait_continuation_ids')
+    .select('completed_wait_continuation_ids, trigger_job_id, steps_executed')
     .eq('id', pending.log_id)
     .eq('account_id', pending.account_id)
     .eq('automation_id', pending.automation_id)
@@ -312,23 +316,79 @@ export async function resumePendingExecution(pending: {
     return;
   }
 
-  const { __retry_safety: segmentSafety, ...context } = pending.context ?? {};
+  const { __retry_safety: segmentSafety, ...savedContext } = pending.context ?? {};
   if (segmentSafety) {
     throw new AutomationTemplateSendError('unsafe_to_retry', false);
+  }
+
+  let context = savedContext;
+  let contactId = pending.contact_id;
+  let pmsOrigin = false;
+  if (pending.blocked_step_id) {
+    const jobId = log.trigger_job_id as string | null;
+    if (!jobId || !pending.pms_reservation_id) {
+      throw new Error('Blocked PMS automation origin is missing.');
+    }
+    const { data: job, error: jobError } = await db
+      .from('automation_trigger_jobs')
+      .select('pms_reservation_id, trigger_type')
+      .eq('id', jobId)
+      .eq('account_id', pending.account_id)
+      .eq('automation_id', pending.automation_id)
+      .maybeSingle();
+    if (jobError || !job || job.pms_reservation_id !== pending.pms_reservation_id) {
+      throw new Error('Blocked PMS automation origin does not match reservation.');
+    }
+    const reservation = await loadReservationAutomationContext(
+      job.pms_reservation_id, pending.account_id, db
+    );
+    const expired = Boolean(pending.contact_recovery_expires_at &&
+      Date.parse(pending.contact_recovery_expires_at) <= Date.now());
+    const cancelled = reservation?.reservation_status === 'cancelled';
+    if (expired || !reservation || (cancelled && job.trigger_type !== 'reservation_cancelled') ||
+        !matchesReservationTriggerConfig(
+          (automation as Automation).trigger_config as PmsTriggerConfig, reservation
+        )) {
+      await finalizeLog(pending.log_id, 'failed',
+        expired ? 'contact_recovery_expired' : 'pms_continuation_no_longer_eligible');
+      await markPending(pending.id, 'done');
+      return;
+    }
+    pmsOrigin = true;
+    contactId = reservation.contact_id;
+    context = {
+      ...savedContext,
+      reservation,
+      vars: { ...savedContext.vars, ...reservationContextVars(reservation) },
+      conversation_id: undefined,
+    };
+    if (contactId !== pending.contact_id) {
+      const { error: updateError } = await db
+        .from('automation_logs')
+        .update({ contact_id: contactId })
+        .eq('id', pending.log_id)
+        .eq('account_id', pending.account_id);
+      if (updateError) throw new Error('PMS continuation contact refresh failed.');
+    }
   }
 
   let parentStepId = pending.parent_step_id;
   let branch = pending.branch;
   let startPosition = pending.next_step_position;
-  if (pending.parked_step_id) {
+  const savedStepId = pending.blocked_step_id ?? pending.parked_step_id;
+  if (savedStepId) {
     const { data: parked, error: parkedError } = await db
       .from('automation_steps')
       .select('id, step_type, parent_step_id, branch, position')
-      .eq('id', pending.parked_step_id)
+      .eq('id', savedStepId)
       .eq('automation_id', pending.automation_id)
       .maybeSingle();
     if (parkedError) throw new Error('wait continuation cursor lookup failed');
-    if (!parked || parked.step_type !== 'wait') {
+    if (!parked ||
+      (pending.blocked_step_id
+        ? parked.step_type !== pending.blocked_step_type ||
+          !isPmsContactDependentStep(parked.step_type)
+        : parked.step_type !== 'wait')) {
       await finalizeLog(
         pending.log_id,
         'failed',
@@ -340,11 +400,11 @@ export async function resumePendingExecution(pending: {
     }
     parentStepId = parked.parent_step_id ?? null;
     branch = parentStepId ? (parked.branch ?? 'yes') : null;
-    startPosition = parked.position + 1;
+    startPosition = parked.position + (pending.blocked_step_id ? 0 : 1);
   }
-  await runResumedSteps({
+  const resumeArgs: ExecuteArgs = {
     automation: automation as Automation,
-    contactId: pending.contact_id,
+    contactId,
     context,
     parentStepId,
     branch,
@@ -357,7 +417,15 @@ export async function resumePendingExecution(pending: {
       id: pending.id,
       attemptCount: pending.attempt_count ?? 1,
     },
-  });
+    pmsOrigin,
+  };
+  try {
+    await runResumedSteps(resumeArgs);
+  } catch (error) {
+    if (!(error instanceof PmsContactBlocked)) throw error;
+    await parkPmsContact(resumeArgs, error);
+    return 'blocked';
+  }
   await markPending(pending.id, 'done');
 }
 
@@ -472,7 +540,7 @@ async function executeAutomation(
   }
 
   const failure: { retryable?: boolean } = {};
-  await executeStepsFrom({
+  const executionArgs: ExecuteArgs = {
     failure,
     automation,
     contactId: input.contactId ?? null,
@@ -483,7 +551,22 @@ async function executeAutomation(
     logId: log.id,
     triggerEvent: input.triggerType,
     triggerJobExecution: Boolean(executionIdentity),
-  });
+    executionIdentity,
+    pmsOrigin: Boolean(executionIdentity),
+  };
+  try {
+    await executeStepsFrom(executionArgs);
+  } catch (error) {
+    if (!(error instanceof PmsContactBlocked) || !executionIdentity) throw error;
+    await parkPmsContact(executionArgs, error);
+    return {
+      logId: log.id,
+      status: 'partial',
+      errorMessage: error.message,
+      disposition: 'executed',
+      retryable: false,
+    };
+  }
 
   // Atomic counter update via the SQL function from migration 007.
   // Doing this with a client-side read-modify-write raced when the
@@ -535,8 +618,61 @@ interface ExecuteArgs {
   continuationId?: string | null;
   /** Kept across child scopes; completion identity has different scope rules. */
   retrySafetyContinuation?: { id: string; attemptCount: number };
+  executionIdentity?: AutomationExecutionIdentity;
+  pmsOrigin?: boolean;
   onBeforeMeta?: () => Promise<void>;
   onMetaAccepted?: (messageId: string) => Promise<void>;
+}
+
+class PmsContactBlocked extends Error {
+  constructor(readonly step: AutomationStep) {
+    super('missing_or_invalid_guest_phone');
+    this.name = 'PmsContactBlocked';
+  }
+}
+
+function isPmsContactDependentStep(type: AutomationStep['step_type']): boolean {
+  return [
+    'send_template', 'send_message', 'send_buttons', 'send_list',
+    'add_tag', 'remove_tag', 'assign_conversation',
+    'update_contact_field', 'create_deal',
+  ].includes(type);
+}
+
+async function requirePmsContact(step: AutomationStep, args: ExecuteArgs): Promise<void> {
+  if (!args.pmsOrigin || !isPmsContactDependentStep(step.step_type)) return;
+  if (!args.contactId) throw new PmsContactBlocked(step);
+  if (!isWhatsAppAction(step)) return;
+  const { data, error } = await supabaseAdmin()
+    .from('contacts')
+    .select('phone_normalized')
+    .eq('account_id', args.automation.account_id)
+    .eq('id', args.contactId)
+    .maybeSingle();
+  if (error) throw new Error('PMS automation recipient lookup failed.');
+  if (!data || !/^[1-9][0-9]{7,14}$/.test(data.phone_normalized ?? '')) {
+    throw new PmsContactBlocked(step);
+  }
+}
+
+async function parkPmsContact(args: ExecuteArgs, blocked: PmsContactBlocked): Promise<void> {
+  const configuredHours = Number(process.env.PMS_CONTACT_RECOVERY_EXPIRY_HOURS ?? '24');
+  const expiryHours = Number.isInteger(configuredHours) &&
+    configuredHours >= 1 && configuredHours <= 720 ? configuredHours : 24;
+  const { data, error } = await supabaseAdmin().rpc('park_pms_contact_continuation', {
+    p_account_id: args.automation.account_id,
+    p_automation_id: args.automation.id,
+    p_log_id: args.logId,
+    p_reservation_id: args.context.reservation?.reservation_id,
+    p_step_id: blocked.step.id,
+    p_context: args.context,
+    p_trigger_job_id: args.executionIdentity?.triggerJobId ?? null,
+    p_pending_id: args.retrySafetyContinuation?.id ?? null,
+    p_attempt: args.executionIdentity?.attemptCount ??
+      args.retrySafetyContinuation?.attemptCount ?? null,
+    p_expiry_hours: expiryHours,
+  });
+  if (error || data !== true) throw new Error('PMS contact recovery checkpoint failed.');
 }
 
 type ScopeOutcome = 'completed' | 'suspended' | 'failed';
@@ -660,6 +796,7 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeOutcome> {
         continue;
       }
 
+      await requirePmsContact(step, args);
       const detail = await executeAutomationStep(step, args);
       results.push({
         step_id: step.id,
@@ -668,6 +805,15 @@ async function executeStepsFrom(args: ExecuteArgs): Promise<ScopeOutcome> {
         detail,
       });
     } catch (err) {
+      if (err instanceof PmsContactBlocked) {
+        // Save successful steps before the blocked step; parent scopes do the
+        // same while the exception propagates. Nothing has been sent at the
+        // blocked step, so restarting there is safe.
+        await appendResults(args.logId, results,
+          args.parentStepId === null ? 'partial' : null,
+          null, args.triggerJobExecution);
+        throw err;
+      }
       const msg =
         err instanceof TemplatePreparationError
           ? [

@@ -343,6 +343,19 @@ export function importedMetadata(
       : 'configured',
   };
 }
+
+
+function normalizeButtons(buttons: MessageTemplate['buttons']) {
+  if (!buttons) return null;
+
+  return buttons.map((button) =>
+    Object.fromEntries(
+      Object.entries(button).sort(([a], [b]) => a.localeCompare(b))
+    )
+  );
+}
+
+
 export function reconcileTemplateSemantics(
   existing: MessageTemplate | null,
   incoming: MessageTemplate
@@ -351,8 +364,8 @@ export function reconcileTemplateSemantics(
     existing &&
     existing.body_text === incoming.body_text &&
     (existing.header_content ?? null) === (incoming.header_content ?? null) &&
-    JSON.stringify(existing.buttons ?? null) ===
-      JSON.stringify(incoming.buttons ?? null) &&
+    JSON.stringify(normalizeButtons(existing.buttons ?? [])) ===
+      JSON.stringify(normalizeButtons(incoming.buttons ?? [])) &&
     existing.header_type === incoming.header_type;
   if (existing?.template_origin === 'rgcrm') {
     if (!unchanged)

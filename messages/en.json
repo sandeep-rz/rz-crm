@@ -472,7 +472,8 @@
       "loadOlderFailed": "Could not load older messages.",
       "networkError": "network error",
       "documentFallback": "Document",
-      "you": "You"
+      "you": "You",
+      "assigneeNoLongerMember": "That teammate is no longer a member of this account"
     },
     "sessionTimer": {
       "expired": "Expired",
@@ -992,7 +993,8 @@
       "toastMarkedLost": "Marked as lost",
       "toastReopened": "Deal reopened",
       "toastFailedDelete": "Failed to delete deal",
-      "toastDeleted": "Deal deleted"
+      "toastDeleted": "Deal deleted",
+      "searchContacts": "Search contacts by name or phone"
     },
     "settings": {
       "managePipeline": "Manage Pipeline",
@@ -2634,7 +2636,9 @@
       "expiredTitle": "Invite expired",
       "expiredBody": "This invitation has expired. Ask the account admin to send a new one — they take a few seconds to generate.",
       "serverErrorTitle": "Something went wrong",
-      "serverErrorBody": "We couldn't verify this invitation right now. Try refreshing the page in a moment."
+      "serverErrorBody": "We couldn't verify this invitation right now. Try refreshing the page in a moment.",
+      "rateLimitedTitle": "Too many attempts",
+      "rateLimitedBody": "You've checked this invitation too many times in a short period. Wait a minute, then try again."
     },
     "acceptFailed": "Failed to accept invitation",
     "welcome": "Welcome to the team",
@@ -2987,7 +2991,8 @@
       "setTagNeedsTag": "Set-tag needs a tag to apply.",
       "setTagNeedsNext": "Set-tag must point to a next node.",
       "setTagMissingNext": "Set-tag points to non-existent node \"{key}\".",
-      "unknownNodeType": "Unknown node type \"{type}\"."
+      "unknownNodeType": "Unknown node type \"{type}\".",
+      "autoAdvanceChainTooLong": "Node \"{key}\" starts {count} steps in a row that run without waiting for the customer. A flow can run at most {max} such steps before it waits; add a buttons, list or question step to split the chain."
     },
     "automations": {
       "needsStep": "active automations need at least one step",
@@ -3200,7 +3205,8 @@
       "nameEmpty": "name cannot be empty",
       "unknownTemplate": "Unknown template_slug \"{slug}\"",
       "insertFailed": "flow insert failed",
-      "nameRequired": "name is required"
+      "nameRequired": "name is required",
+      "timeoutHoursInvalid": "on_timeout_hours must be a number greater than 0 and at most {max}."
     },
     "quickReplies": {
       "kindInvalid": "kind must be \"text\" or \"interactive\"",

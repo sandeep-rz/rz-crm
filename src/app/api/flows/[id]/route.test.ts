@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FakeTables } from '@/lib/flows/fake-db.test-helper';
 
 const h = vi.hoisted(() => ({
+  failing: new Set<string>(),
   tables: {} as Record<string, Record<string, unknown>[]>,
   rpc: vi.fn(async () => ({ data: 0, error: null })),
 }));
@@ -15,7 +16,9 @@ vi.mock('@/lib/auth/account', () => ({
 
 vi.mock('@/lib/flows/admin-client', async () => {
   const { createFakeDb } = await import('@/lib/flows/fake-db.test-helper');
-  return { supabaseAdmin: () => createFakeDb(h.tables as FakeTables) };
+  return {
+    supabaseAdmin: () => createFakeDb(h.tables as FakeTables, h.failing),
+  };
 });
 
 vi.mock('@/lib/supabase/server', async () => {
@@ -69,7 +72,8 @@ function put(body: unknown) {
 }
 
 beforeEach(() => {
-  h.rpc.mockClear();
+  h.rpc.mockReset().mockResolvedValue({ data: 0, error: null });
+  h.failing.clear();
 });
 
 describe('PUT /api/flows/[id]', () => {
@@ -95,7 +99,8 @@ describe('PUT /api/flows/[id]', () => {
     seed('active');
     const res = await put({ nodes: VALID_NODES });
     expect(res.status).toBe(200);
-    expect(h.rpc).toHaveBeenCalledWith('replace_flow_nodes', {
+    expect(h.rpc).toHaveBeenCalledWith('replace_flow_graph', {
+      p_flow: { updated_at: expect.any(String) },
       p_flow_id: 'flow-1',
       p_nodes: VALID_NODES.map((n) => ({ ...n, position_x: 0, position_y: 0 })),
     });
@@ -108,3 +113,22 @@ describe('PUT /api/flows/[id]', () => {
     expect(h.rpc).toHaveBeenCalledTimes(1);
   });
 });
+
+it('refuses a save when active-flow validation cannot read its nodes', async () => {
+  seed('active');
+  h.failing.add('flow_nodes');
+  const response = await put({ name: 'Updated' });
+  expect(response.status).toBe(500);
+  expect(h.rpc).not.toHaveBeenCalled();
+});
+it.each([0, -1, '24', 999999])(
+  'rejects invalid timeout policy %s before persistence',
+  async (value) => {
+    seed('draft');
+    const response = await put({
+      fallback_policy: { on_timeout_hours: value },
+    });
+    expect(response.status).toBe(400);
+    expect(h.rpc).not.toHaveBeenCalled();
+  }
+);

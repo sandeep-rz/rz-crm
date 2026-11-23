@@ -1,6 +1,8 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   writes: [] as Record<string, unknown>[],
+  filters: [] as unknown[][],
+  linkedDuringSubmit: false,
   existing: null as Record<string, unknown> | null,
 }));
 const mocks = vi.hoisted(() => ({
@@ -15,7 +17,14 @@ const db = {
     let write: Record<string, unknown> | undefined;
     const q = {
       select: () => q,
-      eq: () => q,
+      eq: (key: string, value: unknown) => {
+        state.filters.push([key, value]);
+        return q;
+      },
+      is: (key: string, value: unknown) => {
+        state.filters.push([key, value]);
+        return q;
+      },
       maybeSingle: async () => ({ data: state.existing, error: null }),
       update: (row: Record<string, unknown>) => {
         write = row;
@@ -27,7 +36,10 @@ const db = {
         state.writes.push(row);
         return q;
       },
-      single: async () => ({ data: { id: 'saved', ...write }, error: null }),
+      single: async () =>
+        state.linkedDuringSubmit
+          ? { data: null, error: { message: 'Draft changed' } }
+          : { data: { id: 'saved', ...write }, error: null },
     };
     return q;
   },
@@ -73,6 +85,8 @@ const request = (body: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks();
   state.writes = [];
+  state.filters = [];
+  state.linkedDuringSubmit = false;
   state.existing = null;
   vi.stubEnv('WHATSAPP_TEMPLATES_DRY_RUN', 'false');
   mocks.role.mockResolvedValue({
@@ -422,4 +436,36 @@ it('creates a contact/workspace semantic template and submits positional Meta co
       sample: 'Our team',
     },
   ]);
+});
+
+it('updates only the captured unsubmitted draft while preserving its author', async () => {
+  state.existing = {
+    id: 'draft',
+    meta_template_id: null,
+    status: 'DRAFT',
+    user_id: 'original-author',
+  };
+  expect((await POST(request(semantic))).status).toBe(200);
+  expect(state.filters).toEqual(
+    expect.arrayContaining([
+      ['id', 'draft'],
+      ['account_id', 'account'],
+      ['whatsapp_config_id', 'connection'],
+      ['status', 'DRAFT'],
+      ['meta_template_id', null],
+    ])
+  );
+  expect(state.writes[0]).not.toHaveProperty('user_id');
+});
+it('reports recovery when another operation links the draft before saving', async () => {
+  state.existing = { id: 'draft', meta_template_id: null, status: 'DRAFT' };
+  mocks.submit.mockImplementationOnce(async () => {
+    state.linkedDuringSubmit = true;
+    return { id: 'accepted-meta', status: 'PENDING' };
+  });
+  const response = await POST(request(semantic));
+  expect(response.status).toBe(500);
+  expect(await response.json()).toMatchObject({
+    meta_template_id: 'accepted-meta',
+  });
 });

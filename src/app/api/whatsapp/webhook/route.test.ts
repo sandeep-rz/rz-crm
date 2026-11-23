@@ -1299,3 +1299,30 @@ it('accepts a matched broadcast-only status without retrying or emitting an Inbo
   });
   expect(h.dispatchWebhookEvent).not.toHaveBeenCalled();
 });
+
+it('preserves Meta unsupported-message reasons inside the existing idempotent insert', async () => {
+  await runWebhook({
+    id: 'wamid.unsupported',
+    from: '14155550123',
+    timestamp: '1700000000',
+    type: 'unsupported',
+    errors: [
+      {
+        code: 131051,
+        title: 'Unsupported message',
+        message: 'View-once content',
+        error_data: {
+          details: 'Please ask the sender to resend as a regular photo.',
+        },
+      },
+    ],
+  });
+  expect(h.state.upsertCalls[0].row).toMatchObject({
+    status: 'delivered',
+    error_code: 131051,
+    error_title: 'Unsupported message',
+    error_details: 'Please ask the sender to resend as a regular photo.',
+    content_text:
+      '[Unsupported message type: unsupported — Please ask the sender to resend as a regular photo.]',
+  });
+});

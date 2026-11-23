@@ -28,7 +28,13 @@ function makeDb() {
     deletedFor: null,
   };
   const db = {
-    rpc: (name: string) => {
+    rpc: (name: string, args?: Record<string, unknown>) => {
+      if (name === 'replace_ai_knowledge_chunks') {
+        state.deletedFor = args!.p_document_id as string;
+        const rows = args!.p_chunks as Record<string, unknown>[];
+        state.inserted = rows.length ? rows : null;
+        return Promise.resolve({ data: null, error: null });
+      }
       state.rpcCalls.push(name);
       if (name === 'match_ai_knowledge_semantic')
         return Promise.resolve({ data: state.semantic, error: null });

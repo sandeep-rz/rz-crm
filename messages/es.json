@@ -472,7 +472,8 @@
       "loadOlderFailed": "No se pudieron cargar los mensajes anteriores.",
       "networkError": "error de red",
       "documentFallback": "Documento",
-      "you": "Tú"
+      "you": "Tú",
+      "assigneeNoLongerMember": "Ese compañero ya no es miembro de esta cuenta"
     },
     "sessionTimer": {
       "expired": "Expirada",
@@ -992,7 +993,8 @@
       "toastMarkedLost": "Marcado como perdido",
       "toastReopened": "Negocio reabierto",
       "toastFailedDelete": "Error al eliminar el negocio",
-      "toastDeleted": "Negocio eliminado"
+      "toastDeleted": "Negocio eliminado",
+      "searchContacts": "Buscar contactos por nombre o teléfono"
     },
     "settings": {
       "managePipeline": "Administrar pipeline",
@@ -2634,7 +2636,9 @@
       "expiredTitle": "Invitación expirada",
       "expiredBody": "Esta invitación expiró. Pide al administrador de la cuenta que envíe una nueva; generarla toma solo unos segundos.",
       "serverErrorTitle": "Algo salió mal",
-      "serverErrorBody": "No pudimos verificar esta invitación en este momento. Intenta recargar la página en un momento."
+      "serverErrorBody": "No pudimos verificar esta invitación en este momento. Intenta recargar la página en un momento.",
+      "rateLimitedTitle": "Demasiados intentos",
+      "rateLimitedBody": "Has comprobado esta invitación demasiadas veces en poco tiempo. Espera un minuto y vuelve a intentarlo."
     },
     "acceptFailed": "Error al aceptar la invitación",
     "welcome": "Bienvenido al equipo",
@@ -2987,7 +2991,8 @@
       "setTagNeedsTag": "El nodo Etiquetar contacto necesita una etiqueta para aplicar.",
       "setTagNeedsNext": "El nodo Etiquetar contacto debe apuntar a un nodo siguiente.",
       "setTagMissingNext": "El nodo Etiquetar contacto apunta a un nodo inexistente: \"{key}\".",
-      "unknownNodeType": "Tipo de nodo desconocido: \"{type}\"."
+      "unknownNodeType": "Tipo de nodo desconocido: \"{type}\".",
+      "autoAdvanceChainTooLong": "El nodo \"{key}\" inicia {count} pasos seguidos que se ejecutan sin esperar al cliente. Un flujo puede ejecutar como máximo {max} pasos así antes de esperar; añade un paso de botones, lista o pregunta para dividir la cadena."
     },
     "automations": {
       "needsStep": "las automatizaciones activas necesitan al menos un paso",
@@ -3200,7 +3205,8 @@
       "nameEmpty": "El nombre no puede estar vacío",
       "unknownTemplate": "Plantilla de flujo desconocida \"{slug}\"",
       "insertFailed": "error al crear el flujo",
-      "nameRequired": "El nombre es obligatorio"
+      "nameRequired": "El nombre es obligatorio",
+      "timeoutHoursInvalid": "on_timeout_hours debe ser un número mayor que 0 y como máximo {max}."
     },
     "quickReplies": {
       "kindInvalid": "El tipo debe ser \"text\" o \"interactive\"",

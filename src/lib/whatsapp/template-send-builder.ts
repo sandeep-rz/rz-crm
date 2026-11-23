@@ -31,7 +31,11 @@
  */
 
 import type { MessageTemplate, TemplateButton } from '@/types';
-import { extractVariableIndices } from './template-validators';
+import {
+  extractVariableIndices,
+  extractTemplateVariables,
+  isNamedVariable,
+} from './template-validators';
 
 export interface SendTimeParams {
   /** Values for body {{1}}, {{2}}, … indexed by variable position. */
@@ -62,7 +66,7 @@ export type MetaSendComponent =
     };
 
 type MetaSendParameter =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; parameter_name?: string }
   | { type: 'image'; image: { link?: string; id?: string } }
   | { type: 'video'; video: { link?: string; id?: string } }
   | { type: 'document'; document: { link?: string; id?: string } }
@@ -80,9 +84,8 @@ function buildHeaderComponent(
     // TEXT header with {{1}} → need a value. Static text headers
     // (no variables) just ride along inside the template itself; no
     // header component required on send.
-    const varCount = extractVariableIndices(
-      template.header_content ?? ''
-    ).length;
+    const keys = extractTemplateVariables(template.header_content ?? '');
+    const varCount = keys.length;
     if (varCount === 0) return null;
     const value = params.headerText;
     if (!value || !value.trim()) {
@@ -92,7 +95,13 @@ function buildHeaderComponent(
     }
     return {
       type: 'header',
-      parameters: [{ type: 'text', text: value }],
+      parameters: [
+        {
+          type: 'text',
+          text: value,
+          ...(isNamedVariable(keys[0]) ? { parameter_name: keys[0] } : {}),
+        },
+      ],
     };
   }
 
@@ -129,7 +138,8 @@ function buildBodyComponent(
   template: MessageTemplate,
   params: SendTimeParams
 ): MetaSendComponent | null {
-  const varCount = extractVariableIndices(template.body_text).length;
+  const keys = extractTemplateVariables(template.body_text);
+  const varCount = keys.length;
   const body = params.body ?? [];
   if (varCount === 0 && body.length === 0) return null;
   if (body.length < varCount) {
@@ -142,7 +152,11 @@ function buildBodyComponent(
   const values = body.slice(0, varCount);
   return {
     type: 'body',
-    parameters: values.map((text) => ({ type: 'text', text: String(text) })),
+    parameters: values.map((text, i) => ({
+      type: 'text',
+      text: String(text),
+      ...(isNamedVariable(keys[i]) ? { parameter_name: keys[i] } : {}),
+    })),
   };
 }
 

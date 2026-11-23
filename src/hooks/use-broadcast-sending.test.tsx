@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { MessageTemplate } from '@/types';
 import { useBroadcastSending } from './use-broadcast-sending';
-const h = vi.hoisted(() => ({ fetch: vi.fn() }));
+const h = vi.hoisted(() => ({ fetch: vi.fn(), rpc: vi.fn() }));
 vi.mock('@/hooks/use-auth', () => ({
   useAuth: () => ({ accountId: 'account' }),
 }));
@@ -13,6 +13,7 @@ type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
 let reads: string[];
 const db = {
+  rpc: h.rpc,
   auth: {
     getSession: async () => ({ data: { session: { user: { id: 'user' } } } }),
   },
@@ -84,6 +85,13 @@ beforeEach(async () => {
   vi.clearAllMocks();
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal('fetch', h.fetch);
+  h.rpc.mockImplementation(async (name: string) => ({
+    data:
+      name === 'release_broadcast_delivery_lease'
+        ? null
+        : '2026-11-23T00:00:00Z',
+    error: null,
+  }));
   reads = [];
   tables = {
     contacts: [
@@ -246,4 +254,28 @@ it('passes missing phones to server validation rather than silently stranding pe
     phone: '',
     recipient_id: 'recipient-0',
   });
+});
+
+it('stops before a provider batch when the wizard cannot claim its delivery lease', async () => {
+  h.rpc.mockResolvedValue({ data: null, error: null });
+  await act(async () => {
+    await expect(
+      hook.createAndSendBroadcast({
+        name: 'Guarded',
+        template: {
+          id: 'template',
+          name: 'welcome',
+          body_text: 'Hi',
+          language: 'en',
+          variable_configuration_status: 'configured',
+        } as MessageTemplate,
+        audience: { type: 'all' },
+        variables: {},
+        whatsappConfigId: 'connection',
+      } as Parameters<typeof hook.createAndSendBroadcast>[0])
+    ).rejects.toMatchObject({ broadcastId: 'broadcast' });
+  });
+  expect(
+    h.fetch.mock.calls.filter(([url]) => url === '/api/whatsapp/broadcast')
+  ).toHaveLength(0);
 });

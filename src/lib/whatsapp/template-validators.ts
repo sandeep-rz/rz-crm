@@ -76,6 +76,30 @@ export function extractVariableIndices(text: string): number[] {
  * Meta requires contiguous, 1-indexed variables. `{{1}} {{3}}` is
  * invalid — it must be `{{1}} {{2}}`.
  */
+/** Transport variable keys; canonical RZ authoring remains positional. */
+export function extractTemplateVariables(text: string): string[] {
+  const keys = [
+    ...new Set(
+      [...text.matchAll(/\{\{([1-9]\d*|[a-z_][a-z0-9_]*)\}\}/g)].map(
+        (m) => m[1]
+      )
+    ),
+  ];
+  if (
+    /\{\{|\}\}/.test(text.replace(/\{\{([1-9]\d*|[a-z_][a-z0-9_]*)\}\}/g, ''))
+  )
+    throw new Error('Malformed template variables.');
+  const named = keys.filter(isNamedVariable);
+  if (named.length && named.length !== keys.length)
+    throw new Error('Named and positional template variables cannot be mixed.');
+  return named.length
+    ? named.sort()
+    : keys.sort((a, b) => Number(a) - Number(b));
+}
+export function isNamedVariable(key: string): boolean {
+  return !/^\d+$/.test(key);
+}
+
 function assertContiguous(indices: number[], where: string): void {
   for (let i = 0; i < indices.length; i++) {
     if (indices[i] !== i + 1) {
@@ -96,13 +120,15 @@ function assertPositionalTokens(text: string, where: string): void {
   }
 }
 
-export function validateBody(bodyText: string): number[] {
+export function validateBody(bodyText: string, allowNamed = false): number[] {
   if (!bodyText.trim()) throw new Error('Body text is required.');
   if (bodyText.length > TEMPLATE_LIMITS.bodyMaxLength) {
     throw new Error(
       `Body text exceeds ${TEMPLATE_LIMITS.bodyMaxLength} chars (got ${bodyText.length}).`
     );
   }
+  if (allowNamed && extractTemplateVariables(bodyText).some(isNamedVariable))
+    return extractTemplateVariables(bodyText).map((_, i) => i + 1);
   assertPositionalTokens(bodyText, 'Body');
   const indices = extractVariableIndices(bodyText);
   assertContiguous(indices, 'Body');
@@ -130,7 +156,8 @@ export function validateHeader(
   payload: Pick<
     TemplatePayload,
     'header_type' | 'header_content' | 'header_media_url' | 'header_handle'
-  >
+  >,
+  allowNamed = false
 ): HeaderValidationResult {
   const { header_type, header_content, header_media_url, header_handle } =
     payload;
@@ -144,6 +171,15 @@ export function validateHeader(
       throw new Error(
         `Header text exceeds ${TEMPLATE_LIMITS.headerTextMaxLength} chars (got ${header_content.length}).`
       );
+    }
+    if (
+      allowNamed &&
+      extractTemplateVariables(header_content).some(isNamedVariable)
+    ) {
+      const keys = extractTemplateVariables(header_content);
+      if (keys.length > 1)
+        throw new Error('Text header supports at most one variable.');
+      return { variableCount: keys.length };
     }
     assertPositionalTokens(header_content, 'Header');
     const indices = extractVariableIndices(header_content);

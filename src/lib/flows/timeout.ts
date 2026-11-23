@@ -27,9 +27,10 @@ export async function markRunTimedOut(
   runId: string,
   check: RunTimeoutCheck,
   reason: string,
-  now: Date
+  now: Date,
+  expectedLastAdvancedAt?: string
 ): Promise<boolean> {
-  const { data: updated } = await db
+  let query = db
     .from('flow_runs')
     .update({
       status: 'timed_out',
@@ -37,8 +38,10 @@ export async function markRunTimedOut(
       end_reason: reason,
     })
     .eq('id', runId)
-    .eq('status', 'active')
-    .select('id');
+    .eq('status', 'active');
+  if (expectedLastAdvancedAt)
+    query = query.eq('last_advanced_at', expectedLastAdvancedAt);
+  const { data: updated } = await query.select('id');
 
   if (!Array.isArray(updated) || updated.length === 0) return false;
 

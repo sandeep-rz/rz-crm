@@ -22,7 +22,7 @@
 // this page after email verification.
 // ============================================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -45,29 +45,25 @@ import {
 } from '@/components/ui/card';
 import { createClient } from '@/lib/supabase/client';
 
-interface PeekOk {
-  ok: true;
-  account_name: string;
-  role: 'admin' | 'agent' | 'viewer';
-  expires_at: string;
-}
-interface PeekFail {
-  ok: false;
-  reason: 'not_found' | 'used' | 'expired' | 'server_error';
-}
-type PeekResult = PeekOk | PeekFail;
+import {
+  RETRYABLE_PEEK_FAIL_REASONS,
+  toPeekResult,
+  type PeekFailReason,
+  type PeekResult,
+} from '@/lib/auth/peek-result';
 
 // Message keys per peek failure reason — resolved through `t` inside
 // the component (hooks can't run at module level). Snake_case reasons
 // come from the API; the catalogue uses camelCase leaves.
 const FAIL_KEY: Record<
-  PeekFail['reason'],
-  'notFound' | 'used' | 'expired' | 'serverError'
+  PeekFailReason,
+  'notFound' | 'used' | 'expired' | 'rateLimited' | 'serverError'
 > = {
   not_found: 'notFound',
   used: 'used',
   expired: 'expired',
   server_error: 'serverError',
+  rate_limited: 'rateLimited',
 };
 
 export default function JoinPage() {
@@ -86,11 +82,13 @@ export default function JoinPage() {
     undefined // undefined = unknown / still loading; null = signed out
   );
   const [accepting, setAccepting] = useState(false);
+  const requestSeq = useRef(0);
 
   // Extracted so the "Try again" button on the server_error card
   // can re-run the same logic without remounting the component.
   const loadPeekAndAuth = useCallback(async () => {
     if (!token) return;
+    const seq = ++requestSeq.current;
     setPeek(null);
     setAuthedUserId(undefined);
     try {
@@ -100,46 +98,28 @@ export default function JoinPage() {
         }),
         createClient().auth.getUser(),
       ]);
-      const peekBody = (await peekRes.json()) as PeekResult;
+      const peekBody = toPeekResult(
+        peekRes.status,
+        await peekRes.json().catch(() => null)
+      );
+      if (seq !== requestSeq.current) return;
       setPeek(peekBody);
       setAuthedUserId(authRes.data.user?.id ?? null);
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       console.error('[join] peek error:', err);
       setPeek({ ok: false, reason: 'server_error' });
       setAuthedUserId(null);
     }
   }, [token]);
 
-  // Fetch peek + auth state on mount. The peek endpoint is
-  // rate-limited per-IP (30/min) so double-mounting in React 19
-  // strict mode dev is harmless. We also use the `cancelled` flag
-  // to drop setState calls if the component unmounts mid-fetch.
   useEffect(() => {
-    if (!token) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const [peekRes, authRes] = await Promise.all([
-          fetch(`/api/invitations/${encodeURIComponent(token)}/peek`, {
-            cache: 'no-store',
-          }),
-          createClient().auth.getUser(),
-        ]);
-        const peekBody = (await peekRes.json()) as PeekResult;
-        if (cancelled) return;
-        setPeek(peekBody);
-        setAuthedUserId(authRes.data.user?.id ?? null);
-      } catch (err) {
-        console.error('[join] peek error:', err);
-        if (cancelled) return;
-        setPeek({ ok: false, reason: 'server_error' });
-        setAuthedUserId(null);
-      }
-    })();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Synchronize the invitation URL and auth probe.
+    void loadPeekAndAuth();
     return () => {
-      cancelled = true;
+      requestSeq.current += 1;
     };
-  }, [token]);
+  }, [loadPeekAndAuth]);
 
   const handleAccept = useCallback(async () => {
     if (!token) return;
@@ -162,6 +142,7 @@ export default function JoinPage() {
       toast.success(t('welcome'));
       // Full reload (not router.push) so AuthProvider re-fetches
       // the profile with the new account_id and account_role.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Redeeming changes workspace; reload AuthProvider.
       window.location.href = '/dashboard';
     } catch (err) {
       console.error('[join] redeem error:', err);
@@ -206,7 +187,7 @@ export default function JoinPage() {
               failure reasons (not_found / used / expired) are
               terminal for this token, so no retry — just the
               signup/sign-in escape hatches. */}
-          {peek.reason === 'server_error' ? (
+          {RETRYABLE_PEEK_FAIL_REASONS.has(peek.reason) ? (
             <>
               <Button
                 onClick={loadPeekAndAuth}

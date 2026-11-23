@@ -7,6 +7,8 @@ import {
   validateBody,
   validateFooter,
   validateHeader,
+  extractTemplateVariables,
+  isNamedVariable,
 } from '@/lib/whatsapp/template-validators';
 import { TemplatePreparationError } from './errors';
 import type { PreparedVariableOccurrence } from './types';
@@ -52,9 +54,10 @@ export function validatePreparationMapping(
       throw invalid();
   }
   try {
-    validateBody(template.body_text);
+    const allowNamed = template.template_origin === 'meta';
+    validateBody(template.body_text, allowNamed);
     validateFooter(template.footer_text);
-    if (template.header_type === 'text') validateHeader(template);
+    if (template.header_type === 'text') validateHeader(template, allowNamed);
     else if (
       template.header_content &&
       /\{\{|\}\}/.test(template.header_content)
@@ -73,6 +76,10 @@ export function validatePreparationMapping(
   const raw: unknown = template.semantic_variable_mapping;
   if (!Array.isArray(raw)) throw invalid();
   const slots = positionalSlots(template);
+  const formats = slots
+    .filter((s) => s.component !== 'BUTTON')
+    .map((s) => Boolean(s.parameter_name));
+  if (formats.some(Boolean) && formats.some((named) => !named)) throw invalid();
   const mapping: PreparedVariableOccurrence[] = [];
   const seen = new Set<string>();
   for (const entry of raw) {
@@ -106,7 +113,18 @@ export function validatePreparationMapping(
     if (seen.has(identity) || !slots.some((s) => slotIdentity(s) === identity))
       throw invalid();
     seen.add(identity);
-    mapping.push(slot);
+    const transportSlot = slots.find((s) => slotIdentity(s) === identity)!;
+    if (
+      entry.parameter_name !== undefined &&
+      entry.parameter_name !== transportSlot.parameter_name
+    )
+      throw invalid();
+    mapping.push({
+      ...slot,
+      ...(transportSlot.parameter_name
+        ? { parameter_name: transportSlot.parameter_name }
+        : {}),
+    });
   }
   if (mapping.length !== slots.length) throw invalid();
   const semantic: unknown = template.semantic_content;
@@ -123,15 +141,21 @@ export function validatePreparationMapping(
       button_index?: number
     ) => {
       if (typeof content !== 'string') throw invalid();
-      const restored = transport.replace(/\{\{(\d+)\}\}/g, (_, n: string) => {
-        const found = mapping.find(
-          (m) =>
-            slotIdentity(m) ===
-            slotIdentity({ component, button_index, position: Number(n) })
-        );
-        if (!found) throw invalid();
-        return `{{${found.variable_key}}}`;
-      });
+      const restored = transport.replace(
+        /\{\{([A-Za-z0-9_]+)\}\}/g,
+        (_, n: string) => {
+          const keyPosition = isNamedVariable(n)
+            ? extractTemplateVariables(transport).indexOf(n) + 1
+            : Number(n);
+          const found = mapping.find(
+            (m) =>
+              slotIdentity(m) ===
+              slotIdentity({ component, button_index, position: keyPosition })
+          );
+          if (!found) throw invalid();
+          return `{{${found.variable_key}}}`;
+        }
+      );
       if (restored !== content) throw invalid();
       // RGCRM compiler assigns a new slot to every occurrence, in encounter order.
       if (template.template_origin === 'rgcrm') {

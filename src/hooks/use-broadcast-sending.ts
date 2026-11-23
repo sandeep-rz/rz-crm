@@ -4,6 +4,10 @@ import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { BATCH_SEND_ATTEMPTS, batchRetryDelayMs } from '@/lib/broadcast-retry';
+import {
+  acquireWizardDeliveryLease,
+  renewWizardDeliveryLease,
+} from '@/lib/whatsapp/broadcast-delivery-lease';
 import { normalizeKey } from '@/lib/contacts/dedupe';
 import { BroadcastRecipient, Contact, MessageTemplate } from '@/types';
 import {
@@ -45,6 +49,15 @@ interface BroadcastPayload {
    */
   headerMediaUrl?: string;
   whatsappConfigId: string;
+}
+
+/** Keep the saved campaign reachable when this wizard loses delivery ownership. */
+export class BroadcastDeliveryInterrupted extends Error {
+  constructor(readonly broadcastId: string) {
+    super(
+      'Sending paused. Review the saved broadcast progress before resuming.'
+    );
+  }
 }
 
 interface UseBroadcastSendingReturn {
@@ -486,82 +499,119 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
       );
       const totalRecipients = recipients.length;
 
-      for (let i = 0; i < pendingRecipients.length; i += SEND_BATCH_SIZE) {
-        const batch = pendingRecipients.slice(i, i + SEND_BATCH_SIZE);
+      let heldLease: string | null = null;
+      const keepDeliveryLease = async () => {
+        const result =
+          heldLease === null
+            ? await acquireWizardDeliveryLease(supabase, broadcast.id)
+            : await renewWizardDeliveryLease(supabase, broadcast.id, heldLease);
+        if (result.status !== 'held') {
+          throw new BroadcastDeliveryInterrupted(broadcast.id);
+        }
+        heldLease = result.lease;
+      };
+      try {
+        for (let i = 0; i < pendingRecipients.length; i += SEND_BATCH_SIZE) {
+          await keepDeliveryLease();
+          const batch = pendingRecipients.slice(i, i + SEND_BATCH_SIZE);
 
-        const apiRecipients = batch.map((r) => {
-          const frozen = frozenTemplateParams(r.template_params);
-          return {
-            phone: r.contact?.phone ?? '',
-            contact_id: r.contact_id,
-            recipient_id: r.id,
-            // Legacy sends replay frozen params; semantic sends carry only
-            // contact identity for server-side preparation.
-            ...(semantic ? {} : frozen),
-            ...(!semantic &&
-            !frozen.messageParams &&
-            isMediaHeader &&
-            headerMediaUrl
-              ? { messageParams: { headerMediaUrl } }
-              : {}),
-          };
-        });
+          const apiRecipients = batch.map((r) => {
+            const frozen = frozenTemplateParams(r.template_params);
+            return {
+              phone: r.contact?.phone ?? '',
+              contact_id: r.contact_id,
+              recipient_id: r.id,
+              // Legacy sends replay frozen params; semantic sends carry only
+              // contact identity for server-side preparation.
+              ...(semantic ? {} : frozen),
+              ...(!semantic &&
+              !frozen.messageParams &&
+              isMediaHeader &&
+              headerMediaUrl
+                ? { messageParams: { headerMediaUrl } }
+                : {}),
+            };
+          });
 
-        if (apiRecipients.length === 0) continue;
+          if (apiRecipients.length === 0) continue;
 
-        try {
-          // Send the batch, waiting out a 429 rather than writing the
-          // whole batch off as failed. Only 429 is replayed — see
-          // batchRetryDelayMs for why nothing else can be.
-          let data: { error?: string; results?: unknown[] } = {};
-          for (let attempt = 1; ; attempt++) {
-            const res = await fetch('/api/whatsapp/broadcast', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                recipients: apiRecipients,
-                broadcast_id: broadcast.id,
-                template_name: payload.template.name,
-                ...(semantic ? { template_id: payload.template.id } : {}),
-                template_language: payload.template.language ?? 'en_US',
-                whatsapp_config_id: payload.whatsappConfigId,
-              }),
-            });
+          try {
+            // Send the batch, waiting out a 429 rather than writing the
+            // whole batch off as failed. Only 429 is replayed — see
+            // batchRetryDelayMs for why nothing else can be.
+            let data: { error?: string; results?: unknown[] } = {};
+            for (let attempt = 1; ; attempt++) {
+              const res = await fetch('/api/whatsapp/broadcast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  recipients: apiRecipients,
+                  broadcast_id: broadcast.id,
+                  template_name: payload.template.name,
+                  ...(semantic ? { template_id: payload.template.id } : {}),
+                  template_language: payload.template.language ?? 'en_US',
+                  whatsapp_config_id: payload.whatsappConfigId,
+                }),
+              });
 
-            data = await res.json();
-            if (res.ok) break;
+              data = await res.json();
+              if (res.ok) break;
 
-            const retryIn =
-              attempt < BATCH_SEND_ATTEMPTS
-                ? batchRetryDelayMs(res.status, res.headers.get('Retry-After'))
-                : null;
-            if (retryIn === null) {
-              throw new Error(data.error || 'Broadcast API request failed');
+              const retryIn =
+                attempt < BATCH_SEND_ATTEMPTS
+                  ? batchRetryDelayMs(
+                      res.status,
+                      res.headers.get('Retry-After')
+                    )
+                  : null;
+              if (retryIn === null) {
+                throw new Error(data.error || 'Broadcast API request failed');
+              }
+              await sleep(retryIn);
+              const renewed = await renewWizardDeliveryLease(
+                supabase,
+                broadcast.id,
+                heldLease!
+              );
+              if (renewed.status !== 'held')
+                throw new BroadcastDeliveryInterrupted(broadcast.id);
+              heldLease = renewed.lease;
             }
-            await sleep(retryIn);
+          } catch (error) {
+            if (error instanceof BroadcastDeliveryInterrupted) throw error;
+            // A lost response does not prove delivery failed. The server owns
+            // durable recipient outcomes; never overwrite its acceptance/guard.
           }
-        } catch {
-          // A lost response does not prove delivery failed. The server owns
-          // durable recipient outcomes; never overwrite its acceptance/guard.
+
+          const progressPct =
+            30 + Math.round(((i + batch.length) / totalRecipients) * 60);
+          setProgress(progressPct);
+
+          if (i + SEND_BATCH_SIZE < pendingRecipients.length) {
+            await sleep(SEND_BATCH_DELAY_MS);
+          }
         }
 
-        const progressPct =
-          30 + Math.round(((i + batch.length) / totalRecipients) * 60);
-        setProgress(progressPct);
-
-        if (i + SEND_BATCH_SIZE < pendingRecipients.length) {
-          await sleep(SEND_BATCH_DELAY_MS);
+        // ── Step 5: Finalize status ───────────────────────────────────
+        // Aggregate counts are maintained by the DB trigger (migration
+        // 003); server batches finalize status from recipient rows.
+        setProgress(95);
+        // The batch endpoint finalizes from durable recipient rows. Local
+        // request counters must not overwrite accepted or in-flight outcomes.
+        setProgress(100);
+        return broadcast.id;
+      } finally {
+        if (heldLease !== null) {
+          try {
+            await supabase.rpc('release_broadcast_delivery_lease', {
+              p_broadcast_id: broadcast.id,
+              p_held: heldLease,
+            });
+          } catch {
+            throw new BroadcastDeliveryInterrupted(broadcast.id);
+          }
         }
       }
-
-      // ── Step 5: Finalize status ───────────────────────────────────
-      // Aggregate counts are maintained by the DB trigger (migration
-      // 003); server batches finalize status from recipient rows.
-      setProgress(95);
-      // The batch endpoint finalizes from durable recipient rows. Local
-      // request counters must not overwrite accepted or in-flight outcomes.
-      setProgress(100);
-      return broadcast.id;
     } finally {
       setIsProcessing(false);
     }

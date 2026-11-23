@@ -10,7 +10,10 @@ function readColumn(row: Row, column: string): unknown {
   return json?.[jsonKey] ?? null;
 }
 
-export function createFakeDb(tables: FakeTables) {
+export function createFakeDb(
+  tables: FakeTables,
+  failingTables: ReadonlySet<string> = new Set()
+) {
   let idCounter = 0;
 
   function from(table: string) {
@@ -23,6 +26,13 @@ export function createFakeDb(tables: FakeTables) {
     let headCount = false;
 
     const execute = () => {
+      if (failingTables.has(table)) {
+        return {
+          data: null,
+          error: { message: `${table} unavailable` },
+          count: null,
+        };
+      }
       const rows = tables[table];
       if (op === 'insert') {
         return {
@@ -109,7 +119,7 @@ export function createFakeDb(tables: FakeTables) {
         const data = Array.isArray(result.data)
           ? (result.data[0] ?? null)
           : null;
-        return { data, error: null };
+        return { data, error: result.error };
       },
       then: (resolve: (r: ReturnType<typeof execute>) => unknown) =>
         Promise.resolve().then(() => resolve(execute())),

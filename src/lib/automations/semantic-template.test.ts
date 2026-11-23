@@ -117,7 +117,7 @@ vi.mock('./admin-client', () => ({
           )
             ? { id: 'owned' }
             : table === 'contacts'
-              ? { id: 'recipient' }
+              ? { id: 'recipient', phone_normalized: '14155550123' }
               : table === 'automations'
                 ? h.automation
                 : table === 'automation_steps'

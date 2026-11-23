@@ -159,25 +159,29 @@ export function Step2SelectAudience({
     fetchFields();
   }, [accountId, audience.type]);
 
+  const estimateSeq = useRef(0);
   const fetchEstimatedCount = useCallback(async () => {
+    const seq = ++estimateSeq.current;
     setLoadingCount(true);
     try {
       if (!accountId) {
         setEstimatedCount(null);
         return;
       }
-      setEstimatedCount(
-        await countAudience(createClient(), audience, accountId)
-      );
+      const count = await countAudience(createClient(), audience, accountId);
+      if (seq === estimateSeq.current) setEstimatedCount(count);
     } catch {
-      setEstimatedCount(null);
+      if (seq === estimateSeq.current) setEstimatedCount(null);
     } finally {
-      setLoadingCount(false);
+      if (seq === estimateSeq.current) setLoadingCount(false);
     }
   }, [audience, accountId]);
 
   useEffect(() => {
     fetchEstimatedCount();
+    return () => {
+      estimateSeq.current += 1;
+    };
   }, [fetchEstimatedCount]);
 
   async function handleCsvChange(e: React.ChangeEvent<HTMLInputElement>) {

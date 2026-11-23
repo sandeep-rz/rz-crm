@@ -1,7 +1,8 @@
 import type { MessageTemplate } from '@/types';
 import type { MessageVariableDefinition } from '@/lib/message-variables/catalog';
 import {
-  extractVariableIndices,
+  extractTemplateVariables,
+  isNamedVariable,
   validateTemplatePayload,
   type TemplatePayload,
 } from './template-validators';
@@ -15,6 +16,7 @@ export interface TemplateVariableOccurrence {
   component: 'HEADER' | 'BODY' | 'BUTTON';
   button_index?: number;
   position: number;
+  parameter_name?: string;
   variable_key: string;
   sample: string;
 }
@@ -172,19 +174,24 @@ export function positionalSlots(
   >
 ) {
   const slots: Array<
-    Pick<TemplateVariableOccurrence, 'component' | 'button_index' | 'position'>
+    Pick<
+      TemplateVariableOccurrence,
+      'component' | 'button_index' | 'position' | 'parameter_name'
+    >
   > = [];
   const add = (
     text: string,
     component: TemplateVariableOccurrence['component'],
     button_index?: number
   ) => {
-    for (const position of extractVariableIndices(text))
+    extractTemplateVariables(text).forEach((key, index) =>
       slots.push({
         component,
         ...(button_index === undefined ? {} : { button_index }),
-        position,
-      });
+        position: isNamedVariable(key) ? index + 1 : Number(key),
+        ...(isNamedVariable(key) ? { parameter_name: key } : {}),
+      })
+    );
   };
   if (template.header_type === 'text')
     add(template.header_content ?? '', 'HEADER');
@@ -253,11 +260,14 @@ export function mapImportedTemplate(
     component: TemplateVariableOccurrence['component'],
     button_index?: number
   ) => {
-    const result = text.replace(/\{\{(\d+)\}\}/g, (_, n: string) => {
+    const result = text.replace(/\{\{([A-Za-z0-9_]+)\}\}/g, (_, n: string) => {
+      const keyPosition = isNamedVariable(n)
+        ? extractTemplateVariables(text).indexOf(n) + 1
+        : Number(n);
       const entry = occurrences.find(
         (m) =>
           slotIdentity(m) ===
-          slotIdentity({ component, button_index, position: Number(n) })
+          slotIdentity({ component, button_index, position: keyPosition })
       );
       if (!entry)
         throw new Error('Unsupported or unmapped template parameter.');
@@ -374,9 +384,13 @@ export function reconcileTemplateSemantics(
 }
 
 export function canMapImportedTemplate(template: MessageTemplate): boolean {
-  return (
-    template.template_origin === 'meta' &&
-    template.variable_configuration_status === 'needs_mapping' &&
-    positionalSlots(template).length > 0
-  );
+  try {
+    return (
+      template.template_origin === 'meta' &&
+      template.variable_configuration_status === 'needs_mapping' &&
+      positionalSlots(template).length > 0
+    );
+  } catch {
+    return false;
+  }
 }

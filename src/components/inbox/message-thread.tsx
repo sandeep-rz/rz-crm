@@ -63,6 +63,7 @@ import { TemplatePicker } from './template-picker';
 import { AiThreadBanner } from './ai-thread-banner';
 import { buildReplyPreview } from './reply-quote';
 import { renderTemplateBody } from '@/lib/whatsapp/template-body';
+import { resolveAssignmentResult } from '@/lib/inbox/assignment';
 import { contactHandle } from '@/lib/whatsapp/wa-identity';
 import { toast } from 'sonner';
 import { DeleteConversationDialog } from './delete-conversation-dialog';
@@ -1007,10 +1008,12 @@ export function MessageThread({
       if (!conversation) return;
 
       const supabase = createClient();
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('conversations')
         .update({ assigned_agent_id: agentId })
-        .eq('id', conversation.id);
+        .eq('id', conversation.id)
+        .select('assigned_agent_id')
+        .single();
 
       if (error) {
         console.error('Failed to update assignment:', error);
@@ -1018,7 +1021,9 @@ export function MessageThread({
         return;
       }
 
-      onAssignChange(conversation.id, agentId);
+      const result = resolveAssignmentResult(agentId, data?.assigned_agent_id);
+      if (result.rejected) toast.error(t('assigneeNoLongerMember'));
+      onAssignChange(conversation.id, result.assignedAgentId);
     },
     [conversation, onAssignChange, t]
   );

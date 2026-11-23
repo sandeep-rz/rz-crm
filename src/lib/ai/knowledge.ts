@@ -20,8 +20,7 @@ interface MatchRow {
 }
 
 /**
- * (Re)build the chunks for one document. Deletes the document's
- * existing chunks, re-chunks the content, and — when the account has an
+ * Atomically rebuild chunks for the current document content; when the account has an
  * embeddings key — embeds each chunk. Runs under whatever client the
  * caller passes (service-role for ingest routes).
  */
@@ -34,21 +33,12 @@ export async function ingestDocument(
 ): Promise<IngestResult> {
   const chunks = chunkText(content);
 
-  // Replace, don't append — re-ingest must be idempotent.
-  const { error: delErr } = await db
-    .from('ai_knowledge_chunks')
-    .delete()
-    .eq('document_id', documentId);
-  if (delErr) throw delErr;
-
-  if (chunks.length === 0) return { keywordOnly: false, embedError: null };
-
   // Embed if a key is set, but DON'T let an embedding failure stop the
   // chunks from being stored: a failed embed must still leave the
   // document searchable lexically.
   let embeddings: number[][] | null = null;
   let embedError: unknown = null;
-  if (config.embeddingsApiKey) {
+  if (config.embeddingsApiKey && chunks.length > 0) {
     try {
       embeddings = await embedTexts(config.embeddingsApiKey, chunks);
     } catch (err) {
@@ -64,8 +54,16 @@ export async function ingestDocument(
     embedding: embeddings ? toVectorLiteral(embeddings[i]) : null,
   }));
 
-  const { error: insErr } = await db.from('ai_knowledge_chunks').insert(rows);
-  if (insErr) throw insErr;
+  // A single transaction locks the parent, verifies the content still matches,
+  // and replaces all chunks. Failed inserts roll back; concurrent edits cannot
+  // install an index generated from older content.
+  const { error } = await db.rpc('replace_ai_knowledge_chunks', {
+    p_account_id: accountId,
+    p_document_id: documentId,
+    p_content: content,
+    p_chunks: rows,
+  });
+  if (error) throw error;
 
   return { keywordOnly: embedError !== null, embedError };
 }

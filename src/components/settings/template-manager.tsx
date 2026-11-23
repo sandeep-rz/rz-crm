@@ -898,7 +898,7 @@ export function TemplateManager() {
                   {slot.button_index === undefined
                     ? ''
                     : ` ${slot.button_index + 1}`}{' '}
-                  {`{{${slot.position}}}`}
+                  {`{{${slot.parameter_name ?? slot.position}}}`}
                 </Label>
                 <VariableSelection
                   label={`Map ${slotIdentity(slot)}`}

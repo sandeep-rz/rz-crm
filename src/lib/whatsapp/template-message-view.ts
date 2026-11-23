@@ -42,7 +42,7 @@ export function buildTemplateMessageSnapshot(
       template.header_content,
       params.filter((p) => p.type === 'text').map((p) => p.text)
     );
-    if (!/\{\{\d+\}\}/.test(text)) header = { type: 'text', text };
+    if (!/\{\{|\}\}/.test(text)) header = { type: 'text', text };
   } else if (template.header_type && template.header_type !== 'text') {
     const parameter = params[0];
     const media =

@@ -57,6 +57,7 @@ import {
   type ContactStay,
   type StayReadClient,
 } from '@/lib/contacts/pms-stays';
+import { planCustomValueWrites } from '@/lib/contacts/custom-value-writes';
 import { contactHandle } from '@/lib/whatsapp/wa-identity';
 import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
 
@@ -409,24 +410,24 @@ export function ContactDetailView({
     setSavingCustom(true);
 
     try {
-      // Delete existing values and re-insert
-      await supabase
-        .from('contact_custom_values')
-        .delete()
-        .eq('contact_id', contactId);
+      const { upserts, clearedFieldIds } = planCustomValueWrites(
+        contactId,
+        customValues
+      );
 
-      const rows = Object.entries(customValues)
-        .filter(([, val]) => val.trim())
-        .map(([fieldId, val]) => ({
-          contact_id: contactId,
-          custom_field_id: fieldId,
-          value: val.trim(),
-        }));
-
-      if (rows.length > 0) {
+      if (upserts.length > 0) {
         const { error } = await supabase
           .from('contact_custom_values')
-          .insert(rows);
+          .upsert(upserts, { onConflict: 'contact_id,custom_field_id' });
+        if (error) throw error;
+      }
+
+      if (clearedFieldIds.length > 0) {
+        const { error } = await supabase
+          .from('contact_custom_values')
+          .delete()
+          .eq('contact_id', contactId)
+          .in('custom_field_id', clearedFieldIds);
         if (error) throw error;
       }
 
@@ -625,7 +626,7 @@ export function ContactDetailView({
               >
                 <TabsList
                   variant="line"
-                  className="border-border bg-popover h-12 w-full max-w-none [scrollbar-width:none] justify-start gap-1 overflow-x-auto border-b px-4 group-data-horizontal/tabs:h-12 sm:px-6 [&::-webkit-scrollbar]:hidden"
+                  className="border-border bg-popover h-12 w-full max-w-none justify-start gap-1 overflow-x-auto border-b px-4 [scrollbar-width:none] group-data-horizontal/tabs:h-12 sm:px-6 [&::-webkit-scrollbar]:hidden"
                 >
                   <TabsTrigger value="details" className={tabTriggerClass}>
                     {t('tabs.details')}
@@ -831,7 +832,7 @@ export function ContactDetailView({
                           </div>
                           <p className="text-muted-foreground mt-1.5 text-xs">
                             {new Date(note.created_at).toLocaleDateString(
-                              'en-US',
+                              locale,
                               {
                                 month: 'short',
                                 day: 'numeric',

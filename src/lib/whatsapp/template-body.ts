@@ -14,6 +14,10 @@
 // sends landed in the Inbox as empty bubbles.
 // ============================================================
 
+import {
+  extractTemplateVariables,
+  isNamedVariable,
+} from './template-validators';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
@@ -26,10 +30,18 @@ import type { MessageTemplate } from '@/types';
  * `{{2}}` instead of a silently truncated sentence.
  */
 export function renderTemplateBody(body: string, params: string[]): string {
-  return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
-    const idx = Number(raw) - 1;
-    return params[idx] ?? `{{${raw}}}`;
-  });
+  let keys: string[];
+  try {
+    keys = extractTemplateVariables(body);
+  } catch {
+    return body;
+  }
+  return body.replace(
+    /\{\{([A-Za-z0-9_]+)\}\}/g,
+    (token, key: string) =>
+      params[isNamedVariable(key) ? keys.indexOf(key) : Number(key) - 1] ??
+      token
+  );
 }
 
 /**

@@ -4,6 +4,7 @@ import { requireRole, toErrorResponse } from '@/lib/auth/account';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
 import { validateFlowForActivation } from '@/lib/flows/validate';
+import { MAX_FLOW_TIMEOUT_HOURS } from '@/lib/flows/types';
 import { getT } from '@/lib/i18n/translate';
 
 const t = getT('Api');
@@ -112,40 +113,61 @@ export async function PUT(
   if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
 
   const body = (await request.json().catch(() => null)) as PutBody | null;
-  if (!body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return NextResponse.json(
       { error: t('common.invalidJson') },
       { status: 400 }
     );
   }
-  if (body.name !== undefined && !body.name.trim()) {
+  if (
+    body.name !== undefined &&
+    (typeof body.name !== 'string' || !body.name.trim())
+  ) {
     return NextResponse.json({ error: t('flows.nameEmpty') }, { status: 400 });
   }
 
+  if (body.nodes !== undefined && !Array.isArray(body.nodes))
+    return NextResponse.json(
+      { error: 'Nodes must be an array' },
+      { status: 400 }
+    );
+  if (body.fallback_policy !== undefined) {
+    const policy = body.fallback_policy;
+    if (
+      !policy ||
+      typeof policy !== 'object' ||
+      Array.isArray(policy) ||
+      (policy.on_timeout_hours !== undefined &&
+        (typeof policy.on_timeout_hours !== 'number' ||
+          !Number.isFinite(policy.on_timeout_hours) ||
+          policy.on_timeout_hours <= 0 ||
+          policy.on_timeout_hours > MAX_FLOW_TIMEOUT_HOURS))
+    )
+      return NextResponse.json(
+        {
+          error: t('flows.timeoutHoursInvalid', {
+            max: MAX_FLOW_TIMEOUT_HOURS,
+          }),
+        },
+        { status: 400 }
+      );
+  }
   const admin = supabaseAdmin();
 
-  const activeBlockers = await validateIfActive(admin, id, body);
+  let activeBlockers;
+  try {
+    activeBlockers = await validateIfActive(admin, id, body);
+  } catch {
+    return NextResponse.json(
+      { error: 'Flow validation is temporarily unavailable' },
+      { status: 500 }
+    );
+  }
   if (activeBlockers) {
     return NextResponse.json(
       { error: t('flows.cannotSaveActive'), issues: activeBlockers },
       { status: 422 }
     );
-  }
-
-  if (body.nodes !== undefined) {
-    const { error: nodesErr } = await guard.supabase.rpc('replace_flow_nodes', {
-      p_flow_id: id,
-      p_nodes: body.nodes.map((n) => ({
-        node_key: n.node_key,
-        node_type: n.node_type,
-        config: n.config,
-        position_x: n.position_x ?? 0,
-        position_y: n.position_y ?? 0,
-      })),
-    });
-    if (nodesErr) {
-      return NextResponse.json({ error: nodesErr.message }, { status: 500 });
-    }
   }
 
   const flowPatch: Record<string, unknown> = {
@@ -169,13 +191,22 @@ export async function PUT(
     flowPatch.whatsapp_config_id = connection.id;
   }
 
-  const { error: updErr } = await admin
-    .from('flows')
-    .update(flowPatch)
-    .eq('id', id);
-  if (updErr) {
+  const { error: updErr } = await guard.supabase.rpc('replace_flow_graph', {
+    p_flow_id: id,
+    p_nodes:
+      body.nodes === undefined
+        ? null
+        : body.nodes.map((n) => ({
+            node_key: n.node_key,
+            node_type: n.node_type,
+            config: n.config,
+            position_x: n.position_x ?? 0,
+            position_y: n.position_y ?? 0,
+          })),
+    p_flow: flowPatch,
+  });
+  if (updErr)
     return NextResponse.json({ error: updErr.message }, { status: 500 });
-  }
 
   // Re-fetch and return the new state — the editor uses the response
   // to reconcile its local form state.
@@ -195,22 +226,23 @@ async function validateIfActive(
   flowId: string,
   body: PutBody
 ): Promise<ReturnType<typeof validateFlowForActivation> | null> {
-  const { data: current } = await admin
+  const { data: current, error: currentError } = await admin
     .from('flows')
     .select('name, status, trigger_type, trigger_config, entry_node_id')
     .eq('id', flowId)
     .maybeSingle();
-  if (!current || current.status !== 'active') return null;
+  if (currentError || !current) throw new Error('Flow lookup failed');
+  if (current.status !== 'active') return null;
 
-  const nodes =
-    body.nodes ??
-    (
-      await admin
-        .from('flow_nodes')
-        .select('node_key, node_type, config')
-        .eq('flow_id', flowId)
-    ).data ??
-    [];
+  let nodes = body.nodes;
+  if (nodes === undefined) {
+    const result = await admin
+      .from('flow_nodes')
+      .select('node_key, node_type, config')
+      .eq('flow_id', flowId);
+    if (result.error) throw new Error('Flow node lookup failed');
+    nodes = result.data ?? [];
+  }
 
   const issues = validateFlowForActivation(
     {

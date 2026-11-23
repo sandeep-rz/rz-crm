@@ -79,21 +79,21 @@ function buildUpsertRow(
 
 async function upsertTemplateRow(
   supabase: SupabaseClient,
-  row: ReturnType<typeof buildUpsertRow>
+  row: ReturnType<typeof buildUpsertRow>,
+  existingDraftId: string | null
 ) {
-  const { data: existing } = await supabase
-    .from('message_templates')
-    .select('id')
-    .eq('account_id', row.account_id)
-    .eq('whatsapp_config_id', row.whatsapp_config_id)
-    .eq('name', row.name)
-    .eq('language', row.language)
-    .maybeSingle();
-  if (existing) {
+  if (existingDraftId) {
+    // Keep the author and never overwrite a row another submit/sync has linked to Meta.
+    const { user_id: _author, ...patch } = row;
+    void _author;
     return supabase
       .from('message_templates')
-      .update(row)
-      .eq('id', existing.id)
+      .update(patch)
+      .eq('id', existingDraftId)
+      .eq('account_id', row.account_id)
+      .eq('whatsapp_config_id', row.whatsapp_config_id)
+      .eq('status', 'DRAFT')
+      .is('meta_template_id', null)
       .select()
       .single();
   }
@@ -190,14 +190,14 @@ export async function POST(request: Request) {
     // template through the create/upsert path; edits use the lifecycle endpoint.
     const { data: existing, error } = await supabase
       .from('message_templates')
-      .select('id, meta_template_id')
+      .select('id, meta_template_id, status')
       .eq('account_id', accountId)
       .eq('whatsapp_config_id', config.id)
       .eq('name', payload.name)
       .eq('language', payload.language)
       .maybeSingle();
     if (error) throw error;
-    if (existing?.meta_template_id)
+    if (existing && (existing.meta_template_id || existing.status !== 'DRAFT'))
       return NextResponse.json(
         {
           error: 'This template is already submitted. Use Edit to change it.',
@@ -268,7 +268,8 @@ export async function POST(request: Request) {
             status: 'DRAFT',
             metaTemplateId: null,
             submissionError: failure.stored,
-          })
+          }),
+          existing?.id ?? null
         );
         const isRateLimit = failure.rateLimited;
         return NextResponse.json(
@@ -290,7 +291,8 @@ export async function POST(request: Request) {
         status: normalizeStatus(metaStatus),
         metaTemplateId,
         submissionError: null,
-      })
+      }),
+      existing?.id ?? null
     );
 
     if (upsertErr) {

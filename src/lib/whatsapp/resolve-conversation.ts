@@ -163,12 +163,6 @@ export async function resolveConversationByPhone(
   const existing = await findExistingContact(db, accountId, sanitized);
   if (existing) {
     contactId = existing.id;
-    if (name && name !== existing.name) {
-      await db
-        .from('contacts')
-        .update({ name, updated_at: new Date().toISOString() })
-        .eq('id', existing.id);
-    }
   } else {
     const { data: created, error: createErr } = await db
       .from('contacts')

@@ -31,6 +31,7 @@ interface Script {
   existingConversationByCall?: ({ id: string } | null)[];
   insertedConversationId?: string; // conversations insert -> single
   insertConversationError?: { code?: string } | null;
+  contactUpdates?: Record<string, unknown>[];
   conversationConnectionFilters?: string[];
   insertedConversationRows?: Array<Record<string, unknown>>;
 }
@@ -49,7 +50,8 @@ function makeDb(script: Script): SupabaseClient {
       if (table === 'conversations') script.insertedConversationRows?.push(row);
       return builder;
     },
-    update: () => {
+    update: (patch: Record<string, unknown>) => {
+      if (table === 'contacts') script.contactUpdates?.push(patch);
       mode = 'update';
       return builder;
     },
@@ -287,4 +289,27 @@ describe('resolveConversationByPhone', () => {
       contactCreated: false,
     });
   });
+});
+
+it('does not rename an existing CRM contact while resolving an outbound send', async () => {
+  const contactUpdates: Record<string, unknown>[] = [];
+  const db = makeDb({
+    config: { user_id: 'owner-1' },
+    contactCandidates: [
+      { id: 'c1', phone: '14155550123', name: 'Host chosen name' },
+    ],
+    existingConversation: { id: 'cv1' },
+    contactUpdates,
+  });
+  expect(
+    (
+      await resolveConversationByPhone(
+        db,
+        'acct',
+        '+14155550123',
+        'External sender name'
+      )
+    ).contactId
+  ).toBe('c1');
+  expect(contactUpdates).toEqual([]);
 });

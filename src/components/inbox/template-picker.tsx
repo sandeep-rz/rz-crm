@@ -21,7 +21,10 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, ChevronRight, LayoutTemplate, Loader2 } from 'lucide-react';
-import { extractVariableIndices } from '@/lib/whatsapp/template-validators';
+import {
+  extractVariableIndices,
+  extractTemplateVariables,
+} from '@/lib/whatsapp/template-validators';
 import { useLocale, useTranslations } from 'next-intl';
 import {
   renderSemanticText,
@@ -53,8 +56,9 @@ interface TemplatePickerProps {
 }
 
 function renderBodyPreview(body: string, params: string[]): string {
-  return body.replace(/\{\{(\d+)\}\}/g, (_, raw) => {
-    const idx = Number(raw) - 1;
+  const keys = extractTemplateVariables(body);
+  return body.replace(/\{\{([A-Za-z0-9_]+)\}\}/g, (_, raw) => {
+    const idx = keys.indexOf(raw);
     const value = params[idx];
     return value && value.trim().length > 0 ? value : `{{${raw}}}`;
   });
@@ -72,14 +76,14 @@ interface UrlButtonSlot {
  * send-message path doesn't 400 on missing parameters.
  */
 function collectVariableSlots(template: MessageTemplate): {
-  bodyVars: number[];
+  bodyVars: string[];
   headerVarCount: number;
   urlButtonSlots: UrlButtonSlot[];
 } {
-  const bodyVars = extractVariableIndices(template.body_text);
+  const bodyVars = extractTemplateVariables(template.body_text);
   const headerVarCount =
     template.header_type === 'text' && template.header_content
-      ? extractVariableIndices(template.header_content).length
+      ? extractTemplateVariables(template.header_content).length
       : 0;
   const urlButtonSlots: UrlButtonSlot[] = [];
   (template.buttons ?? []).forEach((b, i) => {

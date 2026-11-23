@@ -95,6 +95,7 @@ interface WhatsAppMessage {
   button?: { text?: string; payload?: string };
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string };
+  errors?: MetaStatusError[];
 }
 
 /** One entry of a failed status's `errors` array, as Meta sends it. */
@@ -713,13 +714,20 @@ async function processMessage(
   }
 
   // Parse message content based on type
-  const { contentText, mediaUrl, mediaType, interactiveReplyId } =
-    await parseMessageContent(
-      message,
-      accessToken,
-      mirrorMedia ? { accountId } : null,
-      whatsappConfigId
-    );
+  const {
+    contentText,
+    mediaUrl,
+    mediaType,
+    interactiveReplyId,
+    errorCode,
+    errorTitle,
+    errorDetails,
+  } = await parseMessageContent(
+    message,
+    accessToken,
+    mirrorMedia ? { accountId } : null,
+    whatsappConfigId
+  );
 
   // Resolve swipe-reply context if present. A missing parent is fine —
   // we just store NULL and the UI renders the message without a quote.
@@ -811,6 +819,9 @@ async function processMessage(
         created_at: new Date(parseInt(message.timestamp) * 1000).toISOString(),
         reply_to_message_id: replyToInternalId,
         coexistence_metadata: liveMetadata,
+        error_code: errorCode,
+        error_title: errorTitle,
+        error_details: errorDetails,
         // Only populated for content_type='interactive'. Migration 010 added
         // the column; null for every other content_type so existing inserts
         // behave identically.
@@ -922,8 +933,8 @@ async function processMessage(
   //
   // Awaited (not fire-and-forget) because we need the `consumed`
   // result before deciding whether to dispatch automations. The
-  // runner has its own try/catch and never throws. Accounts with
-  // no active flows take the runner's early-exit "no_match" path
+  // runner isolates execution errors, but pre-effect read failures propagate
+  // so the durable stage can retry. Accounts with no active flows take the runner's early-exit "no_match" path
   // basically for free (one indexed SELECT for the active run).
   // ============================================================
   const flowResult = await deliveryStage(supabaseAdmin(), receipt, 'flow', () =>
@@ -1069,6 +1080,9 @@ async function parseMessageContent(
    * tap with the right affordance. Null for everything else.
    */
   interactiveReplyId: string | null;
+  errorCode: number | null;
+  errorTitle: string | null;
+  errorDetails: string | null;
 }> {
   // getMediaUrl signature is (mediaId, accessToken) — earlier code had
   // the args swapped, so every verification hit an invalid Meta URL and
@@ -1126,6 +1140,9 @@ async function parseMessageContent(
     mediaUrl: null,
     mediaType: null,
     interactiveReplyId: null,
+    errorCode: null as number | null,
+    errorTitle: null as string | null,
+    errorDetails: null as string | null,
   };
 
   switch (message.type) {
@@ -1253,11 +1270,20 @@ async function parseMessageContent(
       };
     }
 
-    default:
+    default: {
+      const reason = message.errors?.[0];
+      const detail =
+        reason?.error_data?.details || reason?.message || reason?.title;
       return {
         ...empty,
-        contentText: `[Unsupported message type: ${message.type}]`,
+        contentText: detail
+          ? `[Unsupported message type: ${message.type} — ${detail}]`
+          : `[Unsupported message type: ${message.type}]`,
+        errorCode: reason?.code ?? null,
+        errorTitle: reason?.title ?? null,
+        errorDetails: reason?.error_data?.details ?? reason?.message ?? null,
       };
+    }
   }
 }
 

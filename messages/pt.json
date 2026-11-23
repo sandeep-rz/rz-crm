@@ -472,7 +472,8 @@
       "loadOlderFailed": "Não foi possível carregar as mensagens anteriores.",
       "networkError": "erro de rede",
       "documentFallback": "Documento",
-      "you": "Você"
+      "you": "Você",
+      "assigneeNoLongerMember": "Esse colega não é mais membro desta conta"
     },
     "sessionTimer": {
       "expired": "Expirada",
@@ -992,7 +993,8 @@
       "toastMarkedLost": "Marcado como perdido",
       "toastReopened": "Negócio reaberto",
       "toastFailedDelete": "Falha ao excluir o negócio",
-      "toastDeleted": "Negócio excluído"
+      "toastDeleted": "Negócio excluído",
+      "searchContacts": "Buscar contatos por nome ou telefone"
     },
     "settings": {
       "managePipeline": "Gerenciar pipeline",
@@ -2634,7 +2636,9 @@
       "expiredTitle": "Convite expirado",
       "expiredBody": "Este convite expirou. Peça ao administrador da conta para enviar um novo — leva apenas alguns segundos para gerar.",
       "serverErrorTitle": "Algo deu errado",
-      "serverErrorBody": "Não conseguimos verificar este convite agora. Tente recarregar a página em instantes."
+      "serverErrorBody": "Não conseguimos verificar este convite agora. Tente recarregar a página em instantes.",
+      "rateLimitedTitle": "Muitas tentativas",
+      "rateLimitedBody": "Você verificou este convite muitas vezes em pouco tempo. Aguarde um minuto e tente novamente."
     },
     "acceptFailed": "Falha ao aceitar o convite",
     "welcome": "Bem-vindo à equipe",
@@ -2987,7 +2991,8 @@
       "setTagNeedsTag": "O nó Marcar contato precisa de uma tag para aplicar.",
       "setTagNeedsNext": "O nó Marcar contato precisa apontar para um próximo nó.",
       "setTagMissingNext": "O nó Marcar contato aponta para um nó inexistente: \"{key}\".",
-      "unknownNodeType": "Tipo de nó desconhecido: \"{type}\"."
+      "unknownNodeType": "Tipo de nó desconhecido: \"{type}\".",
+      "autoAdvanceChainTooLong": "O nó \"{key}\" inicia {count} etapas seguidas que rodam sem esperar pelo cliente. Um fluxo pode executar no máximo {max} etapas assim antes de esperar; adicione uma etapa de botões, lista ou pergunta para dividir a sequência."
     },
     "automations": {
       "needsStep": "automações ativas precisam de pelo menos uma etapa",
@@ -3200,7 +3205,8 @@
       "nameEmpty": "O nome não pode ficar vazio",
       "unknownTemplate": "Modelo de fluxo desconhecido \"{slug}\"",
       "insertFailed": "falha ao criar o fluxo",
-      "nameRequired": "O nome é obrigatório"
+      "nameRequired": "O nome é obrigatório",
+      "timeoutHoursInvalid": "on_timeout_hours deve ser um número maior que 0 e no máximo {max}."
     },
     "quickReplies": {
       "kindInvalid": "O tipo deve ser \"text\" ou \"interactive\"",

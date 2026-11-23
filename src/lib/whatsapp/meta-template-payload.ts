@@ -40,7 +40,10 @@ export function buildMetaTemplateComponents(
     if (entries.length)
       out.push({
         type: component === 'HEADER' ? 'header' : 'body',
-        parameters: entries.map((m) => text(m.variable_key)),
+        parameters: entries.map((m) => ({
+          ...text(m.variable_key),
+          ...(m.parameter_name ? { parameter_name: m.parameter_name } : {}),
+        })),
       });
   }
   const header = prepared.template.header_type;

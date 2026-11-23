@@ -1,9 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { useAuth } from '@/hooks/use-auth';
+import {
+  readNotifications,
+  useNotificationQuery,
+} from '@/hooks/use-notification-query';
 import type { Notification } from '@/types';
 import { Bell, CheckCheck, Loader2, UserPlus } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -21,97 +24,47 @@ const TYPE_ICON: Record<Notification['type'], typeof Bell> = {
 export default function NotificationsPage() {
   const t = useTranslations('Notifications');
   const router = useRouter();
-  const { accountId } = useAuth();
-  const [notifications, setNotifications] = useState<Notification[] | null>(
-    null
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [markingAll, setMarkingAll] = useState(false);
-
-  const load = useCallback(async () => {
-    if (!accountId) return;
-    const supabase = createClient();
-    const { data, error: fetchErr } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false })
-      .limit(100);
-    if (fetchErr) {
-      setError(fetchErr.message);
-      return;
-    }
-    setNotifications((data ?? []) as Notification[]);
-  }, [accountId]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    load();
-  }, [load]);
-
-  // Realtime — new assignments appear without a refresh, and a
-  // "mark all read" fired from another tab/device stays in sync here.
-  useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel('notifications-page')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'notifications' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const row = payload.new as Notification;
-            setNotifications((prev) => {
-              if (!prev) return [row];
-              if (prev.some((n) => n.id === row.id)) return prev;
-              return [row, ...prev];
-            });
-          } else if (payload.eventType === 'UPDATE') {
-            const row = payload.new as Notification;
-            setNotifications(
-              (prev) =>
-                prev?.map((n) => (n.id === row.id ? { ...n, ...row } : n)) ??
-                prev
-            );
-          } else if (payload.eventType === 'DELETE') {
-            const oldRow = payload.old as Partial<Notification>;
-            setNotifications(
-              (prev) => prev?.filter((n) => n.id !== oldRow.id) ?? prev
-            );
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+  const {
+    data: notifications,
+    error,
+    refresh: load,
+    update,
+    isCurrent,
+    scope,
+    accountId,
+    userId,
+  } = useNotificationQuery(readNotifications);
+  const [markingScope, setMarkingScope] = useState<string | null>(null);
+  const markingAll = scope !== null && markingScope === scope;
 
   const markRead = useCallback(
     async (id: string) => {
+      if (!accountId || !userId || !isCurrent()) return;
       // Optimistic — the row is already visually "read" by the time the
       // request lands, so the UI doesn't wait on the round-trip.
-      setNotifications(
-        (prev) =>
-          prev?.map((n) =>
-            n.id === id && !n.read_at
-              ? { ...n, read_at: new Date().toISOString() }
-              : n
-          ) ?? prev
+      update((rows) =>
+        rows.map((n) =>
+          n.id === id && !n.read_at
+            ? { ...n, read_at: new Date().toISOString() }
+            : n
+        )
       );
-      const supabase = createClient();
-      const { error: updateErr } = await supabase
-        .from('notifications')
-        .update({ read_at: new Date().toISOString() })
-        .eq('id', id)
-        .is('read_at', null);
-      if (updateErr) {
-        toast.error(t('markReadFailed'));
+      try {
+        const { error: updateError } = await createClient()
+          .from('notifications')
+          .update({ read_at: new Date().toISOString() })
+          .eq('id', id)
+          .eq('account_id', accountId)
+          .eq('user_id', userId)
+          .is('read_at', null);
+        if (isCurrent() && updateError) toast.error(t('markReadFailed'));
+      } catch {
+        if (isCurrent()) toast.error(t('markReadFailed'));
+      } finally {
         load();
       }
     },
-    [load, t]
+    [load, t, accountId, userId, isCurrent, update]
   );
 
   const handleClick = useCallback(
@@ -128,24 +81,44 @@ export default function NotificationsPage() {
     notifications?.filter((n) => !n.read_at).map((n) => n.id) ?? [];
 
   const markAllRead = useCallback(async () => {
-    if (unreadIds.length === 0) return;
-    setMarkingAll(true);
+    if (
+      !unreadIds.length ||
+      !accountId ||
+      !userId ||
+      !scope ||
+      !isCurrent() ||
+      markingAll
+    )
+      return;
+    setMarkingScope(scope);
     const now = new Date().toISOString();
-    setNotifications(
-      (prev) =>
-        prev?.map((n) => (n.read_at ? n : { ...n, read_at: now })) ?? prev
-    );
-    const supabase = createClient();
-    const { error: updateErr } = await supabase
-      .from('notifications')
-      .update({ read_at: now })
-      .is('read_at', null);
-    setMarkingAll(false);
-    if (updateErr) {
-      toast.error(t('markAllFailed'));
+    update((rows) => rows.map((n) => (n.read_at ? n : { ...n, read_at: now })));
+    try {
+      const { error: updateError } = await createClient()
+        .from('notifications')
+        .update({ read_at: now })
+        .eq('account_id', accountId)
+        .eq('user_id', userId)
+        .is('read_at', null);
+      if (!isCurrent()) return;
+      if (updateError) toast.error(t('markAllFailed'));
+    } catch {
+      if (isCurrent()) toast.error(t('markAllFailed'));
+    } finally {
+      setMarkingScope((current) => (current === scope ? null : current));
       load();
     }
-  }, [unreadIds.length, load, t]);
+  }, [
+    unreadIds.length,
+    accountId,
+    userId,
+    scope,
+    isCurrent,
+    markingAll,
+    update,
+    load,
+    t,
+  ]);
 
   if (error) {
     return (

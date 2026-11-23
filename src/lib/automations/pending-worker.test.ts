@@ -77,13 +77,14 @@ describe('runPendingExecutionWorker', () => {
     await expect(
       runPendingExecutionWorker({ db: harness.db, now, resume })
     ).resolves.toEqual({
+      blocked: 0,
       claimed: 1,
       completed: 1,
       retried: 0,
       failed: 0,
     });
     expect(harness.rpc).toHaveBeenCalledWith(
-      'claim_automation_pending_executions',
+      'claim_automation_pending_with_contact_recovery',
       {
         p_batch_size: 50,
         p_now: now.toISOString(),
@@ -114,7 +115,13 @@ describe('runPendingExecutionWorker', () => {
       resume,
     });
 
-    expect(result).toEqual({ claimed: 2, completed: 1, retried: 1, failed: 0 });
+    expect(result).toEqual({
+      blocked: 0,
+      claimed: 2,
+      completed: 1,
+      retried: 1,
+      failed: 0,
+    });
     expect(resume).toHaveBeenCalledTimes(2);
     expect(harness.updates[0]).toEqual({
       payload: {
@@ -143,7 +150,13 @@ describe('runPendingExecutionWorker', () => {
       },
     });
 
-    expect(result).toEqual({ claimed: 1, completed: 0, retried: 0, failed: 1 });
+    expect(result).toEqual({
+      blocked: 0,
+      claimed: 1,
+      completed: 0,
+      retried: 0,
+      failed: 1,
+    });
     expect(harness.updates[0].payload).toMatchObject({
       status: 'failed',
       next_attempt_at: null,

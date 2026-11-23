@@ -10,7 +10,10 @@ import { Step1ChooseTemplate } from '@/components/broadcasts/step1-choose-templa
 import { Step2SelectAudience } from '@/components/broadcasts/step2-select-audience';
 import { Step3Personalize } from '@/components/broadcasts/step3-personalize';
 import { Step4ScheduleSend } from '@/components/broadcasts/step4-schedule-send';
-import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
+import {
+  useBroadcastSending,
+  BroadcastDeliveryInterrupted,
+} from '@/hooks/use-broadcast-sending';
 import { Check } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useWhatsAppCapability } from '@/hooks/use-whatsapp-capability';
@@ -76,6 +79,11 @@ export default function NewBroadcastPage() {
       });
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
+      if (err instanceof BroadcastDeliveryInterrupted) {
+        toast.error(err.message);
+        router.push(`/broadcasts/${err.broadcastId}`);
+        return;
+      }
       // Previously swallowed with console.error — the wizard would
       // just no-op, leaving the user confused. Surface the reason.
       const message = err instanceof Error ? err.message : 'Broadcast failed';

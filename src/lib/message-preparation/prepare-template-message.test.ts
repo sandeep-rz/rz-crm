@@ -5,6 +5,8 @@ import type { TemplatePayload } from '@/lib/whatsapp/template-validators';
 import {
   compileSemanticTemplate,
   importedMetadata,
+  mapImportedTemplate,
+  positionalSlots,
 } from '@/lib/whatsapp/semantic-template';
 import { resolveRuntimeVariables } from '@/lib/message-variables/runtime-resolver';
 import { prepareTemplateMessage } from './prepare-template-message';
@@ -628,4 +630,40 @@ describe('Meta components', () => {
       expect.objectContaining({ code: 'provider_payload_invalid' })
     );
   });
+});
+
+it('prepares imported named variables through the same runtime resolver and Meta builder', async () => {
+  template = {
+    ...template,
+    template_origin: 'meta',
+    variable_configuration_status: 'needs_mapping',
+    body_text: 'Welcome {{guest}} to {{property}}.',
+    header_type: undefined,
+    header_content: undefined,
+  };
+  Object.assign(
+    template,
+    mapImportedTemplate(
+      template,
+      positionalSlots(template).map((slot) => ({
+        ...slot,
+        variable_key:
+          slot.parameter_name === 'guest'
+            ? 'contact.first_name'
+            : 'property.name',
+      })),
+      catalog
+    )
+  );
+  const prepared = await run();
+  expect(resolver).toHaveBeenCalledTimes(1);
+  expect(buildMetaTemplateComponents(prepared)).toEqual([
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: 'Sandeep', parameter_name: 'guest' },
+        { type: 'text', text: 'Lombara Homestay', parameter_name: 'property' },
+      ],
+    },
+  ]);
 });

@@ -155,7 +155,21 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
         if (entry.value !== null) {
           throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability response is invalid.');
         }
-        results[key] = { status: entry.status as 'missing' | 'unsupported', value: null };
+        const reasons = [
+          'feature_disabled', 'not_ready', 'expired',
+          'reservation_inactive', 'provider_unsupported',
+        ] as const;
+        if (entry.reason !== undefined &&
+            !reasons.some((reason) => reason === entry.reason)) {
+          throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability reason is invalid.');
+        }
+        results[key] = {
+          status: entry.status as 'missing' | 'unsupported',
+          value: null,
+          ...(typeof entry.reason === 'string'
+            ? { reason: entry.reason as typeof reasons[number] }
+            : {}),
+        };
       }
     }
     return results;

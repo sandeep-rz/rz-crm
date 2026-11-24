@@ -1,6 +1,7 @@
 import 'server-only';
 import { PmsHttpClient } from '../http-client';
 import { PmsProviderError } from '../provider';
+import { normalizeUrlCapability } from '@/lib/integrations/capability-contract';
 import type {
   ConnectedSystemVariableResolver,
   ConnectedVariableContext,
@@ -44,12 +45,22 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
         'RZ PMS supports at most 100 variables per operation.'
       );
     const source = rzVariableContext(context);
+    const v2Keys = keys.filter((key) => V2_LINK_VARIABLES.has(key));
+    const v1Keys = keys.filter((key) => !V2_LINK_VARIABLES.has(key));
+    const values: Record<string, ConnectedVariableValue> = {};
+    // No v2 endpoint is invoked for existing v1 templates. New link variables
+    // are gated by inactive catalog entries until the PMS deploys v2.
+    if (v2Keys.length) {
+      const resolved = await this.resolveLinkCapabilities(context, source, v2Keys);
+      Object.assign(values, resolved);
+    }
+    if (!v1Keys.length) return values;
     const data = await this.client.post<unknown>(
       '/v1/integrations/rz-crm/variables/resolve',
       {
         contract_version: 'v1',
         context: source,
-        variables: keys,
+        variables: v1Keys,
       }
     );
     const invalid = () =>
@@ -67,9 +78,8 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
       !object(data.values)
     )
       throw invalid();
-    const values: Record<string, ConnectedVariableValue> = {};
     // Whitelist only requested keys; ignore any additional returned values.
-    for (const key of keys) {
+    for (const key of v1Keys) {
       if (!Object.hasOwn(data.values, key)) throw invalid();
       const item = data.values[key];
       if (!object(item)) throw invalid();
@@ -87,5 +97,63 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
       else throw invalid();
     }
     return values;
+  }
+
+  private async resolveLinkCapabilities(
+    context: ConnectedVariableContext,
+    source: { source_type: string; source_record_id: string },
+    keys: string[]
+  ): Promise<Record<string, ConnectedVariableValue>> {
+    const data = await this.client.post<unknown>(
+      '/v1/integrations/rz-crm/capabilities/resolve',
+      {
+        contract_version: 'v2',
+        context: {
+          ...source,
+          external_account_id: context.externalAccountId,
+          external_property_id: context.externalPropertyId,
+        },
+        capabilities: keys,
+      }
+    );
+    if (
+      !object(data) ||
+      data.success !== true ||
+      data.contract_version !== 'v2' ||
+      !object(data.context) ||
+      data.context.source_type !== source.source_type ||
+      data.context.source_record_id !== source.source_record_id ||
+      !object(data.values)
+    ) {
+      throw new PmsProviderError('invalid_response', 'RZ PMS v2 response is invalid.');
+    }
+    const results: Record<string, ConnectedVariableValue> = {};
+    for (const key of keys) {
+      const entry = data.values[key];
+      if (!object(entry) || !['resolved', 'missing', 'unsupported'].includes(String(entry.status))) {
+        throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability response is invalid.');
+      }
+      if (entry.status === 'resolved') {
+        if (typeof entry.value !== 'string' || !entry.value.trim()) {
+          throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability URL is invalid.');
+        }
+        const validated = normalizeUrlCapability(
+          key === 'reservation.digital_checkin_url'
+            ? 'reservation.digital_checkin_url'
+            : 'reservation.review_url',
+          { status: 'resolved', value: entry.value }
+        );
+        if (validated.status !== 'available') {
+          throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability URL is invalid.');
+        }
+        results[key] = { status: 'resolved', value: validated.value };
+      } else {
+        if (entry.value !== null) {
+          throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability response is invalid.');
+        }
+        results[key] = { status: entry.status as 'missing' | 'unsupported', value: null };
+      }
+    }
+    return results;
   }
 }

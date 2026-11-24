@@ -14,6 +14,12 @@ export const INTEGRATION_CAPABILITIES = {
     dataType: 'url',
     requires: ['reservation', 'property'],
   },
+  'reservation.review_destination_url': {
+    kind: 'variable',
+    scope: 'reservation',
+    dataType: 'url',
+    requires: ['reservation'],
+  },
   'reservation.review_url': {
     kind: 'variable',
     scope: 'reservation',
@@ -96,7 +102,7 @@ export type CapabilityResolution =
 
 /** Provider responses must not turn an empty URL into a successful variable. */
 export function normalizeUrlCapability(
-  capability: 'reservation.digital_checkin_url' | 'reservation.review_url',
+  capability: 'reservation.digital_checkin_url' | 'reservation.review_url' | 'reservation.review_destination_url',
   input: CapabilityValue
 ): CapabilityResolution {
   if (input.status === 'resolved') {

@@ -9,7 +9,8 @@ export interface ConnectedVariableContext extends PmsIntegrationContext {
 }
 export type ConnectedVariableValue =
   | { status: 'resolved'; value: string }
-  | { status: 'missing' | 'unsupported'; value: null };
+  | { status: 'missing' | 'unsupported'; value: null; reason?:
+    'feature_disabled' | 'not_ready' | 'expired' | 'reservation_inactive' | 'provider_unsupported' };
 export interface ConnectedSystemVariableResolver {
   resolveVariables(input: {
     context: ConnectedVariableContext;

@@ -58,12 +58,12 @@ describe('integration capability vocabulary', () => {
       status: 'missing',
       value: null,
       reason: 'feature_disabled',
-    }).reason).toBe('feature_disabled');
+    })).toEqual({ capability: 'reservation.digital_checkin_url', status: 'unavailable', reason: 'feature_disabled' });
     expect(normalizeUrlCapability('reservation.digital_checkin_url', {
       status: 'missing',
       value: null,
       reason: 'not_ready',
-    }).reason).toBe('not_ready');
+    })).toEqual({ capability: 'reservation.digital_checkin_url', status: 'unavailable', reason: 'not_ready' });
   });
 });
 

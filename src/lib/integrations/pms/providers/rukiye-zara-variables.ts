@@ -75,6 +75,8 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
       !object(data.context) ||
       data.context.source_type !== source.source_type ||
       data.context.source_record_id !== source.source_record_id ||
+      data.context.external_account_id !== context.externalAccountId ||
+      data.context.external_property_id !== context.externalPropertyId ||
       !object(data.values)
     )
       throw invalid();
@@ -140,7 +142,9 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
         const validated = normalizeUrlCapability(
           key === 'reservation.digital_checkin_url'
             ? 'reservation.digital_checkin_url'
-            : 'reservation.review_url',
+            : key === 'reservation.review_destination_url'
+              ? 'reservation.review_destination_url'
+              : 'reservation.review_url',
           { status: 'resolved', value: entry.value }
         );
         if (validated.status !== 'available') {

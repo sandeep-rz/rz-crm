@@ -35,7 +35,7 @@ function makeResolver(fetchImpl: typeof fetch) {
 describe('RZ-PMS capability contract v2', () => {
   it('does not call v2 for legacy variables', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
-      expect(String(url)).toEndWith('/variables/resolve');
+      expect(String(url).endsWith('/variables/resolve')).toBe(true);
       const body = JSON.parse(init!.body as string);
       expect(body.contract_version).toBe('v1');
       return new Response(JSON.stringify({
@@ -53,7 +53,7 @@ describe('RZ-PMS capability contract v2', () => {
 
   it('resolves digital check-in and preserves property disabled reason', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
-      expect(String(url)).toEndWith('/capabilities/resolve');
+      expect(String(url).endsWith('/capabilities/resolve')).toBe(true);
       const body = JSON.parse(init!.body as string);
       expect(body).toEqual({
         contract_version: 'v2',

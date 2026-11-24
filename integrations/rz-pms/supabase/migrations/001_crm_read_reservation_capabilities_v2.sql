@@ -97,7 +97,8 @@ BEGIN
         'reservation.digital_checkin_url',
         jsonb_build_object('status','missing','value',NULL,'reason','not_ready')
       );
-    ELSIF v_session.expires_at <= now() OR
+    ELSIF v_session.expires_at IS NULL OR
+          v_session.expires_at <= now() OR
           v_session.status IN ('expired','cancelled') THEN
       v_values := v_values || jsonb_build_object(
         'reservation.digital_checkin_url',

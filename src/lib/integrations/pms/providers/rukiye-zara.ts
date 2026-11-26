@@ -216,6 +216,19 @@ export class RukiyeZaraPmsProvider implements PmsProvider {
       hasMore: pagination.has_more === true,
     };
   }
+  async getCanonicalReservation({externalPropertyId,externalReservationId}: {
+    externalPropertyId:string; externalReservationId:string;
+  }): Promise<PmsReservation> {
+    const response = record(await this.client.get(
+      `/v1/integrations/rz-crm/properties/${encodeURIComponent(externalPropertyId)}/canonical-reservations/${encodeURIComponent(externalReservationId)}`
+    ));
+    if(response.contract_version!=='v2') throw new PmsProviderError('invalid_response','Invalid canonical contract.');
+    const reservation=canonicalReservationFrom(response.data);
+    if(reservation.externalPropertyId!==externalPropertyId ||
+      (reservation.externalId!==externalReservationId && !reservation.canonicalAliases?.includes(externalReservationId)))
+      throw new PmsProviderError('invalid_response','Canonical reservation scope mismatch.');
+    return reservation;
+  }
   async getReservation({
     externalPropertyId,
     externalReservationId,

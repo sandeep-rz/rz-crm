@@ -17,7 +17,7 @@ export function rzVariableContext(context: ConnectedVariableContext) {
   const sourceType =
     context.sourceType === 'bookings'
       ? 'rz_booking'
-      : context.sourceType === 'pms_bookings'
+      : (context.sourceType === 'pms_bookings' || context.sourceType === 'pms_reservations')
         ? 'pms_booking'
         : null;
   if (!sourceType || !uuid.test(context.externalReservationId))

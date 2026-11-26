@@ -151,6 +151,10 @@ export async function processPmsAutomationJob(
         false
       );
     }
+    if (reservation.guest_identity_unresolved) {
+      await store.markRescheduled(job, new Date(now().getTime() + 15 * 60_000).toISOString(), 'Canonical guest identity unresolved.');
+      return 'rescheduled';
+    }
     if (
       !matchesReservationTriggerConfig(
         automation.trigger_config as PmsTriggerConfig,

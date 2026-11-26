@@ -18,6 +18,8 @@ export interface PmsProperty {
 
 export interface PmsReservation {
   externalId: string;
+  canonicalAliases?: string[];
+  guestResolution?: 'resolved' | 'unresolved';
   sourceType: string;
   externalPropertyId: string;
   externalListingId: string;

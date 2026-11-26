@@ -513,6 +513,7 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
     const incoming = incomingTimestamp(input.reservation.updatedAt);
     const stored = incomingTimestamp(input.existing?.externalUpdatedAt ?? null);
     if (
+      input.reservation.sourceType !== 'pms_reservations' &&
       input.existing &&
       stored !== null &&
       (incoming === null || stored > incoming)
@@ -549,6 +550,15 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
       last_synced_at: input.syncedAt,
       metadata: { source_type: input.reservation.sourceType, ...(input.reservation.sourceType === 'pms_reservations' ? { guest_resolution: input.reservation.guestResolution ?? 'unresolved' } : {}) },
     };
+    if (input.reservation.sourceType === 'pms_reservations') {
+      if (!input.reservation.sourceVersion) throw new PmsReservationSyncError('Canonical source version missing.');
+      const result = await this.admin.rpc('crm_save_canonical_projection_v2', {
+        p_row: row, p_source_version: input.reservation.sourceVersion
+      });
+      if (result.error || typeof result.data?.id !== 'string' || typeof result.data?.skippedStale !== 'boolean')
+        throw new PmsReservationSyncError('Canonical projection failed.');
+      return result.data as {id:string;skippedStale:boolean};
+    }
     if (input.existing) {
       let updateQuery = this.admin
         .from('pms_reservations')

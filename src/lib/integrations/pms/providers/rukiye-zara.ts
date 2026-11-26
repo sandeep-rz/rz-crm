@@ -138,6 +138,12 @@ export function canonicalReservationFrom(value: unknown): PmsReservation {
   const r=record(wrapper.reservation);
   const rooms=Array.isArray(r.rooms)?r.rooms.map(record):[];
   if (!rooms.length) throw new PmsProviderError('invalid_response','Missing reservation rooms.');
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const aliases=rooms.map(room=>identifier(room.booking_id,'room booking'));
+  if (!uuid.test(String(r.source_record_id)) || aliases.some(id=>!uuid.test(id)) ||
+      new Set(aliases).size!==aliases.length || typeof r.source_version !== 'string' ||
+      !/^[1-9]\d{0,18}$/.test(r.source_version) || BigInt(r.source_version)>BigInt('9223372036854775807'))
+    throw new PmsProviderError('invalid_response','Invalid canonical identity or source version.');
   const listings=[...new Set(rooms.map(room=>identifier(room.listing_id,'room listing')))];
   const guest=r.guest_resolution==='resolved'?record(r.guest):{};
   return {
@@ -155,8 +161,10 @@ export function canonicalReservationFrom(value: unknown): PmsReservation {
     financial:{totalAmount:numberValue(r.total_amount,'total amount'),paidAmount:numberValue(r.paid_amount,'paid amount'),balanceDue:numberValue(r.balance_due,'balance due'),currency:nullableString(r.currency),paymentStatus:nullableString(r.payment_status)},
     createdAt:nullableString(r.reservation_created_at),updatedAt:nullableString(r.reservation_updated_at),
     sourceVersion: typeof r.source_version === 'string' && /^[1-9]\d{0,18}$/.test(r.source_version) ? r.source_version : undefined,
-    canonicalAliases:rooms.map(room=>identifier(room.booking_id,'room booking')),
-    guestResolution:r.guest_resolution==='resolved'?'resolved':'unresolved',
+    canonicalAliases:aliases,
+    // An authoritative phone clear must not reuse an old mapped CRM phone
+    // while the independent guest.updated delivery is still in flight.
+    guestResolution:r.guest_resolution==='resolved' && !(Array.isArray(guest.cleared_fields) && guest.cleared_fields.includes('phone'))?'resolved':'unresolved',
   };
 }
 
@@ -210,8 +218,11 @@ export class RukiyeZaraPmsProvider implements PmsProvider {
         'invalid_response',
         'RZ PMS reservations response is invalid.'
       );
+    if (typeof response.sync_watermark !== 'string' || !Number.isFinite(Date.parse(response.sync_watermark)))
+      throw new PmsProviderError('invalid_response','Invalid synchronization watermark.');
     const pagination = record(response.pagination);
     return {
+      syncWatermark: response.sync_watermark,
       items: data.map(item => {
         const reservation = canonicalReservationFrom(item);
         if (reservation.externalPropertyId !== externalPropertyId) throw new PmsProviderError('invalid_response','Reservation property mismatch.');

@@ -34,12 +34,12 @@ INSERT INTO public.message_variable_catalog (
    'Existing reservation-specific guest check-in link when entitled, enabled and valid.',
    'reservation','url','reservation','provider',
    'reservation.digital_checkin_url','https://checkin.example.com/c/example',
-   NULL,TRUE,FALSE,230),
+   NULL,TRUE,TRUE,230),
   ('reservation.review_destination_url','Review destination',
    'Booking/trips page that may lead to a review; not guaranteed to open the review form.',
    'reservation','url','reservation','provider',
    'reservation.review_destination_url','https://example.com/my-trips',
-   NULL,FALSE,FALSE,240),
+   NULL,FALSE,TRUE,240),
   ('reservation.review_url','Direct review link',
    'Verified direct guest review entry URL when supported by the provider.',
    'reservation','url','reservation','provider',
@@ -47,6 +47,6 @@ INSERT INTO public.message_variable_catalog (
    NULL,FALSE,FALSE,250)
 ON CONFLICT (variable_key) DO NOTHING;
 
--- These three keys deliberately remain inactive until the PMS v2 API and
--- CRM resolution are deployed, tested, and separately enabled.
+-- Check-in and destination resolvers ship with this branch; direct review
+-- remains unavailable because no verified provider direct-review URL exists.
 COMMIT;

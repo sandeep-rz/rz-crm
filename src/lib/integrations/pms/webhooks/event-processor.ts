@@ -239,7 +239,7 @@ export async function processPmsWebhookEvent(
       return { eventId: event.id, status: 'processed' };
     }
 
-    const canonicalParent = event.sourceType === 'pms_reservations';
+    const canonicalParent = event.sourceType === 'pms_reservations' || event.sourceType === 'pms_bookings';
     if (canonicalParent && !provider.getCanonicalReservation) {
       throw new PmsWebhookEventProcessingError('invalid_resource', 'Canonical provider is unavailable.');
     }
@@ -293,6 +293,12 @@ export async function processPmsWebhookEvent(
     const scheduleAutomations =
       dependencies.scheduleAutomations ?? schedulePmsAutomationsAfterSync;
 
+    // Old parent envelopes have no ordered source version. Project current state,
+    // but never replay a historical lifecycle occurrence through the legacy path.
+    if (canonicalParent && !event.sourceVersion) {
+      await store.markIgnored(event, now().toISOString(), 'Unversioned parent event superseded by canonical synchronization.');
+      return {eventId:event.id,status:'ignored'};
+    }
     // Never schedule guest-facing actions from an unresolved parent guest.
     // Keep the event retryable until an authoritative guest is available.
     if (canonicalParent && reservation.guestResolution !== 'resolved') {
@@ -445,7 +451,7 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
 
     const rows = (data ?? []) as Array<Record<string, unknown>>;
     // Claim RPC does not project the envelope; load its persisted source from the same scoped event.
-    const claims = await Promise.all(rows.map(async (row) => {
+    const claims = await Promise.all(rows.map(async (row): Promise<Record<string, unknown> & {sourceVersion?: string; sourceType?: string}> => {
       const { data: persisted, error: payloadError } = await this.admin.from('pms_webhook_events')
         .select('payload').eq('id',row.event_id).eq('account_id',row.account_id)
         .eq('pms_integration_id',row.pms_integration_id).eq('pms_property_id',row.pms_property_id).maybeSingle();

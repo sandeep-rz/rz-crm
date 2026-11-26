@@ -73,6 +73,7 @@ export interface PmsReservation {
 }
 
 export interface PmsReservationPage {
+  syncWatermark?: string;
   items: PmsReservation[];
   nextCursor: string | null;
   hasMore: boolean;

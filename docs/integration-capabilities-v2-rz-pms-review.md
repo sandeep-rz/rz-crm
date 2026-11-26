@@ -1,6 +1,6 @@
 # Integration Capability Contract v2 — foundation and RZ-PMS review
 
-Status: **proposed / additive only**. The TypeScript capability contract is implemented; no production endpoints, migrations, provider API changes, agent actions or automations have been enabled. Existing `v1` variable resolution is unchanged.
+Status: implementation completed on the paired branches; migrations and runtime tests remain operator-owned. The earlier proposal sections below are historical design context. The execution sequence in [canonical-reservation-completion.md](canonical-reservation-completion.md) supersedes the staged rollout notes.
 
 ## Confirmed RZ-PMS behavior (read-only Supabase review, 2026-11-24)
 

@@ -53,7 +53,7 @@ async function connectedContext(
   const { data: reservation, error: reservationError } = await db
     .from('pms_reservations')
     .select(
-      'id,account_id,pms_integration_id,pms_property_id,external_reservation_id,metadata'
+      'id,account_id,pms_integration_id,pms_property_id,external_reservation_id,metadata,canonical_reservation_id'
     )
     .eq('id', reservationId)
     .eq('account_id', accountId)
@@ -65,6 +65,10 @@ async function connectedContext(
     reservation.account_id !== accountId
   )
     throw new ContextFailure('reservation_not_found');
+  if (object(reservation.metadata) && reservation.metadata.canonical_identity_pending === true) throw new ContextFailure('guest_identity_unresolved');
+  if (reservation.canonical_reservation_id) throw new ContextFailure('historical_reservation_alias');
+  if (object(reservation.metadata) && reservation.metadata.source_type === 'pms_reservations' &&
+      reservation.metadata.guest_resolution !== 'resolved') throw new ContextFailure('guest_identity_unresolved');
   const { data: property, error: propertyError } = await db
     .from('pms_properties')
     .select('id,account_id,pms_integration_id,external_property_id,status')

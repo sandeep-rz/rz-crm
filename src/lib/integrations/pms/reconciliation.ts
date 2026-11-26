@@ -1,3 +1,4 @@
+import { schedulePmsAutomationsAfterSync } from '@/lib/automations/pms-scheduler';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
@@ -41,7 +42,8 @@ export interface PmsReconciliationStore {
   }): Promise<PmsReconciliationClaim[]>;
   markCompleted(
     claim: PmsReconciliationClaim,
-    completedAt: string
+    completedAt: string,
+    syncWatermark?: string
   ): Promise<void>;
   markFailed(
     claim: PmsReconciliationClaim,
@@ -141,6 +143,7 @@ export async function reconcilePmsProperty(
     );
     let cursor: string | null = null;
     const seenCursors = new Set<string>();
+    let syncWatermark: string | undefined;
 
     while (true) {
       const page = await provider.listReservations({
@@ -153,8 +156,14 @@ export async function reconcilePmsProperty(
         updatedSince: claim.lastReconciledAt,
       });
 
+      if (page.syncWatermark) {
+        // Rounding down is conservative; JS must not round a PG microsecond up.
+        const pageMs=Date.parse(page.syncWatermark);
+        if (!Number.isFinite(pageMs)) throw new Error('Invalid PMS watermark');
+        syncWatermark=new Date(Math.min(pageMs, syncWatermark ? Date.parse(syncWatermark) : pageMs)).toISOString();
+      }
       for (const reservation of page.items) {
-        await syncPmsReservation(
+        const synced = await syncPmsReservation(
           {
             accountId: claim.accountId,
             integration: claim.integration,
@@ -166,6 +175,8 @@ export async function reconcilePmsProperty(
           },
           reservationStore
         );
+        if (reservation.sourceType === 'pms_reservations')
+          await schedulePmsAutomationsAfterSync({accountId:claim.accountId,reservationId:synced.reservationId});
         reservationsProcessed++;
       }
 
@@ -206,7 +217,7 @@ export async function reconcilePmsProperty(
       guestsChecked++;
     }
 
-    await store.markCompleted(claim, now().toISOString());
+    await store.markCompleted(claim, now().toISOString(),syncWatermark);
     return {
       propertyId: claim.propertyId,
       status: 'completed',
@@ -345,14 +356,15 @@ export class SupabasePmsReconciliationStore implements PmsReconciliationStore {
 
   async markCompleted(
     claim: PmsReconciliationClaim,
-    completedAt: string
+    completedAt: string,
+    syncWatermark?: string
   ): Promise<void> {
     const { data, error } = await this.admin
       .from('pms_properties')
       .update({
         reconciliation_status: 'completed',
         reconciliation_started_at: null,
-        last_reconciled_at: completedAt,
+        last_reconciled_at: syncWatermark ?? claim.lastReconciledAt,
         last_reconciliation_error: null,
         reconciliation_next_attempt_at: null,
       })

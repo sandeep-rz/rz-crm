@@ -1,12 +1,12 @@
 # RZ-PMS: capability resolver HTTP endpoint (proposed)
 
-**Location of this spec and SQL:** CRM PR #1 only. The PMS application repository is not attached to this PR, so the HTTP route below is **not yet implemented or deployed in RZ-PMS**. The SQL file under `integrations/rz-pms/supabase/migrations` is a separately reviewed PMS migration: never run it with the CRM Supabase migration set.
+Implemented in the paired PMS branch `feat/crm-reservation-integration`; not deployed or applied. PMS SQL now lives exclusively in `apps/rz-api/supabase/migrations/20261126180710_crm_canonical_reservation_integration.sql` in that repository. See `docs/canonical-reservation-completion.md` for the coordinated sequence.
 
-## New API for CRM's opt-in v2 adapter
+## Capability API
 
 `POST /v1/integrations/rz-crm/capabilities/resolve`
 
-Authenticate using the **existing** PMS service-to-service secret mechanism (`Authorization: Bearer ...` and `x-rz-key-id`). Verify the service credential and dedicated capability-read scope; credentials must be bound to the installed CRM integration. A key/secret by itself must not authorize arbitrary host IDs or access to another installation.
+Authenticate using the **existing** PMS service-to-service secret mechanism (`Authorization: Bearer ...` and `x-rz-key-id`). Verify the service credential and existing `reservations:read` scope; credentials must be bound to the installed CRM integration. A key/secret by itself must not authorize arbitrary host IDs or access to another installation.
 
 ### Request (CRM)
 
@@ -82,7 +82,15 @@ PMS has a `resolve_whatsapp_review_url` that returns general trips/booking pages
 - Validate PMS service-scope mapping and cross-host/property tests.
 - Verify PMS expiry/revocation and review-link semantics with fixtures.
 - Deploy CRM adapter and CRM migration 94 under separate approval.
-- Enable each catalog key (currently `is_active=false`) only after both sides work.
+- Migration 94 exposes the implemented check-in and review-destination keys. Direct-review URLs remain unsupported/inactive. No feature flags are introduced.
 - Add capability condition/fallback templates for CRM WhatsApp automations; never silently substitute missing links.
 
 Existing `/variables/resolve` contract v1 stays unchanged; v2 is opt-in.
+
+## Canonical reservation synchronization
+
+`GET /v1/integrations/rz-crm/properties/{id}/canonical-reservations` returns `contract_version: "v2"`, `{kind: "native" | "pms", reservation}` items, cursor pagination, and a source-database `sync_watermark`. Keep the watermark conservative across all pages and persist it only after every reservation and mapped-guest recovery succeeds. The timestamp is pinned behind open PMS transactions; idle transactions can intentionally delay it. PMS filtering is inclusive (`>=`). Cursors retain PostgreSQL microseconds and include host/property scope.
+
+The detail route adds `/{reservationId}` and resolves verified child aliases to the parent. Native IDs remain unchanged. Parent `source_version` is a positive bigint encoded as a decimal string, never a JavaScript number. Parent guest data and version are read in the same database statement. Historical unversioned parent/child events may refresh projections but never replay lifecycle occurrences.
+
+Projection/version persistence is atomic. Job insertion and webhook completion are a second recoverable transaction, guarded by source version, lease attempt, projection timestamp, timezone and automation configuration. Projection equality does not imply event completion. The sender gate checks source version again for queued lifecycle jobs.

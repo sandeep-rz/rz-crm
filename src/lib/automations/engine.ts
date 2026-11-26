@@ -324,9 +324,9 @@ export async function resumePendingExecution(pending: {
   let context = savedContext;
   let contactId = pending.contact_id;
   let pmsOrigin = false;
-  if (pending.blocked_step_id) {
+  if (pending.blocked_step_id || log.trigger_job_id || savedContext.reservation) {
     const jobId = log.trigger_job_id as string | null;
-    if (!jobId || !pending.pms_reservation_id) {
+    if (!jobId) {
       throw new Error('Blocked PMS automation origin is missing.');
     }
     const { data: job, error: jobError } = await db
@@ -336,16 +336,29 @@ export async function resumePendingExecution(pending: {
       .eq('account_id', pending.account_id)
       .eq('automation_id', pending.automation_id)
       .maybeSingle();
-    if (jobError || !job || job.pms_reservation_id !== pending.pms_reservation_id) {
+    if (jobError || !job || (pending.pms_reservation_id && job.pms_reservation_id !== pending.pms_reservation_id)) {
       throw new Error('Blocked PMS automation origin does not match reservation.');
     }
     const reservation = await loadReservationAutomationContext(
       job.pms_reservation_id, pending.account_id, db
     );
+    if (reservation?.guest_identity_unresolved) {
+      const {error: holdError} = await db.from('automation_pending_executions').update({
+        status: 'pending', processing_started_at: null, next_attempt_at: null,
+        run_at: new Date(Date.now()+15*60_000).toISOString(),
+        attempt_count: Math.max(0,(pending.attempt_count ?? 1)-1),
+        last_error: 'Canonical guest identity unresolved.',
+      }).eq('id',pending.id).eq('account_id',pending.account_id).eq('status','running')
+        .eq('attempt_count',pending.attempt_count ?? 1);
+      if (holdError) throw new Error('PMS continuation hold failed.');
+      return 'blocked';
+    }
     const expired = Boolean(pending.contact_recovery_expires_at &&
       Date.parse(pending.contact_recovery_expires_at) <= Date.now());
     const cancelled = reservation?.reservation_status === 'cancelled';
-    if (expired || !reservation || (cancelled && job.trigger_type !== 'reservation_cancelled') ||
+    const lifecycleChanged=(job.trigger_type === 'reservation_cancelled' && !cancelled) ||
+      (job.trigger_type === 'reservation_confirmed' && reservation?.reservation_status !== 'confirmed');
+    if (expired || lifecycleChanged || !reservation || reservation.historical_alias || (cancelled && job.trigger_type !== 'reservation_cancelled') ||
         !matchesReservationTriggerConfig(
           (automation as Automation).trigger_config as PmsTriggerConfig, reservation
         )) {
@@ -641,6 +654,13 @@ function isPmsContactDependentStep(type: AutomationStep['step_type']): boolean {
 
 async function requirePmsContact(step: AutomationStep, args: ExecuteArgs): Promise<void> {
   if (!args.pmsOrigin || !isPmsContactDependentStep(step.step_type)) return;
+  const reservationId=args.context.reservation?.reservation_id;
+  if (!reservationId) throw new PmsContactBlocked(step);
+  const current=await loadReservationAutomationContext(reservationId,args.automation.account_id);
+  if (!current || current.guest_identity_unresolved || current.historical_alias ||
+      current.contact_id !== args.contactId ||
+      current.reservation_updated_at !== args.context.reservation?.reservation_updated_at)
+    throw new PmsContactBlocked(step);
   if (!args.contactId) throw new PmsContactBlocked(step);
   if (!isWhatsAppAction(step)) return;
   const { data, error } = await supabaseAdmin()

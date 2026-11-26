@@ -151,6 +151,10 @@ export async function processPmsAutomationJob(
         false
       );
     }
+    if (reservation.historical_alias) {
+      await store.markSuppressed(job, now().toISOString(), 'Historical room reservation is represented by its canonical parent.');
+      return 'suppressed';
+    }
     if (reservation.guest_identity_unresolved) {
       await store.markRescheduled(job, new Date(now().getTime() + 15 * 60_000).toISOString(), 'Canonical guest identity unresolved.');
       return 'rescheduled';
@@ -166,6 +170,11 @@ export async function processPmsAutomationJob(
         now().toISOString(),
         'Reservation no longer matches trigger filters.'
       );
+      return 'suppressed';
+    }
+    if ((job.triggerType === 'reservation_cancelled' && !isCancelled(reservation.reservation_status)) ||
+        (job.triggerType === 'reservation_confirmed' && reservation.reservation_status !== 'confirmed')) {
+      await store.markSuppressed(job, now().toISOString(), 'Reservation lifecycle has advanced.');
       return 'suppressed';
     }
     if (

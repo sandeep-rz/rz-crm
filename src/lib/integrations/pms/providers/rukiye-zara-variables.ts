@@ -8,6 +8,8 @@ import type {
   ConnectedVariableValue,
 } from '../variable-resolver';
 
+const V2_LINK_VARIABLES = new Set(['reservation.digital_checkin_url', 'reservation.review_destination_url', 'reservation.review_url']);
+
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

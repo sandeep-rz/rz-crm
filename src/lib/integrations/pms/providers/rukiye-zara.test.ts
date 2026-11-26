@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { PmsHttpClient } from '../http-client';
 import { PmsProviderError } from '../provider';
-import { RukiyeZaraPmsProvider } from './rukiye-zara';
+import { RukiyeZaraPmsProvider, canonicalReservationFrom } from './rukiye-zara';
 
 const reservation = {
   id: 'res-1',
@@ -98,7 +98,8 @@ describe('Rukiye Zara PMS provider adapter', () => {
 
   it('normalizes numeric property ids and reservation fields', async () => {
     const result = await providerFor({
-      data: [reservation],
+      contract_version:'v2',sync_watermark:'2026-09-01T00:00:00.000001Z',
+      data: [{kind:'native',reservation}],
       pagination: { next_cursor: 'next', has_more: true },
     }).listReservations({
       integration: {} as never,
@@ -159,6 +160,7 @@ describe('Rukiye Zara PMS provider adapter', () => {
       requested = String(input);
       return new Response(
         JSON.stringify({
+          contract_version:'v2',sync_watermark:'2026-09-01T00:00:00.000001Z',
           data: [],
           pagination: { next_cursor: null, has_more: false },
         }),
@@ -178,7 +180,8 @@ describe('Rukiye Zara PMS provider adapter', () => {
       cursor: 'cursor-1',
       updatedSince: '2026-09-28T10:06:11.328Z',
     });
-    expect(requested).toContain('limit=200');
+    expect(requested).toContain('limit=100');
+    expect(new URL(requested).pathname).toContain('/canonical-reservations');
     expect(requested).toContain('cursor=cursor-1');
     expect(new URL(requested).searchParams.get('updated_since')).toBe(
       '2026-09-28T10:06:11.328Z'
@@ -187,13 +190,14 @@ describe('Rukiye Zara PMS provider adapter', () => {
 
   it('accepts omitted nullable provider fields', async () => {
     const result = await providerFor({
+      contract_version:'v2',sync_watermark:'2026-09-01T00:00:00.000001Z',
       data: [
-        {
+        {kind:'native',reservation:{
           ...reservation,
           guest: { external_guest_id: null },
           occupancy: {},
           financial: {},
-        },
+        }},
       ],
       pagination: { next_cursor: null, has_more: false },
     }).listReservations({
@@ -227,5 +231,42 @@ describe('Rukiye Zara PMS provider adapter', () => {
         })
       ).getProperty({ integration: {} as never, externalPropertyId: '1' })
     ).rejects.toMatchObject({ code: 'upstream_temporary' });
+  });
+});
+
+
+describe('canonical parent contract', () => {
+  const parent = {
+    source_record_id:'00000000-0000-4000-8000-000000000001', property_id:22008,
+    reservation_code:'PARENT', canonical_status:'confirmed', cancelled_rooms:0,
+    checkin_date:'2026-12-01', checkout_date:'2026-12-03', expected_guest_count:4,
+    total_amount:null, paid_amount:null, balance_due:null, payment_status:null,
+    source_version:'9007199254740993', guest_resolution:'ambiguous',
+    guest:{external_guest_id:'must-not-be-used',phone:'+919999999999'},
+    rooms:[
+      {booking_id:'00000000-0000-4000-8000-000000000002',listing_id:'listing-a'},
+      {booking_id:'00000000-0000-4000-8000-000000000003',listing_id:'listing-b'},
+    ],
+  };
+  it('retains lossless version and aliases without choosing a guest or listing', () => {
+    const mapped=canonicalReservationFrom({kind:'pms',reservation:parent});
+    expect(mapped.sourceVersion).toBe('9007199254740993');
+    expect(mapped.canonicalAliases).toEqual(parent.rooms.map(r=>r.booking_id));
+    expect(mapped.guest.externalId).toBeNull();
+    expect(mapped.guest.phone).toBeNull();
+    expect(mapped.externalListingId).toBe('');
+    expect(mapped.financial.totalAmount).toBeNull();
+  });
+  it.each([undefined,0,'0','-1','9223372036854775808',9007199254740992])('rejects invalid version %s', version => {
+    expect(()=>canonicalReservationFrom({kind:'pms',reservation:{...parent,source_version:version}})).toThrow(PmsProviderError);
+  });
+  it('holds an authoritative phone clear instead of reusing a mapped contact phone', () => {
+    const mapped=canonicalReservationFrom({kind:'pms',reservation:{...parent,guest_resolution:'resolved',
+      guest:{external_guest_id:'guest',phone:null,cleared_fields:['phone']}}});
+    expect(mapped.guestResolution).toBe('unresolved');
+  });
+  it('rejects duplicate aliases and malformed parent identities', () => {
+    expect(()=>canonicalReservationFrom({kind:'pms',reservation:{...parent,rooms:[parent.rooms[0],parent.rooms[0]]}})).toThrow(PmsProviderError);
+    expect(()=>canonicalReservationFrom({kind:'pms',reservation:{...parent,source_record_id:'wrong'}})).toThrow(PmsProviderError);
   });
 });

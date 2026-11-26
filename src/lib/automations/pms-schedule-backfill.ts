@@ -200,6 +200,7 @@ export class SupabasePmsScheduleBackfillStore implements PmsScheduleBackfillStor
       .select(
         'id, account_id, pms_property_id, status, channel_code, check_in, check_out, updated_at'
       )
+      .is('canonical_reservation_id', null)
       .eq('account_id', input.accountId)
       .not(dateField, 'is', null)
       .gte(
@@ -234,6 +235,7 @@ export class SupabasePmsScheduleBackfillStore implements PmsScheduleBackfillStor
     const { data: properties, error: propertyError } = await this.db
       .from('pms_properties')
       .select('id, account_id, timezone')
+      .is('canonical_reservation_id', null)
       .eq('account_id', input.accountId)
       .in('id', batchPropertyIds);
     if (propertyError)
@@ -291,6 +293,7 @@ export class SupabasePmsScheduleBackfillStore implements PmsScheduleBackfillStor
         completed_at: input.now,
       })
       .eq('automation_id', input.automationId)
+      .is('canonical_reservation_id', null)
       .eq('account_id', input.accountId)
       .in('trigger_type', ['before_checkin', 'checkin_day', 'after_checkout'])
       .in('status', ['scheduled', 'failed'])

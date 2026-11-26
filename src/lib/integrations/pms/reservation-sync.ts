@@ -304,20 +304,12 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
   async reconcileCanonicalIdentity(input: PmsReservationSyncInput) {
     const aliases = input.reservation.canonicalAliases;
     if (!aliases?.length) throw new PmsReservationSyncError('Canonical aliases missing.');
-    const {data,error} = await this.admin.from('pms_reservations')
-      .select('id,pms_property_id,external_reservation_id')
-      .eq('account_id',input.accountId).eq('pms_integration_id',input.integration.integrationId)
-      .in('external_reservation_id',[input.reservation.externalId,...aliases]);
-    if (error || (data?.length ?? 0)>1 || data?.some(r=>r.pms_property_id!==input.property.id))
-      throw new PmsReservationSyncError('Canonical identity conflict.');
-    const row=data?.[0];
-    if (!row || row.external_reservation_id===input.reservation.externalId) return;
-    const result=await this.admin.rpc('crm_rekey_pms_reservation_v2',{
-      p_account_id:input.accountId,p_integration_id:input.integration.integrationId,p_property_id:input.property.id,
-      p_internal_id:row.id,p_expected_child_id:row.external_reservation_id,p_parent_id:input.reservation.externalId,
-      p_verified_child_ids:aliases,p_dry_run:false
+    const result = await this.admin.rpc('crm_reconcile_pms_reservation_v2', {
+      p_account_id: input.accountId, p_integration_id: input.integration.integrationId,
+      p_property_id: input.property.id, p_parent_id: input.reservation.externalId,
+      p_verified_child_ids: aliases,
     });
-    if(result.error || !['rekeyed','already_reconciled'].includes(result.data?.status))
+    if (result.error || !['insert', 'reconciled'].includes(result.data?.status))
       throw new PmsReservationSyncError('Canonical identity reconciliation failed.');
   }
 
@@ -527,7 +519,7 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
       contact_id: input.contactId,
       external_reservation_id: input.reservation.externalId,
       external_guest_id: input.reservation.guest.externalId,
-      external_listing_id: input.reservation.externalListingId,
+      external_listing_id: input.reservation.externalListingId || null,
       reservation_code: input.reservation.reservationCode,
       status: input.reservation.status,
       provider_status: input.reservation.providerStatus,

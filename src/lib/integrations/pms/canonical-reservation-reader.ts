@@ -54,7 +54,7 @@ export function compareCanonicalEventVersion(incoming:unknown,previous:unknown):
     if(typeof v==='string' && /^[0-9]{1,19}$/.test(v)) return BigInt(v);
     return null;
   };
-  const a=parse(incoming),b=previous==null?0n:parse(previous);
-  if(a===null||b===null||a<=0n||a>9223372036854775807n||b>9223372036854775807n)return 'invalid';
+  const a=parse(incoming),b=previous==null?BigInt(0):parse(previous);
+  if(a===null||b===null||a<=BigInt(0)||a>BigInt('9223372036854775807')||b>BigInt('9223372036854775807'))return 'invalid';
   return a>b?'apply':'duplicate_or_stale';
 }

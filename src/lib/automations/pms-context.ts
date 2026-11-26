@@ -28,6 +28,7 @@ export interface ReservationAutomationContext {
   provider: string;
   reservation_updated_at: string;
   guest_identity_unresolved?: boolean;
+  historical_alias?: boolean;
 }
 
 export class ReservationAutomationContextError extends Error {
@@ -57,7 +58,7 @@ export async function loadReservationAutomationContext(
   const { data: reservation, error: reservationError } = await db
     .from('pms_reservations')
     .select(
-      'id, account_id, pms_integration_id, pms_property_id, contact_id, external_reservation_id, reservation_code, status, provider_status, check_in, check_out, adults, children, occupancy_total, channel_code, channel_name, total_amount, currency, updated_at, metadata'
+      'id, account_id, pms_integration_id, pms_property_id, contact_id, external_reservation_id, reservation_code, status, provider_status, check_in, check_out, adults, children, occupancy_total, channel_code, channel_name, total_amount, currency, updated_at, metadata, canonical_reservation_id'
     )
     .eq('id', reservationId)
     .eq('account_id', accountId)
@@ -110,7 +111,8 @@ export async function loadReservationAutomationContext(
   }
 
   return {
-    guest_identity_unresolved: reservation.metadata?.source_type === 'pms_reservations' && reservation.metadata?.guest_resolution !== 'resolved',
+    historical_alias: Boolean(reservation.canonical_reservation_id),
+    guest_identity_unresolved: reservation.metadata?.canonical_identity_pending === true || (reservation.metadata?.source_type === 'pms_reservations' && reservation.metadata?.guest_resolution !== 'resolved'),
     reservation_id: reservation.id as string,
     external_reservation_id: reservation.external_reservation_id as string,
     reservation_reference: reservation.reservation_code as string | null,

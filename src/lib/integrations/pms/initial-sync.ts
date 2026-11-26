@@ -1,3 +1,4 @@
+import { schedulePmsAutomationsAfterSync } from '@/lib/automations/pms-scheduler';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { supabaseAdmin } from '@/lib/automations/admin-client';
@@ -121,6 +122,8 @@ export async function runInitialPmsPropertySync(
           },
           reservationStore
         );
+        if (reservation.sourceType === 'pms_reservations')
+          await schedulePmsAutomationsAfterSync({accountId:claim.accountId,reservationId:result.reservationId});
         reservationsProcessed++;
         if (result.contactCreated) contactsCreated++;
         else if (result.contactId) contactsReused++;

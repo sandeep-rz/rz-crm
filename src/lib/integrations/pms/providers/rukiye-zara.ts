@@ -195,23 +195,27 @@ export class RukiyeZaraPmsProvider implements PmsProvider {
       );
     const response = record(
       await this.client.get(
-        `/v1/integrations/rz-crm/properties/${encodeURIComponent(externalPropertyId)}/reservations`,
+        `/v1/integrations/rz-crm/properties/${encodeURIComponent(externalPropertyId)}/canonical-reservations`,
         {
-          limit,
+          limit: Math.min(limit ?? 100, 100),
           cursor: cursor ?? undefined,
           updated_since: updatedSince ?? undefined,
         }
       )
     );
     const data = response.data;
-    if (!Array.isArray(data))
+    if (response.contract_version !== 'v2' || !Array.isArray(data))
       throw new PmsProviderError(
         'invalid_response',
         'RZ PMS reservations response is invalid.'
       );
     const pagination = record(response.pagination);
     return {
-      items: data.map(reservationFrom),
+      items: data.map(item => {
+        const reservation = canonicalReservationFrom(item);
+        if (reservation.externalPropertyId !== externalPropertyId) throw new PmsProviderError('invalid_response','Reservation property mismatch.');
+        return reservation;
+      }),
       nextCursor: nullableString(pagination.next_cursor),
       hasMore: pagination.has_more === true,
     };

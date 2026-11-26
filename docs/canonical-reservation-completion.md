@@ -1,131 +1,143 @@
-# Canonical reservation integration — development completion, 26 November 2026
+# Final canonical reservation integration review — 27 November 2026
 
-Implemented on PMS `feat/crm-reservation-integration` and CRM `feature/integration-capabilities-v2-20261124`. No migration was applied; no deployment, push, PR merge, database mutation, or message send was performed. Runtime tests are reserved for the operator. This report supersedes the draft rollout instructions.
+## Scope and completion
 
-## Owning schemas and review evidence
+Reviewed both complete PR diffs against their actual main bases: PMS PR #25, `65e5975013a9eab4f1f45c003cdfc95aaffa43cd`; CRM PR #1, `67a16e8e0b9ce46191f21dfdf381ebe26302f2c8`. Corrections are on the existing branches. The implementation is connected to the API, synchronization workers, webhook completion, scheduling, sender gate and wait-resumption paths. No migrations, database mutations, runtime tests, deployments or merges were performed. Live Supabase catalogs were read through MCP; the July dump was not used.
 
-Live catalog/function/trigger/constraint reads used Supabase MCP against PMS production `suanogblzivcqhrysshz`, PMS DEV `vcxwyghdcgofljgpwgbj`, and CRM `ideibnrtszjdrxsusnwc`. The July dump was not used. Production PMS had 2,642 child rows in the three supported states (`new`, `modified`, `cancelled`); DEV had `new` and `cancelled`. Parent identity, guest context, native financial fields, check-in token columns, CRM job leases, unique keys and scheduler RPC contracts were inspected live.
+## Final database architecture
 
-PMS migration history does **not** describe all current objects: its latest registered production migration was `20261121164422`, while parent/check-in objects already exist. DEV's latest registered migration was `20261121164359`. CRM history ends at 93. Do not blindly replay old PMS migrations against an already modified schema. Inspect the owning live objects and reconcile migration history separately before using a blanket CLI push.
+**PMS adds one permanent table; CRM adds zero.** Existing PMS `domain_events` remains the only outbox. Existing CRM `pms_reservations`, jobs, logs, pending executions and contact identities remain authoritative.
 
-The original Security Rulebook supplied in this chat governs these changes. New RPCs are Class E: trusted integration API/workers only, explicit revokes from PUBLIC/anon/authenticated and service_role grants; invoker by default. Definer trigger gateways and the bounded watermark RPC use `SET search_path TO 'public', 'pg_temp'`. New tables have RLS and service-only grants. The internal view uses security_invoker. Existing credential verification, host/team/session architecture, webhook authentication and tenant/property entitlement checks remain in their existing owners. No feature flags were introduced.
-
-## Completed production paths
-
-| Area | Final behavior |
+| Object | Decision and purpose |
 | --- | --- |
-| Parent lifecycle producer | Existing deferred PMS booking trigger calls the versioned producer. A source-row lock, normalized snapshot hash, shared state/version and existing outbox write form one transaction. Upstream revision/request IDs reject replayed operations before writes. Multi-room writes use the existing `commit_pms_booking_inventory_delta` RPC; no per-room HTTP emitter was added. Silent baseline prevents historical confirmation replay. |
-| Payments and guests | Booking writes, guest linkage/profile changes, parent changes, transaction/refund ledger writes, partial-payment records and native/PMS adjustment writes reach deferred producers. Payment amount, balance, history/refund and guest-only changes participate in snapshots. Native transaction identity replaces state-hash deduplication, permitting legitimate state reversions. Substantive writes advance source timestamps even when callers omit updated_at. |
-| Read consistency | Parent room guests and financial values are read with their source version in one database statement. The former follow-up guest query could mix two committed versions and has been removed. Unknown financial components remain null. Multiple listings never receive an invented single-listing identity. |
-| Projection | The actual reservation sync uses a service-only atomic projection/version RPC. Older/equal source versions cannot overwrite a newer row. Versions travel as decimal strings and are bounded to PostgreSQL bigint. |
-| Historical children | Authenticated PMS aliases select an existing parent row, otherwise the oldest historical row, with UUID as tie-breaker. Every internal reservation ID and contact survives. Other room rows gain a canonical pointer. Original reservations and jobs are captured in service-only reconciliation history before changes. Pending duplicate room jobs are cancelled in place; jobs/logs remain linked to their original rows. No contact records are merged. |
-| Projection recovery | A pending-identity data marker holds jobs between reconciliation and projection. It is cleared only by successful projection. It is migration state, not a rollout/feature switch. |
-| Event completion | Existing scheduler builds the plan; one RPC commits jobs, timing cancellation and webhook completion under the current lease. It verifies source version, projection timestamp, property timezone and automation configuration. Timing upserts are submitted one automation at a time, matching the live RPC interface. Projection success alone never marks an event complete. |
-| Historical occurrences | Confirmation and completed/in-flight timing evidence is checked across canonical and retained child rows. Existing completed or processing jobs are not reopened by schedule upsert. Historical unversioned parent/child envelopes refresh projections but do not replay lifecycle events. |
-| Initial/periodic sync | Both workers use canonical pages and repair future timing jobs without creating historical confirmation/update/cancellation occurrences. Cursor loops are rejected; all pages and mapped-guest recovery must succeed before checkpointing. |
-| Watermark | Each page supplies a source-database watermark pinned behind open PMS transactions. CRM stores the conservative minimum only after complete success, rounding down to milliseconds. Inclusive filtering and microsecond cursor precision are retained. A long idle transaction intentionally pins progress rather than losing its later commit. Old end-of-run watermarks are preserved in metadata and reset once for a silent full reconciliation. |
-| Existing automations | Claims hold unresolved identities without consuming attempts. Workers, SQL execution gate, resumed waits and each contact-dependent action recheck current identity. Retained aliases cannot send. Queued cancellation/confirmation jobs cannot send after lifecycle changes; versioned event jobs also validate source version at dispatch. Unknown legacy PMS wait origin fails closed. |
-| Variables/check-in | Existing v1 approved-template response shape is preserved. Parent requests use aggregate parent booking/guest data and a read-only master check-in link; they do not resolve a parent as a child. Multi-listing details and unknown financial components remain missing. v2 URLs retain tenant echo and HTTPS validation. |
+| PMS `reservation_event_state` | Retained shared native/parent lifecycle, confirmation latch, positive bigint version and SHA-256 hash. Composite source identity, generated source-specific foreign keys, property FK and validation trigger prevent orphaned/mis-scoped identity. No persisted guest/payment snapshot. RLS; service-only access. |
+| Previous CRM-specific state, native-confirmation and operation-ledger proposals | Consolidated into shared state or removed. Existing source revision/request deduplication remains in the mutation paths. |
+| PMS parent and native CRM context views | Retained service-only invoker views. Parent rooms/guest/version and native guest/financial enrichment each come from one SQL statement, eliminating mixed-snapshot enrichment. No second projection table. |
+| PMS shared producer, normalizer, timestamp/watermark functions and trigger gateways | Retained for final-state hashing, both source kinds, transaction-safe publication, financial and guest-only mutations and incremental scans. Existing native emitter delegates to the shared producer. Known set arrays are sorted; occupancy categories remain distinct; bookkeeping timestamps are excluded. |
+| PMS check-in/read functions | Retained, scoped to validated host/property/reservation and active token/session. Master links reuse existing master sessions; no new token table. |
+| CRM `canonical_source_version`, `canonical_reservation_id` | Retained on existing projection. Positive version constraint, same-account FK, no-self-reference constraint and partial alias index support actual stale-event and alias-history queries. |
+| CRM reconciliation/projection/completion RPCs | Retained service-only invokers: scoped identity reconciliation, atomic projection+version, atomic scheduling+event completion. Existing begin/claim/schedule functions extended rather than adding another queue. |
+| CRM `crm_canonical_reconciliation_history` | Removed from the unapplied migration: it was backup-only. Reconciliation now leaves **all job columns untouched**, including status, attempts, lease, completion and last_error. |
+| CRM capability snapshot/config columns and binding constraint | Removed as unused; migration 94 now only updates the existing variable catalog. No capability cache or feature flags. |
 
-## Review corrections
+The shared PMS table is necessary beyond outbox retention: a permanent confirmation latch and version cannot safely be reconstructed after event archival. Its hash stores no PII. Views, trigger callbacks and mutation RPCs reuse actual business rows; no inventory or source revision tables are replaced.
 
-Fixed an undefined `V2_LINK_VARIABLES`, bigint literals incompatible with CRM's TypeScript target, webhook-claim inference errors, a misplaced Supabase filter, stale watermark advancement, multiple-automation schedule batching, mixed-version guest enrichment, unversioned fallback scheduling, stale queued lifecycle jobs, and gaps in resumed-wait identity checks. Consolidated every canonical SQL draft and moved PMS capability SQL out of the CRM migration tree into its actual owning repository. No unrelated refactoring was included.
+## Historical reconciliation and recovery
 
-## Migration execution order
+A verified authoritative parent/child alias list selects the existing parent or oldest matching child deterministically. The winner retains its CRM UUID and contact; other reservations retain their UUIDs, contacts, jobs and logs and point at the winner. Native-source collisions, another tenant/property and aliases already assigned elsewhere are rejected. `metadata.canonical_previous_external_id` retains the original external identity without replacing an earlier saved identity. Only a small identity/hold marker is stored; no reservation/job snapshots are copied into metadata.
 
-1. Back up affected schemas/data and current function definitions. Pause CRM webhook/automation/pending workers and PMS outbound dispatchers through the existing operational controls; drain in-flight sends. Pause reservation/guest/payment writers for cutover. Do not add a code feature flag. Keep credentials unchanged.
-2. CRM: apply `supabase/migrations/94_integration_capability_contract_v2.sql` after existing 93. Check-in and review-destination catalog keys are implemented; direct-review remains unsupported/inactive.
-3. CRM: apply `supabase/migrations/20261126180830_canonical_reservation_integration.sql`. This installs projection/completion/reconciliation, execution guards, preservation history, and resets the old watermark for a full pass.
-4. PMS: apply `apps/rz-api/supabase/migrations/20261126180710_crm_canonical_reservation_integration.sql`. It acquires writer locks (10-second acquisition timeout), creates state/read/link/producer objects, replaces the existing emitter, attaches financial/guest/version callbacks and baselines every existing parent silently in the same transaction. Failure rolls back the migration transaction; resolve contention rather than forcing constraints early.
-5. After the operator's database checks, release the paired PMS API and CRM code with workers still paused. PMS API must be available before CRM attempts canonical reads. Do not release the new callers against absent functions.
-6. Run the existing initial-sync or reconciliation worker for **every active mapped property**, completing all pages before unpausing automation sends. This resolves historical children using authoritative aliases, installs unresolved-guest holds and repairs future timing schedules. Do not call the webhook processor to seed historical confirmations.
-7. Inspect the preservation/history rows, source-version alignment, unresolved identities and queued jobs. Run the manual scenarios below. Resume writers and then delivery workers only after validation. Pending historical/unversioned events are deliberately non-replayable lifecycle evidence.
+Alias jobs keep their original scheduled/failed/processing/completed states and diagnostics. Claim and execution gates exclude aliases and pending identity transitions. Scheduler calls for an alias perform no job mutation. Canonical scheduling also checks completed/processing alias history **and retry-blocked failed history with external-action evidence**; it does not create a second message merely because the original job is failed. Existing failed canonical jobs retain their status and diagnostics; their existing retry/execution machinery owns recovery. Schedule upserts retain prior error diagnostics even when an eligible schedule is refreshed. The same rules apply to legacy rows encountered in later incremental reconciliation, not only initial migration.
 
-This is a coordinated release sequence for you to execute; none of it was run here. Do not apply CRM SQL to PMS or PMS SQL to CRM.
+A verified operator backup replaces the backup table's recovery role. CRM `scripts/backup-canonical-reconciliation.sh NEW_PRIVATE_DIRECTORY` uses normal libpq credentials and a full custom-format pg_dump, restrictive filesystem modes, required table-data inventory, pg_restore archive-list verification and SHA-256 manifest. It never prints credentials. Use an encrypted private destination outside the repository. Archive/readability checks do not prove recoverability: restore into an isolated database and verify counts, identities, contacts, jobs/errors, logs, pending executions and constraints before cutover. Do not restore into the source database. Take an equivalent PMS backup and archive deployed function definitions, migration history, application SHAs and delivery state. Repeat backups before later operator reconciliation if point-in-time projection recovery is required: mutable projections are not a historical snapshot archive. The reconciliation itself retains identities and job diagnostics permanently.
 
-## Manual validation still required
+## Correctness and compatibility corrections
 
-Run API and CRM type checks and the existing reservation/provider/webhook/scheduler/worker/continuation suites after your migrations. Provider transport fixtures were updated to v2. Database/runtime acceptance remains unverified until you run it.
+- Native requested/pending writes still advance synchronization state but do not emit guest-facing lifecycle events before confirmation/cancellation. First confirmation keeps the original `reservation:rz:{id}:confirmed` idempotency key; the durable latch prevents a second confirmation after cancellation/reinstatement or outbox pruning.
+- Both producers lock the actual source row. Final-state digest/version and the existing outbox write share one transaction. Identical callbacks converge; committed A → B → A creates distinct versions. Historical baseline is silent and writer-locked. Keep existing mutation RPC transaction boundaries and deferred constraints; forcing callbacks early inside a multi-room change is unsupported.
+- Existing Channex and walk-in inventory commit/revision RPCs remain intact. Live definitions enforce revision deduplication before writes; a new create request with new IDs is still a distinct business operation. No inventory/availability mutation interface was refactored.
+- Financial records, partial payments, refunds, adjustments, guest snapshots/profiles and explicit clears reach the common producer through their attached callbacks. Parent room statuses determine partial versus total cancellation. API financial values and native/parent ID contracts remain compatible.
+- Parent source versions are positive decimal bigint strings end to end; no JavaScript numeric conversion. Projection+version are one RPC transaction. Projection updated_at strictly advances even for rapid writes. A newer/equal persisted version does not imply webhook completion: equal-version retries can complete the separate recoverable transaction.
+- Completion validates claim attempt, source version, current projection timestamp, timezone and automation configuration while inserting jobs and completing the event atomically. Stale/reordered lifecycle events cannot cancel reinstated schedules. Superseded events are ignored before unresolved-guest retry handling.
+- Lists use independently bound native/parent cursors, full PostgreSQL timestamp precision and inclusive incremental boundaries. Providers reject repeated/malformed cursors and inconsistent has_more/next_cursor responses. Watermarks only advance after all pages succeed. The SQL watermark is bounded by open transaction start times so a later commit is replayed on the next inclusive pass.
+- Ambiguous identity is held conservatively. Existing scheduled/retry jobs, execution gates, contact actions and resumed waits refresh authoritative context. Inactive property or disconnected integration rejects context. Old contacts are retained during unresolved projection without being used for guest-facing actions. No automatic contact merging or name/email/phone inference was added.
+- Existing v1 variable resolution stays compatible; v2 is opt-in. Implemented master/native check-in and general review destinations are connected to the real resolver. Direct review-entry URLs remain explicitly unsupported, not fabricated. Bearer links are not logged; master base URLs reject userinfo.
+- Removed unused alternate canonical reader, reconciliation planner, trusted-capability router, future capability binding/config machinery and duplicate TypeScript lifecycle classifier. Actual SQL producer/provider/scheduler paths remain. Superseded SQL drafts are consolidated into the three ordered migrations.
 
-- Multi-room Booking.com, Airbnb, Agoda, MakeMyTrip/Goibibo and Walk-In creation/modification: one parent projection, complete aliases, one first confirmation, one update for partial cancellation, one cancellation for all rooms. Keep the existing atomic OTA and walk-in RPC boundaries; forcing deferred constraints early or splitting an operation across transactions is outside the producer contract.
-- Same-status paid amount/balance changes, payment retries, partial payment, cancelled-stay refunds, ledger-only transactions, adjustment insert/soft-delete, profile-only guest changes and explicit guest unlink/relink. Verify source timestamp/version and outbox changes, including unknown OTA financial fields.
-- Repeated and reversed states A→B→A across transactions must create new versions; duplicate callbacks/replayed operations must not. Repeat/reorder webhook versions; reject >bigint versions and cross-property aliases. Crash after projection, then retry completion; expiry/reclaim of a webhook attempt must not let the old claimant complete it.
-- Change reservation, timezone or automation configuration after plan creation. Completion must retry rather than commit stale jobs. Race an execution against schedule upsert; an existing processing/completed job must not be restarted.
-- Parent already present, one child present, several children present, different contacts, historical completed confirmations/timing jobs and failed jobs with errors: IDs/contacts/logs unchanged; original diagnostics preserved in reconciliation history; no duplicate sends.
-- Ambiguous guests with already scheduled jobs, failed retry jobs, normal waits and contact-recovery waits: no contact actions. Resolve authoritatively and verify safe continuation. Reinstatement must suppress an old cancellation job. Newly unresolved identity during an execution must park before its next contact action.
-- More than 100 rows, equal timestamps differing only below milliseconds, all-native pages, all-PMS pages and both streams; inclusive boundary replay; cursor repetition and later-page failure. Hold a writer transaction open while scanning, then commit it and verify the next incremental pass reads it.
-- Service credential, disconnected account, host/property mismatch, inactive entitlement, revoked/expired token and absent session: reject safely. Anonymous/authenticated roles cannot read the new internal tables/view or execute Class E RPCs. No bearer URL/token appears in logs.
+## Security review
 
-`supabase/tests/crm_reservation_identity_preflight.sql` and `supabase/tests/crm_reservation_context_contract.sql` in PMS are read-only operator checks. CRM's corresponding read-only checks are `supabase/tests/canonical_reservation_integration.sql`.
+Followed the original Rukiye Zara Supabase Security Rulebook. New workflow RPCs are Class E, explicitly revoked from PUBLIC/anon/authenticated and granted only to service_role. Invoker mode is used where existing service grants suffice. Live PMS grants showed service_role lacks private schema usage and emit_domain_event execution: the validated shared producer therefore uses SECURITY DEFINER with fixed public/pg_temp search_path, calling owner-only internals without broadening their grants. Private normalization remains owner-only. Other definer gateways have fixed search_path and explicit execution rules. New views/table are not publicly readable. Existing credential, session, host/team permissions and entitlement architecture is preserved; API scope checks precede privileged operations. No global helper/RLS cleanup or unrelated authorization rewrite was performed.
 
-## Rollback and preservation
+## Migration execution sequence — operator only
 
-Pause all workers/senders and drain claims before rollback. Capture any new outbox deliveries and remote-send outcomes; never reset sent jobs for replay.
+1. Pause reservation writers and all CRM synchronization, webhook delivery, scheduling and send workers; drain active claims. Record accepted external sends and current application SHAs. Take and restore-rehearse verified backups as above.
+2. Compare live schemas and migration history with staged SQL. CRM history was through 93. PMS production's latest registered migration was `20261121164422`, DEV `20261121164359`, despite later parent/check-in objects already existing. Resolve history drift explicitly; **do not blanket db push or replay older migrations**. Capture current function definitions for rollback.
+3. CRM: apply `supabase/migrations/94_integration_capability_contract_v2.sql` after existing 93.
+4. CRM: apply `supabase/migrations/20261126180830_canonical_reservation_integration.sql`.
+5. PMS: apply `apps/rz-api/supabase/migrations/20261126180710_crm_canonical_reservation_integration.sql`. Writer locks, 10-second acquisition timeout and silent baseline are in its transaction. If lock acquisition fails, resolve contention and retry; do not bypass locking or force deferred constraints early.
+6. Deploy paired applications manually with workers paused; ensure PMS v2 API is available before CRM canonical readers. Complete a full initial/reconciliation pass for every active mapped property. Old watermarks are reset by the CRM migration; do not seed historical confirmation events.
+7. Verify aliases, held guests, versions, schedules and backup preservation. Execute the checks below in an approved test environment first. Resume normal writers and then delivery/senders only after operator acceptance.
 
-PMS: run `docs/sql/crm_integration_rollback.sql` manually in the PMS database. It removes the new trigger attachments and restores the three modified producer/publication functions from the live production definitions captured during this review. It restores the prior native trigger attachment. It intentionally retains shared reservation_event_state, outbox, identity and check-in records. Take a fresh pre-application function backup too: the captured definitions are from 26 November, not proof against later drift.
+No migration has been applied by this review. These files belong to separate databases; their filename timestamps do not establish cross-database ordering.
 
-CRM: `docs/sql/crm_integration_restore_functions.sql` restores the three replaced queue/execution functions while workers remain paused. Keep the additive columns and `crm_canonical_reconciliation_history`. That table preserves original reservation/job snapshots, including previous failure diagnostics. Do not delete aliases, canonical rows, contacts, jobs or logs to reverse a rekey. A per-row reversal must first verify that neither newer projection changes nor accepted sends would be overwritten; compare original external IDs against current unique keys. Restore only verified unsent jobs under operator review.
+## Rollback instructions
 
-An application rollback alone is **not sufficient** after canonical IDs have been persisted: the old CRM reader expects room IDs and does not understand retained aliases. Keep old workers stopped until a compatible fix-forward or an explicitly reviewed mapping restoration is ready. No automatic destructive down migration is provided. Emails/WhatsApp messages already accepted remotely cannot be rolled back.
+Pause/drain every worker and sender again and capture post-cutover accepted sends. Messages already accepted remotely cannot be undone. Prefer a compatible fix-forward.
 
-## Validation and genuine limitations
+PMS `docs/sql/crm_integration_rollback.sql` removes new trigger attachments and restores captured old producer/publication functions. `docs/sql/crm_integration_restore_functions.sql` is the captured function source. Verify against the fresh pre-cutover catalog first. Retain reservation_event_state, its versions/confirmation latches, views, existing outbox and check-in records; never re-baseline/reset the retained latch or delete reservation data during application rollback.
 
-Both applications were statically type-checked. Migration SQL and PL/pgSQL were parsed offline, with CRM catalog row types represented as records for the PL/pgSQL parser. These checks do not establish database execution correctness. No tests, migrations, writes to live databases, deployments or merges were run.
+CRM `docs/sql/crm_integration_restore_functions.sql` restores the three replaced queue/execution functions while workers remain stopped. Keep additive columns and all reservation/contact/job/log records. There is no reconciliation-history table to restore. For identity reversal, use saved canonical_previous_external_id plus the verified pre-operation backup; check current unique keys, newer projection updates and accepted sends before any targeted operator restoration. Reconciliation never overwrites job statuses/errors, so no automated job reset is necessary or safe. Full snapshot recovery comes from the backup, not metadata. Do not restore an entire database over newer accepted sends without a separate recovery plan.
 
-No known missing credential, schema dependency or unresolved child-conflict algorithm blocks development. Genuine remaining release gates are your migration rehearsal, concurrency/provider/runtime tests and operational cutover. Existing schema-history drift requires explicit operator handling; do not use a blanket push. The provider has no verified direct review-entry URL; it returns unsupported and exposes the verified general trip destination separately. This does not block canonical reservation synchronization.
+Old CRM workers do not understand canonical parent IDs/retained aliases. An old application deployment alone is insufficient after rekeying; keep workers paused until a compatible fix or reviewed mapping restoration is complete. No destructive down migration or automatic record/contact merge is provided.
 
-Scoped ESLint passed for PMS. CRM scoped ESLint reported zero errors and one existing unused-variable warning (`_skippedPhone` in reservation-sync.ts). No runtime tests were executed. The rollback snapshots preserve the previous function bodies with search_path normalized to the supplied rulebook.
+## Validation and manual acceptance
 
-## Changed files
+Static results: both API and CRM TypeScript checks passed with incremental state disabled. Both Next compile-mode production builds passed; this verifies bundling, not prerender/provider/runtime behavior. SQL and PL/pgSQL parsed offline, replacing catalog %ROWTYPE references with record for parsing; this is syntax validation, not live function compilation/execution. Scoped ESLint passed with zero errors or warnings across each full PR TypeScript diff; bash -n validated the backup script and git diff --check passed in both repositories. Regression tests were added/updated but **not executed**, as requested.
 
-Paths below are relative to their owning repository; A = added, M = modified, D = superseded draft removed.
+Operator checklist:
 
-### PMS
+- Apply migrations on an isolated current-schema clone first; validate grants/RLS as anon/authenticated/service roles and cross-account/host/property rejections. Review both repositories' SQL contracts and backup restore counts.
+- Native pending → first confirmation → cancellation → reinstatement, historical baseline and pruned outbox: exactly one lifecycle confirmation. Exercise unchanged callbacks, retries and A → B → A under concurrency.
+- OTA and walk-in, single/multi-room create/modify/revision replay; partial/all-room cancellation; inventory/availability remains correct. Keep existing source operation IDs and transaction boundaries.
+- Payment-only, refund-only, partial-payment, adjustment insert/delete and guest/profile-only changes; explicit clears and unresolved identity; verify version/outbox/projection and financial values.
+- Parent/one child/multiple children with differing contacts and scheduled/failed/processing/completed jobs; original UUIDs, contacts, errors, attempts and logs unchanged. Execute CRM canonical_reconciliation_preservation.sql rollback-only fixture on the test clone. Test external-action retry-blocked failed alias jobs prevent duplicate sends.
+- Duplicate/reordered/bigint versions; crash between projection and completion; reclaimed lease rejects old claimant; racing reservation/config/timezone change retries completion safely.
+- Ambiguous guests with already scheduled jobs, retries, normal waits and contact-recovery waits: no guest-facing action; authoritative resolution resumes safely. Disconnect integration/deactivate property mid-wait.
+- More than 100 rows, both streams, equal timestamps differing below milliseconds, later-page failure/repeated/malformed cursor and a writer held open across scans. Watermark never skips the late commit.
+- Existing v1 variables/templates, v2 links, native/master check-in sessions, expired/revoked tokens, unsupported direct-review keys and safe review destination. Verify no bearer links or private guest payloads in logs.
 
-```text
-M	apps/rz-api/src/app/v1/integrations/rz-crm/_lib/canonical-pms-data.ts
-M	apps/rz-api/src/app/v1/integrations/rz-crm/_lib/unified-reservation-data.ts
-M	apps/rz-api/src/app/v1/integrations/rz-crm/_lib/variables.ts
-A	apps/rz-api/supabase/migrations/20261126180710_crm_canonical_reservation_integration.sql
-M	docs/crm-reservation-integration.md
-A	docs/sql/crm_integration_restore_functions.sql
-A	docs/sql/crm_integration_rollback.sql
-D	docs/sql/crm_read_master_checkin_v2.draft.sql
-D	docs/sql/crm_reservation_context_view.draft.sql
-D	docs/sql/crm_reservation_event_trigger_cutover.draft.sql
-M	supabase/tests/crm_reservation_context_contract.sql
+No known incomplete development path remains from this review. Migration-history reconciliation, backup restore rehearsal and manual database/concurrency/provider/E2E acceptance are genuine **release gates**, not completed tests. Production behavior remains unverified until those gates pass.
+
+## Migration object declaration inventory
+
+The following declarations are in this repository’s unapplied migration files; replaced functions extend the existing runtime, rather than installing parallel infrastructure. Inline table constraints are described above.
+
+```sql
+ALTER TABLE public.pms_reservations ADD COLUMN canonical_source_version bigint
+ALTER TABLE public.pms_reservations ADD COLUMN canonical_reservation_id uuid;
+ALTER TABLE public.pms_reservations ADD CONSTRAINT pms_canonical_same_account
+ALTER TABLE public.pms_reservations ADD CONSTRAINT pms_canonical_not_self CHECK(canonical_reservation_id IS DISTINCT FROM id);
+CREATE INDEX pms_reservations_canonical_history ON public.pms_reservations(canonical_reservation_id) WHERE canonical_reservation_id IS NOT NULL;
+CREATE FUNCTION public.crm_reconcile_pms_reservation_v2(
+CREATE FUNCTION public.crm_save_canonical_projection_v2(
+CREATE FUNCTION public.crm_complete_canonical_event_v2(
+CREATE OR REPLACE FUNCTION public.begin_pms_automation_execution(p_job_id uuid, p_attempt_count integer, p_contact_id uuid, p_expected_reservation_updated_at timestamp with time zone)
+CREATE OR REPLACE FUNCTION public.claim_automation_trigger_jobs(p_limit integer, p_stale_before timestamp with time zone, p_now timestamp with time zone)
+CREATE OR REPLACE FUNCTION public.upsert_pms_automation_schedule_jobs(p_jobs jsonb)
 ```
 
-### CRM
+## Complete PR changed-file manifest
+
+Paths are relative to this repository. A/M/D follow git diff against the reviewed main base.
 
 ```text
 A	docs/canonical-reservation-completion.md
-M	docs/integration-capabilities-v2-rz-pms-review.md
-D	docs/sql/crm_canonical_event_completion.draft.sql
-D	docs/sql/crm_canonical_event_version.draft.sql
-D	docs/sql/crm_canonical_projection_v2.draft.sql
+A	docs/integration-capabilities-v2-rz-pms-review.md
+A	docs/reservation-event-architecture.md
 A	docs/sql/crm_integration_restore_functions.sql
-D	docs/sql/crm_rekey_pms_reservation_v2.draft.sql
-M	integrations/rz-pms/API_CONTRACT_V2.md
-D	integrations/rz-pms/supabase/migrations/001_crm_read_reservation_capabilities_v2.sql
+A	integrations/rz-pms/API_CONTRACT_V2.md
 M	src/lib/automations/engine.ts
 M	src/lib/automations/pms-context.ts
 M	src/lib/automations/pms-schedule-backfill.ts
+M	src/lib/automations/pms-scheduler.test.ts
 M	src/lib/automations/pms-scheduler.ts
 M	src/lib/automations/pms-worker.ts
-M	src/lib/integrations/pms/canonical-reservation-reader.ts
+A	src/lib/integrations/capability-contract.test.ts
+A	src/lib/integrations/capability-contract.ts
 M	src/lib/integrations/pms/initial-sync.ts
 M	src/lib/integrations/pms/provider.ts
 M	src/lib/integrations/pms/providers/rukiye-zara-variables.ts
+A	src/lib/integrations/pms/providers/rukiye-zara-variables.v2.test.ts
 M	src/lib/integrations/pms/providers/rukiye-zara.test.ts
 M	src/lib/integrations/pms/providers/rukiye-zara.ts
 M	src/lib/integrations/pms/reconciliation.ts
 M	src/lib/integrations/pms/reservation-sync.ts
+M	src/lib/integrations/pms/variable-resolver.ts
 M	src/lib/integrations/pms/webhooks/event-processor.ts
 M	src/lib/message-variables/runtime-resolver.ts
 A	supabase/migrations/20261126180830_canonical_reservation_integration.sql
-M	supabase/migrations/94_integration_capability_contract_v2.sql
+A	supabase/migrations/94_integration_capability_contract_v2.sql
 A	supabase/tests/canonical_reservation_integration.sql
+A	scripts/backup-canonical-reconciliation.sh
+A	src/lib/automations/pms-context.test.ts
+A	supabase/tests/canonical_reconciliation_preservation.sql
 ```
-
-The PMS storage design is superseded by [the shared reservation event architecture](reservation-event-architecture.md). It now uses one integration-independent state table and hashes, with unchanged CRM contracts and migration order. No edits to the two CRM migrations or TypeScript types are required.

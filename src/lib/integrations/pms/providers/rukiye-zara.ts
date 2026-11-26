@@ -129,42 +129,93 @@ function reservationFrom(value: unknown): PmsReservation {
   };
 }
 
-
 // Canonical parent contract. A multi-room stay has no single listing identity.
 export function canonicalReservationFrom(value: unknown): PmsReservation {
   const wrapper = record(value);
   if (wrapper.kind === 'native') return reservationFrom(wrapper.reservation);
-  if (wrapper.kind !== 'pms') throw new PmsProviderError('invalid_response','Invalid reservation kind.');
-  const r=record(wrapper.reservation);
-  const rooms=Array.isArray(r.rooms)?r.rooms.map(record):[];
-  if (!rooms.length) throw new PmsProviderError('invalid_response','Missing reservation rooms.');
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const aliases=rooms.map(room=>identifier(room.booking_id,'room booking'));
-  if (!uuid.test(String(r.source_record_id)) || aliases.some(id=>!uuid.test(id)) ||
-      new Set(aliases).size!==aliases.length || typeof r.source_version !== 'string' ||
-      !/^[1-9]\d{0,18}$/.test(r.source_version) || BigInt(r.source_version)>BigInt('9223372036854775807'))
-    throw new PmsProviderError('invalid_response','Invalid canonical identity or source version.');
-  const listings=[...new Set(rooms.map(room=>identifier(room.listing_id,'room listing')))];
-  const guest=r.guest_resolution==='resolved'?record(r.guest):{};
+  if (wrapper.kind !== 'pms')
+    throw new PmsProviderError('invalid_response', 'Invalid reservation kind.');
+  const r = record(wrapper.reservation);
+  const rooms = Array.isArray(r.rooms) ? r.rooms.map(record) : [];
+  if (!rooms.length)
+    throw new PmsProviderError(
+      'invalid_response',
+      'Missing reservation rooms.'
+    );
+  const uuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const aliases = rooms.map((room) =>
+    identifier(room.booking_id, 'room booking')
+  );
+  if (
+    !uuid.test(String(r.source_record_id)) ||
+    aliases.some((id) => !uuid.test(id)) ||
+    new Set(aliases).size !== aliases.length ||
+    typeof r.source_version !== 'string' ||
+    !/^[1-9]\d{0,18}$/.test(r.source_version) ||
+    BigInt(r.source_version) > BigInt('9223372036854775807')
+  )
+    throw new PmsProviderError(
+      'invalid_response',
+      'Invalid canonical identity or source version.'
+    );
+  const listings = [
+    ...new Set(
+      rooms.map((room) => identifier(room.listing_id, 'room listing'))
+    ),
+  ];
+  const guest = r.guest_resolution === 'resolved' ? record(r.guest) : {};
   return {
-    externalId:identifier(r.source_record_id,'parent reservation'),
-    sourceType:'pms_reservations',
-    externalPropertyId:identifier(r.property_id,'property'),
-    externalListingId:listings.length===1?listings[0]:'',
-    reservationCode:stringValue(r.reservation_code,'reservation code')!,
-    status:reservationStatus(r.canonical_status),
-    providerStatus:r.canonical_status==='confirmed' && Number(r.cancelled_rooms)>0?'partially_cancelled':String(r.canonical_status),
-    checkIn:nullableString(r.checkin_date),checkOut:nullableString(r.checkout_date),
-    guest:{externalId:nullableString(guest.external_guest_id),fullName:nullableString(guest.full_name),email:nullableString(guest.email),phone:nullableString(guest.phone)},
-    occupancy:{adults:null,children:null,infants:null,pets:null,total:numberValue(r.expected_guest_count,'occupancy')},
-    channel:{code:nullableString(r.channel_code),name:nullableString(r.canonical_channel_name ?? r.channel_name)},
-    financial:{totalAmount:numberValue(r.total_amount,'total amount'),paidAmount:numberValue(r.paid_amount,'paid amount'),balanceDue:numberValue(r.balance_due,'balance due'),currency:nullableString(r.currency),paymentStatus:nullableString(r.payment_status)},
-    createdAt:nullableString(r.reservation_created_at),updatedAt:nullableString(r.reservation_updated_at),
-    sourceVersion: typeof r.source_version === 'string' && /^[1-9]\d{0,18}$/.test(r.source_version) ? r.source_version : undefined,
-    canonicalAliases:aliases,
+    externalId: identifier(r.source_record_id, 'parent reservation'),
+    sourceType: 'pms_reservations',
+    externalPropertyId: identifier(r.property_id, 'property'),
+    externalListingId: listings.length === 1 ? listings[0] : '',
+    reservationCode: stringValue(r.reservation_code, 'reservation code')!,
+    status: reservationStatus(r.canonical_status),
+    providerStatus:
+      r.canonical_status === 'confirmed' && Number(r.cancelled_rooms) > 0
+        ? 'partially_cancelled'
+        : String(r.canonical_status),
+    checkIn: nullableString(r.checkin_date),
+    checkOut: nullableString(r.checkout_date),
+    guest: {
+      externalId: nullableString(guest.external_guest_id),
+      fullName: nullableString(guest.full_name),
+      email: nullableString(guest.email),
+      phone: nullableString(guest.phone),
+    },
+    occupancy: {
+      adults: null,
+      children: null,
+      infants: null,
+      pets: null,
+      total: numberValue(r.expected_guest_count, 'occupancy'),
+    },
+    channel: {
+      code: nullableString(r.channel_code),
+      name: nullableString(r.canonical_channel_name ?? r.channel_name),
+    },
+    financial: {
+      totalAmount: numberValue(r.total_amount, 'total amount'),
+      paidAmount: numberValue(r.paid_amount, 'paid amount'),
+      balanceDue: numberValue(r.balance_due, 'balance due'),
+      currency: nullableString(r.currency),
+      paymentStatus: nullableString(r.payment_status),
+    },
+    createdAt: nullableString(r.reservation_created_at),
+    updatedAt: nullableString(r.reservation_updated_at),
+    sourceVersion: r.source_version as string,
+    canonicalAliases: aliases,
     // An authoritative phone clear must not reuse an old mapped CRM phone
     // while the independent guest.updated delivery is still in flight.
-    guestResolution:r.guest_resolution==='resolved' && !(Array.isArray(guest.cleared_fields) && guest.cleared_fields.includes('phone'))?'resolved':'unresolved',
+    guestResolution:
+      r.guest_resolution === 'resolved' &&
+      !(
+        Array.isArray(guest.cleared_fields) &&
+        guest.cleared_fields.includes('phone')
+      )
+        ? 'resolved'
+        : 'unresolved',
   };
 }
 
@@ -218,31 +269,68 @@ export class RukiyeZaraPmsProvider implements PmsProvider {
         'invalid_response',
         'RZ PMS reservations response is invalid.'
       );
-    if (typeof response.sync_watermark !== 'string' || !Number.isFinite(Date.parse(response.sync_watermark)))
-      throw new PmsProviderError('invalid_response','Invalid synchronization watermark.');
+    if (
+      typeof response.sync_watermark !== 'string' ||
+      !Number.isFinite(Date.parse(response.sync_watermark))
+    )
+      throw new PmsProviderError(
+        'invalid_response',
+        'Invalid synchronization watermark.'
+      );
     const pagination = record(response.pagination);
+    if (
+      typeof pagination.has_more !== 'boolean' ||
+      (pagination.has_more
+        ? typeof pagination.next_cursor !== 'string' ||
+          !pagination.next_cursor.trim()
+        : pagination.next_cursor !== null)
+    )
+      throw new PmsProviderError(
+        'invalid_response',
+        'Invalid reservation pagination.'
+      );
     return {
       syncWatermark: response.sync_watermark,
-      items: data.map(item => {
+      items: data.map((item) => {
         const reservation = canonicalReservationFrom(item);
-        if (reservation.externalPropertyId !== externalPropertyId) throw new PmsProviderError('invalid_response','Reservation property mismatch.');
+        if (reservation.externalPropertyId !== externalPropertyId)
+          throw new PmsProviderError(
+            'invalid_response',
+            'Reservation property mismatch.'
+          );
         return reservation;
       }),
       nextCursor: nullableString(pagination.next_cursor),
       hasMore: pagination.has_more === true,
     };
   }
-  async getCanonicalReservation({externalPropertyId,externalReservationId}: {
-    externalPropertyId:string; externalReservationId:string;
+  async getCanonicalReservation({
+    externalPropertyId,
+    externalReservationId,
+  }: {
+    externalPropertyId: string;
+    externalReservationId: string;
   }): Promise<PmsReservation> {
-    const response = record(await this.client.get(
-      `/v1/integrations/rz-crm/properties/${encodeURIComponent(externalPropertyId)}/canonical-reservations/${encodeURIComponent(externalReservationId)}`
-    ));
-    if(response.contract_version!=='v2') throw new PmsProviderError('invalid_response','Invalid canonical contract.');
-    const reservation=canonicalReservationFrom(response.data);
-    if(reservation.externalPropertyId!==externalPropertyId ||
-      (reservation.externalId!==externalReservationId && !reservation.canonicalAliases?.includes(externalReservationId)))
-      throw new PmsProviderError('invalid_response','Canonical reservation scope mismatch.');
+    const response = record(
+      await this.client.get(
+        `/v1/integrations/rz-crm/properties/${encodeURIComponent(externalPropertyId)}/canonical-reservations/${encodeURIComponent(externalReservationId)}`
+      )
+    );
+    if (response.contract_version !== 'v2')
+      throw new PmsProviderError(
+        'invalid_response',
+        'Invalid canonical contract.'
+      );
+    const reservation = canonicalReservationFrom(response.data);
+    if (
+      reservation.externalPropertyId !== externalPropertyId ||
+      (reservation.externalId !== externalReservationId &&
+        !reservation.canonicalAliases?.includes(externalReservationId))
+    )
+      throw new PmsProviderError(
+        'invalid_response',
+        'Canonical reservation scope mismatch.'
+      );
     return reservation;
   }
   async getReservation({

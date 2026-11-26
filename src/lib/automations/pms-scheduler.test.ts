@@ -80,6 +80,30 @@ class MemoryStore implements PmsAutomationScheduleStore {
 }
 
 describe('PMS automation scheduling adapter', () => {
+  it('leaves retained legacy alias jobs and diagnostics untouched', async () => {
+    const store = new MemoryStore();
+    store.automations = [
+      automation('timing', 'before_checkin', {
+        days_before: 1,
+        local_time: '09:00',
+      }),
+    ];
+    const result = await schedulePmsAutomationsAfterSync(
+      { accountId: 'account-1', reservationId: 'reservation-1' },
+      {
+        store,
+        loadContext: async () => ({ ...reservation, historical_alias: true }),
+      }
+    );
+    expect(result).toEqual({
+      eventJobs: 0,
+      scheduledJobs: 0,
+      cancelledJobs: 0,
+    });
+    expect(store.jobs.size).toBe(0);
+    expect(store.cancelled).toBe(0);
+  });
+
   it('requires every requested batch item to be explicitly accounted for', () => {
     expect(
       parsePmsScheduleUpsertResult(

@@ -8,7 +8,11 @@ import type {
   ConnectedVariableValue,
 } from '../variable-resolver';
 
-const V2_LINK_VARIABLES = new Set(['reservation.digital_checkin_url', 'reservation.review_destination_url', 'reservation.review_url']);
+const V2_LINK_VARIABLES = new Set([
+  'reservation.digital_checkin_url',
+  'reservation.review_destination_url',
+  'reservation.review_url',
+]);
 
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -19,7 +23,8 @@ export function rzVariableContext(context: ConnectedVariableContext) {
   const sourceType =
     context.sourceType === 'bookings'
       ? 'rz_booking'
-      : (context.sourceType === 'pms_bookings' || context.sourceType === 'pms_reservations')
+      : context.sourceType === 'pms_bookings' ||
+          context.sourceType === 'pms_reservations'
         ? 'pms_booking'
         : null;
   if (!sourceType || !uuid.test(context.externalReservationId))
@@ -50,10 +55,13 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
     const v2Keys = keys.filter((key) => V2_LINK_VARIABLES.has(key));
     const v1Keys = keys.filter((key) => !V2_LINK_VARIABLES.has(key));
     const values: Record<string, ConnectedVariableValue> = {};
-    // No v2 endpoint is invoked for existing v1 templates. New link variables
-    // are gated by inactive catalog entries until the PMS deploys v2.
+    // Existing keys keep their v1 contract; implemented link keys use v2.
     if (v2Keys.length) {
-      const resolved = await this.resolveLinkCapabilities(context, source, v2Keys);
+      const resolved = await this.resolveLinkCapabilities(
+        context,
+        source,
+        v2Keys
+      );
       Object.assign(values, resolved);
     }
     if (!v1Keys.length) return values;
@@ -129,17 +137,29 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
       data.context.external_property_id !== context.externalPropertyId ||
       !object(data.values)
     ) {
-      throw new PmsProviderError('invalid_response', 'RZ PMS v2 response is invalid.');
+      throw new PmsProviderError(
+        'invalid_response',
+        'RZ PMS v2 response is invalid.'
+      );
     }
     const results: Record<string, ConnectedVariableValue> = {};
     for (const key of keys) {
       const entry = data.values[key];
-      if (!object(entry) || !['resolved', 'missing', 'unsupported'].includes(String(entry.status))) {
-        throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability response is invalid.');
+      if (
+        !object(entry) ||
+        !['resolved', 'missing', 'unsupported'].includes(String(entry.status))
+      ) {
+        throw new PmsProviderError(
+          'invalid_response',
+          'RZ PMS v2 capability response is invalid.'
+        );
       }
       if (entry.status === 'resolved') {
         if (typeof entry.value !== 'string' || !entry.value.trim()) {
-          throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability URL is invalid.');
+          throw new PmsProviderError(
+            'invalid_response',
+            'RZ PMS v2 capability URL is invalid.'
+          );
         }
         const validated = normalizeUrlCapability(
           key === 'reservation.digital_checkin_url'
@@ -150,26 +170,40 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
           { status: 'resolved', value: entry.value }
         );
         if (validated.status !== 'available') {
-          throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability URL is invalid.');
+          throw new PmsProviderError(
+            'invalid_response',
+            'RZ PMS v2 capability URL is invalid.'
+          );
         }
         results[key] = { status: 'resolved', value: validated.value };
       } else {
         if (entry.value !== null) {
-          throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability response is invalid.');
+          throw new PmsProviderError(
+            'invalid_response',
+            'RZ PMS v2 capability response is invalid.'
+          );
         }
         const reasons = [
-          'feature_disabled', 'not_ready', 'expired',
-          'reservation_inactive', 'provider_unsupported',
+          'feature_disabled',
+          'not_ready',
+          'expired',
+          'reservation_inactive',
+          'provider_unsupported',
         ] as const;
-        if (entry.reason !== undefined &&
-            !reasons.some((reason) => reason === entry.reason)) {
-          throw new PmsProviderError('invalid_response', 'RZ PMS v2 capability reason is invalid.');
+        if (
+          entry.reason !== undefined &&
+          !reasons.some((reason) => reason === entry.reason)
+        ) {
+          throw new PmsProviderError(
+            'invalid_response',
+            'RZ PMS v2 capability reason is invalid.'
+          );
         }
         results[key] = {
           status: entry.status as 'missing' | 'unsupported',
           value: null,
           ...(typeof entry.reason === 'string'
-            ? { reason: entry.reason as typeof reasons[number] }
+            ? { reason: entry.reason as (typeof reasons)[number] }
             : {}),
         };
       }

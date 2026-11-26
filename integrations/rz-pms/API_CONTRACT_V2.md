@@ -98,3 +98,7 @@ Projection/version persistence is atomic. Job insertion and webhook completion a
 ## Shared PMS event infrastructure
 
 PMS now uses one integration-independent `reservation_event_state` for both native and parent bookings. `emit_reservation_event` persists only the lifecycle marker, version and normalized SHA-256 hash before calling the existing `emit_domain_event` outbox. No state snapshot/operation-ledger dependency exists in this API or CRM migrations. Parent version fields and all HTTP response/automation contracts are unchanged. See `docs/reservation-event-architecture.md` for replay, retention and rollback evidence.
+
+## Final architecture review
+
+No CRM capability-cache columns or reconciliation-history table are required. Existing reservation metadata stores original identity only; jobs, contacts and logs remain in place with original statuses/errors. Use the verified operator backup/restore procedure in docs/canonical-reservation-completion.md before initial or later operator reconciliation. Native financial enrichment and guest context now share one SQL snapshot through a service-only view; wire responses are unchanged. Shared PMS producer privileges follow the live owner-only outbox, without widening private schema grants.

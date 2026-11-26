@@ -16,7 +16,10 @@ import {
 } from '../reservation-sync';
 import { isSupportedRzPmsEvent } from './envelope';
 import { PmsGuestSyncError, syncPmsGuestContact } from '../guest-sync';
-import { schedulePmsAutomationsAfterSync, completeCanonicalPmsEvent } from '@/lib/automations/pms-scheduler';
+import {
+  schedulePmsAutomationsAfterSync,
+  completeCanonicalPmsEvent,
+} from '@/lib/automations/pms-scheduler';
 
 export const PMS_WEBHOOK_EVENT_BATCH_SIZE = 10;
 export const PMS_WEBHOOK_EVENT_STALE_MS = 15 * 60 * 1000;
@@ -131,7 +134,10 @@ function safeFailure(error: unknown): {
   }
 
   if (error instanceof PmsGuestSyncError) {
-    return { message: `guest_${error.code}: CRM guest sync failed.`, retryable: error.code === 'storage_error' };
+    return {
+      message: `guest_${error.code}: CRM guest sync failed.`,
+      retryable: error.code === 'storage_error',
+    };
   }
 
   if (error instanceof PmsProviderError) {
@@ -221,29 +227,43 @@ export async function processPmsWebhookEvent(
     );
 
     if (event.eventType === 'guest.updated') {
-      const result = await (dependencies.syncGuest ?? syncPmsGuestContact)({
-        accountId: event.accountId,
-        integration: context.integration,
-        propertyId: context.property.id,
-        externalPropertyId: context.property.externalPropertyId,
-        externalGuestId: event.externalResourceId,
-        occurredAt: event.occurredAt ?? now().toISOString(),
-      }, provider);
+      const result = await (dependencies.syncGuest ?? syncPmsGuestContact)(
+        {
+          accountId: event.accountId,
+          integration: context.integration,
+          propertyId: context.property.id,
+          externalPropertyId: context.property.externalPropertyId,
+          externalGuestId: event.externalResourceId,
+          occurredAt: event.occurredAt ?? now().toISOString(),
+        },
+        provider
+      );
       if (result === 'unmapped') {
         // No linked PMS identity means there is no safe CRM contact to modify.
         // This is a terminal no-op until an initial reservation creates the mapping.
-        await store.markIgnored(event, now().toISOString(), 'PMS guest has no linked CRM reservation/contact.');
+        await store.markIgnored(
+          event,
+          now().toISOString(),
+          'PMS guest has no linked CRM reservation/contact.'
+        );
         return { eventId: event.id, status: 'ignored' };
       }
       await store.markProcessed(event, now().toISOString());
       return { eventId: event.id, status: 'processed' };
     }
 
-    const canonicalParent = event.sourceType === 'pms_reservations' || event.sourceType === 'pms_bookings';
+    const canonicalParent =
+      event.sourceType === 'pms_reservations' ||
+      event.sourceType === 'pms_bookings';
     if (canonicalParent && !provider.getCanonicalReservation) {
-      throw new PmsWebhookEventProcessingError('invalid_resource', 'Canonical provider is unavailable.');
+      throw new PmsWebhookEventProcessingError(
+        'invalid_resource',
+        'Canonical provider is unavailable.'
+      );
     }
-    const fetchReservation = canonicalParent ? provider.getCanonicalReservation!.bind(provider) : provider.getReservation.bind(provider);
+    const fetchReservation = canonicalParent
+      ? provider.getCanonicalReservation!.bind(provider)
+      : provider.getReservation.bind(provider);
     const reservation = await fetchReservation({
       integration: context.integration,
       externalPropertyId: context.property.externalPropertyId,
@@ -252,7 +272,10 @@ export async function processPmsWebhookEvent(
 
     if (
       (reservation.externalId !== event.externalResourceId &&
-        !(canonicalParent && reservation.canonicalAliases?.includes(event.externalResourceId))) ||
+        !(
+          canonicalParent &&
+          reservation.canonicalAliases?.includes(event.externalResourceId)
+        )) ||
       reservation.externalPropertyId !== context.property.externalPropertyId
     ) {
       throw new PmsWebhookEventProcessingError(
@@ -296,39 +319,75 @@ export async function processPmsWebhookEvent(
     // Old parent envelopes have no ordered source version. Project current state,
     // but never replay a historical lifecycle occurrence through the legacy path.
     if (canonicalParent && !event.sourceVersion) {
-      await store.markIgnored(event, now().toISOString(), 'Unversioned parent event superseded by canonical synchronization.');
-      return {eventId:event.id,status:'ignored'};
-    }
-    // Never schedule guest-facing actions from an unresolved parent guest.
-    // Keep the event retryable until an authoritative guest is available.
-    if (canonicalParent && reservation.guestResolution !== 'resolved') {
-      throw new PmsReservationSyncError('Canonical guest is unresolved.');
+      await store.markIgnored(
+        event,
+        now().toISOString(),
+        'Unversioned parent event superseded by canonical synchronization.'
+      );
+      return { eventId: event.id, status: 'ignored' };
     }
     // A stale cancellation must not cancel the schedules of a reinstated stay.
     // A stale confirmation must not send confirmation for a cancelled stay.
     // Keep same-status retries eligible for occurrence-key deduplication.
-    if (canonicalParent &&
-      ((event.eventType === 'reservation.cancelled' && reservation.status !== 'cancelled') ||
-       (event.eventType === 'reservation.confirmed' && reservation.status !== 'confirmed'))) {
-      await store.markIgnored(event, now().toISOString(), 'Reservation lifecycle has advanced.');
+    if (
+      canonicalParent &&
+      ((event.eventType === 'reservation.cancelled' &&
+        reservation.status !== 'cancelled') ||
+        (event.eventType === 'reservation.confirmed' &&
+          reservation.status !== 'confirmed'))
+    ) {
+      await store.markIgnored(
+        event,
+        now().toISOString(),
+        'Reservation lifecycle has advanced.'
+      );
       return { eventId: event.id, status: 'ignored' };
     }
     if (canonicalParent && event.sourceVersion) {
-      if (!reservation.sourceVersion) throw new PmsReservationSyncError('Canonical snapshot version missing.');
-      if (BigInt(reservation.sourceVersion)<BigInt(event.sourceVersion)) throw new PmsReservationSyncError('Canonical snapshot not yet available.');
-      if (BigInt(reservation.sourceVersion)>BigInt(event.sourceVersion)) {
-        await store.markIgnored(event,now().toISOString(),'Canonical event superseded.');
-        return {eventId:event.id,status:'ignored'};
+      if (!reservation.sourceVersion)
+        throw new PmsReservationSyncError(
+          'Canonical snapshot version missing.'
+        );
+      if (BigInt(reservation.sourceVersion) < BigInt(event.sourceVersion))
+        throw new PmsReservationSyncError(
+          'Canonical snapshot not yet available.'
+        );
+      if (BigInt(reservation.sourceVersion) > BigInt(event.sourceVersion)) {
+        await store.markIgnored(
+          event,
+          now().toISOString(),
+          'Canonical event superseded.'
+        );
+        return { eventId: event.id, status: 'ignored' };
       }
-      const outcome=await (dependencies.completeCanonicalEvent ?? completeCanonicalPmsEvent)({
-        accountId:event.accountId,reservationId:syncResult.reservationId,webhookEventId:event.id,
-        eventType:event.eventType as 'reservation.confirmed'|'reservation.updated'|'reservation.cancelled',
-        canonicalParent:true,sourceVersion:event.sourceVersion,attemptCount:event.attemptCount
+      // Never schedule guest-facing actions from an unresolved parent guest.
+      // Keep the event retryable until an authoritative guest is available.
+      if (canonicalParent && reservation.guestResolution !== 'resolved') {
+        throw new PmsReservationSyncError('Canonical guest is unresolved.');
+      }
+      const outcome = await (
+        dependencies.completeCanonicalEvent ?? completeCanonicalPmsEvent
+      )({
+        accountId: event.accountId,
+        reservationId: syncResult.reservationId,
+        webhookEventId: event.id,
+        eventType: event.eventType as
+          | 'reservation.confirmed'
+          | 'reservation.updated'
+          | 'reservation.cancelled',
+        canonicalParent: true,
+        sourceVersion: event.sourceVersion,
+        attemptCount: event.attemptCount,
       });
-      if(outcome==='processed') return {eventId:event.id,status:'processed'};
-      if(outcome==='superseded'){
-        await store.markIgnored(event,now().toISOString(),'Canonical event superseded.');
-        return {eventId:event.id,status:'ignored'};
+      if (outcome === 'processed')
+        return { eventId: event.id, status: 'processed' };
+      if (outcome === 'superseded') {
+        await store.markIgnored(
+          event,
+          now().toISOString(),
+          'Canonical event superseded.'
+        );
+        return { eventId: event.id, status: 'ignored' };
       }
       throw new PmsReservationSyncError('Canonical event must retry.');
     }
@@ -451,16 +510,47 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
 
     const rows = (data ?? []) as Array<Record<string, unknown>>;
     // Claim RPC does not project the envelope; load its persisted source from the same scoped event.
-    const claims = await Promise.all(rows.map(async (row): Promise<Record<string, unknown> & {sourceVersion?: string; sourceType?: string}> => {
-      const { data: persisted, error: payloadError } = await this.admin.from('pms_webhook_events')
-        .select('payload').eq('id',row.event_id).eq('account_id',row.account_id)
-        .eq('pms_integration_id',row.pms_integration_id).eq('pms_property_id',row.pms_property_id).maybeSingle();
-      if (payloadError || !persisted) throw new PmsWebhookEventStoreError('Event source lookup failed.');
-      const payload = persisted.payload as {source?: {type?: unknown;id?: unknown};data?:{source_version?:unknown}} | null;
-      const version=payload?.data?.source_version;
-      const sourceVersion=typeof version==='string' && /^[1-9]\d{0,18}$/.test(version)?version:undefined;
-      return { ...row, sourceVersion, sourceType: payload?.source?.id === row.external_resource_id && typeof payload?.source?.type === 'string' ? payload.source.type : undefined };
-    }));
+    const claims = await Promise.all(
+      rows.map(
+        async (
+          row
+        ): Promise<
+          Record<string, unknown> & {
+            sourceVersion?: string;
+            sourceType?: string;
+          }
+        > => {
+          const { data: persisted, error: payloadError } = await this.admin
+            .from('pms_webhook_events')
+            .select('payload')
+            .eq('id', row.event_id)
+            .eq('account_id', row.account_id)
+            .eq('pms_integration_id', row.pms_integration_id)
+            .eq('pms_property_id', row.pms_property_id)
+            .maybeSingle();
+          if (payloadError || !persisted)
+            throw new PmsWebhookEventStoreError('Event source lookup failed.');
+          const payload = persisted.payload as {
+            source?: { type?: unknown; id?: unknown };
+            data?: { source_version?: unknown };
+          } | null;
+          const version = payload?.data?.source_version;
+          const sourceVersion =
+            typeof version === 'string' && /^[1-9]\d{0,18}$/.test(version)
+              ? version
+              : undefined;
+          return {
+            ...row,
+            sourceVersion,
+            sourceType:
+              payload?.source?.id === row.external_resource_id &&
+              typeof payload?.source?.type === 'string'
+                ? payload.source.type
+                : undefined,
+          };
+        }
+      )
+    );
     return claims.map((row) => ({
       id: row.event_id as string,
       provider: row.provider as string,

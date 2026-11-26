@@ -9,21 +9,6 @@ ALTER TABLE public.pms_reservations ADD CONSTRAINT pms_canonical_same_account
  FOREIGN KEY(canonical_reservation_id,account_id) REFERENCES public.pms_reservations(id,account_id);
 ALTER TABLE public.pms_reservations ADD CONSTRAINT pms_canonical_not_self CHECK(canonical_reservation_id IS DISTINCT FROM id);
 CREATE INDEX pms_reservations_canonical_history ON public.pms_reservations(canonical_reservation_id) WHERE canonical_reservation_id IS NOT NULL;
--- Retain original projection and job state before rekey/cancellation, including
--- prior failure diagnostics. This is service-only history, not a contact merge.
-CREATE TABLE public.crm_canonical_reconciliation_history (
- account_id uuid NOT NULL REFERENCES public.accounts(id),
- reservation_id uuid NOT NULL REFERENCES public.pms_reservations(id),
- canonical_reservation_id uuid NOT NULL REFERENCES public.pms_reservations(id),
- previous_reservation jsonb NOT NULL,
- previous_jobs jsonb NOT NULL,
- reconciled_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- PRIMARY KEY(account_id,reservation_id)
-);
-ALTER TABLE public.crm_canonical_reconciliation_history ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.crm_canonical_reconciliation_history FROM PUBLIC,anon,authenticated;
-GRANT SELECT,INSERT ON public.crm_canonical_reconciliation_history TO service_role;
-
 CREATE FUNCTION public.crm_reconcile_pms_reservation_v2(
  p_account_id uuid,p_integration_id uuid,p_property_id uuid,p_parent_id text,p_verified_child_ids text[]
 ) RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path TO 'public', 'pg_temp' AS $$
@@ -39,6 +24,12 @@ BEGIN
  IF EXISTS(SELECT 1 FROM public.pms_reservations WHERE pms_integration_id=p_integration_id
  AND (external_reservation_id=p_parent_id OR external_reservation_id=ANY(p_verified_child_ids))
  AND (account_id<>p_account_id OR pms_property_id<>p_property_id)) THEN RAISE EXCEPTION 'Alias scope mismatch'; END IF;
+ IF EXISTS(SELECT 1 FROM public.pms_reservations WHERE id IN (
+   SELECT id FROM public.pms_reservations WHERE pms_integration_id=p_integration_id
+   AND (external_reservation_id=p_parent_id OR external_reservation_id=ANY(p_verified_child_ids)))
+   AND metadata->>'source_type' IS DISTINCT FROM 'pms_bookings'
+   AND metadata->>'source_type' IS DISTINCT FROM 'pms_reservations') THEN RAISE EXCEPTION 'Alias source mismatch'; END IF;
+
  SELECT id INTO winner FROM public.pms_reservations WHERE pms_integration_id=p_integration_id
  AND (external_reservation_id=p_parent_id OR external_reservation_id=ANY(p_verified_child_ids))
  ORDER BY (external_reservation_id=p_parent_id) DESC,created_at,id LIMIT 1;
@@ -47,25 +38,16 @@ BEGIN
  AND (external_reservation_id=p_parent_id OR external_reservation_id=ANY(p_verified_child_ids));
  IF EXISTS(SELECT 1 FROM public.pms_reservations WHERE id=ANY(ids) AND canonical_reservation_id IS NOT NULL AND canonical_reservation_id<>winner)
  THEN RAISE EXCEPTION 'Alias already assigned to another parent'; END IF;
- IF EXISTS(SELECT 1 FROM public.pms_reservations WHERE id=ANY(ids) AND external_reservation_id<>p_parent_id AND canonical_reservation_id IS NULL) THEN
-   INSERT INTO public.crm_canonical_reconciliation_history(account_id,reservation_id,canonical_reservation_id,previous_reservation,previous_jobs)
-   SELECT p_account_id,r.id,winner,to_jsonb(r),coalesce((SELECT jsonb_agg(to_jsonb(j) ORDER BY j.id)
-     FROM public.automation_trigger_jobs j WHERE j.pms_reservation_id=r.id AND j.account_id=p_account_id),'[]'::jsonb)
-   FROM public.pms_reservations r WHERE r.id=ANY(ids)
-   ON CONFLICT(account_id,reservation_id) DO NOTHING;
- END IF;
  -- No reservation/contact/job/log is removed or reassigned. Save original external identity once.
- UPDATE public.pms_reservations SET metadata=metadata||jsonb_build_object('canonical_previous_external_id',external_reservation_id),
+ UPDATE public.pms_reservations SET metadata=jsonb_build_object('canonical_previous_external_id',external_reservation_id)||metadata,
  external_reservation_id=p_parent_id WHERE id=winner AND external_reservation_id<>p_parent_id;
  UPDATE public.pms_reservations SET canonical_reservation_id=winner
  WHERE id=ANY(ids) AND id<>winner AND canonical_reservation_id IS NULL;
  UPDATE public.pms_reservations SET metadata=metadata||jsonb_build_object('canonical_identity_pending',true)
  WHERE id=winner AND metadata->>'source_type' IS DISTINCT FROM 'pms_reservations';
- -- In-flight executions must be drained before cutover. Pending duplicate room jobs
- -- remain auditable; canonical timing scheduling owns future work.
- UPDATE public.automation_trigger_jobs SET status='cancelled',retryable=false,next_attempt_at=NULL,
- completed_at=clock_timestamp(),last_error='Historical room projection retained; canonical reservation owns future scheduling.'
- WHERE pms_reservation_id=ANY(ids) AND pms_reservation_id<>winner AND status IN ('scheduled','failed');
+ -- Preserve every legacy job column, including status, lease, attempts and error.
+ -- Claims and dispatch reject aliases via canonical_reservation_id. This also
+ -- protects records first encountered by a later incremental reconciliation.
  RETURN jsonb_build_object('status','reconciled','id',winner,'preserved_ids',ids);
 END;
 $$;
@@ -103,7 +85,8 @@ BEGIN
  channel_code=r.channel_code,channel_name=r.channel_name,total_amount=r.total_amount,paid_amount=r.paid_amount,
  balance_due=r.balance_due,currency=r.currency,payment_status=r.payment_status,
  external_created_at=r.external_created_at,external_updated_at=r.external_updated_at,last_synced_at=r.last_synced_at,
- metadata=(old.metadata-'canonical_identity_pending')||r.metadata,canonical_source_version=p_source_version WHERE id=old.id;
+ metadata=(old.metadata-'canonical_identity_pending')||r.metadata,canonical_source_version=p_source_version,
+ updated_at=greatest(clock_timestamp(),old.updated_at+interval '1 microsecond') WHERE id=old.id;
  RETURN jsonb_build_object('id',old.id,'skippedStale',false);
  END IF;
  INSERT INTO public.pms_reservations(account_id,pms_integration_id,pms_property_id,contact_id,external_reservation_id,
@@ -552,12 +535,14 @@ BEGIN
   -- A webhook may update or cancel a reservation after backfill selected it
   -- but before this statement. In that no-existing-row race, the canonical
   -- reservation version is the only safe concurrency boundary.
-  WHERE reservation.updated_at <= job.source_updated_at
+  WHERE reservation.canonical_reservation_id IS NULL
+    AND reservation.metadata->>'canonical_identity_pending' IS DISTINCT FROM 'true'
+    AND reservation.updated_at <= job.source_updated_at
     AND NOT EXISTS (SELECT 1 FROM public.automation_trigger_jobs history
       JOIN public.pms_reservations alias ON alias.id=history.pms_reservation_id
       WHERE alias.canonical_reservation_id=reservation.id AND alias.account_id=job.account_id
       AND history.account_id=job.account_id AND history.automation_id=job.automation_id
-      AND history.trigger_type=job.trigger_type AND history.status IN ('completed','processing'))
+      AND history.trigger_type=job.trigger_type AND (history.status IN ('completed','processing') OR public.automation_retry_block_reason(history.id,job.account_id) IS NOT NULL))
   ON CONFLICT (occurrence_key) DO UPDATE
   SET
     run_at = EXCLUDED.run_at,
@@ -566,9 +551,9 @@ BEGIN
     processing_started_at = NULL,
     retryable = FALSE,
     next_attempt_at = NULL,
-    last_error = NULL,
     completed_at = NULL
-  WHERE public.automation_trigger_jobs.status NOT IN ('completed','processing')
+  WHERE public.automation_trigger_jobs.status NOT IN ('completed','processing','failed')
+    AND public.automation_retry_block_reason(public.automation_trigger_jobs.id,EXCLUDED.account_id) IS NULL
     AND public.automation_trigger_jobs.account_id = EXCLUDED.account_id
     AND public.automation_trigger_jobs.automation_id = EXCLUDED.automation_id
     AND public.automation_trigger_jobs.pms_reservation_id = EXCLUDED.pms_reservation_id
@@ -588,7 +573,9 @@ BEGIN
     WHERE history.account_id=job.account_id AND alias.account_id=job.account_id
     AND (alias.id=job.pms_reservation_id OR alias.canonical_reservation_id=job.pms_reservation_id)
     AND history.automation_id=job.automation_id AND history.trigger_type=job.trigger_type
-    AND history.pms_webhook_event_id IS NULL AND history.status IN ('completed','processing'));
+    AND history.pms_webhook_event_id IS NULL AND (history.status IN ('completed','processing')
+      OR (alias.id=job.pms_reservation_id AND history.status='failed')
+      OR public.automation_retry_block_reason(history.id,job.account_id) IS NOT NULL));
 
   SELECT count(*) INTO stale_count
   FROM jsonb_to_recordset(p_jobs) AS job(
@@ -609,14 +596,17 @@ BEGIN
    AND existing.pms_reservation_id = job.pms_reservation_id
    AND existing.trigger_type = job.trigger_type
    AND existing.pms_webhook_event_id IS NULL
-  WHERE coalesce(existing.status,'') NOT IN ('completed','processing')
+  WHERE coalesce(existing.status,'') NOT IN ('completed','processing','failed')
+    AND public.automation_retry_block_reason(existing.id,job.account_id) IS NULL
     AND NOT EXISTS(SELECT 1 FROM public.automation_trigger_jobs history
       JOIN public.pms_reservations alias ON alias.id=history.pms_reservation_id
       WHERE alias.canonical_reservation_id=job.pms_reservation_id AND alias.account_id=job.account_id
       AND history.account_id=job.account_id AND history.automation_id=job.automation_id
-      AND history.trigger_type=job.trigger_type AND history.status IN ('completed','processing'))
+      AND history.trigger_type=job.trigger_type AND (history.status IN ('completed','processing') OR public.automation_retry_block_reason(history.id,job.account_id) IS NOT NULL))
     AND (
-      reservation.updated_at > job.source_updated_at
+      reservation.canonical_reservation_id IS NOT NULL
+      OR reservation.metadata->>'canonical_identity_pending'='true'
+      OR reservation.updated_at > job.source_updated_at
       OR existing.source_updated_at > job.source_updated_at
     );
 

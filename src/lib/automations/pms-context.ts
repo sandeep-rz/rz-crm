@@ -74,14 +74,14 @@ export async function loadReservationAutomationContext(
   ] = await Promise.all([
     db
       .from('pms_properties')
-      .select('id, account_id, pms_integration_id, name, timezone')
+      .select('id, account_id, pms_integration_id, name, timezone, status')
       .eq('id', reservation.pms_property_id)
       .eq('account_id', accountId)
       .eq('pms_integration_id', reservation.pms_integration_id)
       .maybeSingle(),
     db
       .from('pms_integrations')
-      .select('id, account_id, provider')
+      .select('id, account_id, provider, status')
       .eq('id', reservation.pms_integration_id)
       .eq('account_id', accountId)
       .maybeSingle(),
@@ -91,7 +91,13 @@ export async function loadReservationAutomationContext(
       'Reservation relationship lookup failed.'
     );
   }
-  if (!property || !integration) return null;
+  if (
+    !property ||
+    !integration ||
+    property.status !== 'active' ||
+    integration.status !== 'connected'
+  )
+    return null;
 
   let guestName: string | null = null;
   if (reservation.contact_id) {
@@ -112,7 +118,10 @@ export async function loadReservationAutomationContext(
 
   return {
     historical_alias: Boolean(reservation.canonical_reservation_id),
-    guest_identity_unresolved: reservation.metadata?.canonical_identity_pending === true || (reservation.metadata?.source_type === 'pms_reservations' && reservation.metadata?.guest_resolution !== 'resolved'),
+    guest_identity_unresolved:
+      reservation.metadata?.canonical_identity_pending === true ||
+      (reservation.metadata?.source_type === 'pms_reservations' &&
+        reservation.metadata?.guest_resolution !== 'resolved'),
     reservation_id: reservation.id as string,
     external_reservation_id: reservation.external_reservation_id as string,
     reservation_reference: reservation.reservation_code as string | null,

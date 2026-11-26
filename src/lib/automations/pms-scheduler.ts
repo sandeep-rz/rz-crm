@@ -278,7 +278,9 @@ export async function schedulePmsAutomationsAfterSync(
   } = {}
 ): Promise<PmsAutomationScheduleResult> {
   if (Boolean(input.eventType) !== Boolean(input.webhookEventId))
-    throw new PmsAutomationScheduleError('Event type and webhook identity must be provided together.');
+    throw new PmsAutomationScheduleError(
+      'Event type and webhook identity must be provided together.'
+    );
   const store = dependencies.store ?? new SupabasePmsAutomationScheduleStore();
   const loadContext =
     dependencies.loadContext ?? loadReservationAutomationContext;
@@ -290,8 +292,12 @@ export async function schedulePmsAutomationsAfterSync(
     );
   }
 
+  if (reservation.historical_alias)
+    return { eventJobs: 0, scheduledJobs: 0, cancelledJobs: 0 };
   const automations = await store.loadActiveAutomations(input.accountId);
-  const eventTrigger = input.eventType ? EVENT_TRIGGER_BY_PMS_EVENT[input.eventType] : null;
+  const eventTrigger = input.eventType
+    ? EVENT_TRIGGER_BY_PMS_EVENT[input.eventType]
+    : null;
   const result: PmsAutomationScheduleResult = {
     eventJobs: 0,
     scheduledJobs: 0,
@@ -408,13 +414,24 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
   }
 
   async insertEventJob(job: AutomationTriggerJobInsert): Promise<boolean> {
-    if (job.trigger_type === 'reservation_confirmed' && job.occurrence_key.endsWith(':confirmation:reservation_confirmed')) {
+    if (
+      job.trigger_type === 'reservation_confirmed' &&
+      job.occurrence_key.endsWith(':confirmation:reservation_confirmed')
+    ) {
       // Preserve existing confirmation history after a single-record rekey.
       // Any existing occurrence owns retry/recovery, regardless of its status.
-      const prior = await this.db.from('automation_trigger_jobs').select('id')
-        .eq('account_id',job.account_id).eq('automation_id',job.automation_id)
-        .eq('pms_reservation_id',job.pms_reservation_id).eq('trigger_type','reservation_confirmed').limit(1);
-      if (prior.error) throw new PmsAutomationScheduleError('Confirmation history lookup failed.');
+      const prior = await this.db
+        .from('automation_trigger_jobs')
+        .select('id')
+        .eq('account_id', job.account_id)
+        .eq('automation_id', job.automation_id)
+        .eq('pms_reservation_id', job.pms_reservation_id)
+        .eq('trigger_type', 'reservation_confirmed')
+        .limit(1);
+      if (prior.error)
+        throw new PmsAutomationScheduleError(
+          'Confirmation history lookup failed.'
+        );
       if (prior.data?.length) return false;
     }
     const { data, error } = await this.db
@@ -469,38 +486,76 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
 }
 
 /** Plan with the existing scheduler, then commit the jobs and webhook lease together. */
-export async function completeCanonicalPmsEvent(input: PmsAutomationScheduleInput & {
-  sourceVersion:string; attemptCount:number; webhookEventId:string; eventType:keyof typeof EVENT_TRIGGER_BY_PMS_EVENT;
-}, db:SupabaseClient=supabaseAdmin()):Promise<string> {
-  const jobs:AutomationTriggerJobInsert[]=[];
-  let cancelTiming=false;
+export async function completeCanonicalPmsEvent(
+  input: PmsAutomationScheduleInput & {
+    sourceVersion: string;
+    attemptCount: number;
+    webhookEventId: string;
+    eventType: keyof typeof EVENT_TRIGGER_BY_PMS_EVENT;
+  },
+  db: SupabaseClient = supabaseAdmin()
+): Promise<string> {
+  const jobs: AutomationTriggerJobInsert[] = [];
+  let cancelTiming = false;
   let planUpdatedAt: string | null = null;
   let planTimezone: string | null = null;
-  let planAutomations: Array<{id:string;updated_at:string}> = [];
-  const base=new SupabasePmsAutomationScheduleStore(db);
-  await schedulePmsAutomationsAfterSync(input,{
-    store:{
-      loadActiveAutomations:async accountId=>{
-        const automations=await base.loadActiveAutomations(accountId);
-        planAutomations=automations.map(a=>({id:a.id,updated_at:a.updated_at}));
+  let planAutomations: Array<{ id: string; updated_at: string }> = [];
+  const base = new SupabasePmsAutomationScheduleStore(db);
+  await schedulePmsAutomationsAfterSync(input, {
+    store: {
+      loadActiveAutomations: async (accountId) => {
+        const automations = await base.loadActiveAutomations(accountId);
+        planAutomations = automations.map((a) => ({
+          id: a.id,
+          updated_at: a.updated_at,
+        }));
         return automations;
       },
-      insertEventJob:async job=>{jobs.push(job);return true;},
-      upsertScheduledJob:async job=>{jobs.push(job);return true;},
-      cancelFutureJobs:async()=>{cancelTiming=true;return 0;}
+      insertEventJob: async (job) => {
+        jobs.push(job);
+        return true;
+      },
+      upsertScheduledJob: async (job) => {
+        jobs.push(job);
+        return true;
+      },
+      cancelFutureJobs: async () => {
+        cancelTiming = true;
+        return 0;
+      },
     },
-    loadContext:async (reservationId,accountId)=>{
-      const context=await loadReservationAutomationContext(reservationId,accountId,db);
-      planUpdatedAt=context?.reservation_updated_at ?? null;
-      planTimezone=context?.property_timezone ?? null;
+    loadContext: async (reservationId, accountId) => {
+      const context = await loadReservationAutomationContext(
+        reservationId,
+        accountId,
+        db
+      );
+      planUpdatedAt = context?.reservation_updated_at ?? null;
+      planTimezone = context?.property_timezone ?? null;
       return context;
     },
   });
-  const result=await db.rpc('crm_complete_canonical_event_v2',{
-    p_account_id:input.accountId,p_reservation_id:input.reservationId,p_event_id:input.webhookEventId,
-    p_attempt:input.attemptCount,p_source_version:input.sourceVersion,p_jobs:jobs,p_cancel_timing:cancelTiming,p_plan_updated_at:planUpdatedAt,p_plan_automations:planAutomations,p_plan_timezone:planTimezone
+  const result = await db.rpc('crm_complete_canonical_event_v2', {
+    p_account_id: input.accountId,
+    p_reservation_id: input.reservationId,
+    p_event_id: input.webhookEventId,
+    p_attempt: input.attemptCount,
+    p_source_version: input.sourceVersion,
+    p_jobs: jobs,
+    p_cancel_timing: cancelTiming,
+    p_plan_updated_at: planUpdatedAt,
+    p_plan_automations: planAutomations,
+    p_plan_timezone: planTimezone,
   });
-  if(result.error || !['processed','version_changed','guest_unresolved','superseded'].includes(result.data))
+  if (
+    result.error ||
+    ![
+      'processed',
+      'version_changed',
+      'guest_unresolved',
+      'superseded',
+    ].includes(result.data)
+  )
     throw new PmsAutomationScheduleError('Canonical event completion failed.');
   return result.data;
 }

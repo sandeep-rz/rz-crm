@@ -264,7 +264,10 @@ export async function syncPmsReservation(
   }
 
   if (input.reservation.sourceType === 'pms_reservations') {
-    if (!store.reconcileCanonicalIdentity) throw new PmsReservationSyncError('Canonical identity reconciliation unavailable.');
+    if (!store.reconcileCanonicalIdentity)
+      throw new PmsReservationSyncError(
+        'Canonical identity reconciliation unavailable.'
+      );
     await store.reconcileCanonicalIdentity(input);
   }
   const existing = await store.findReservation({
@@ -272,9 +275,15 @@ export async function syncPmsReservation(
     integrationId: input.integration.integrationId,
     externalReservationId: input.reservation.externalId,
   });
-  const contact = input.reservation.sourceType === 'pms_reservations' && input.reservation.guestResolution !== 'resolved'
-    ? { contactId: existing?.contactId ?? null, created: false, mapped: false }
-    : await resolveContact(input, store);
+  const contact =
+    input.reservation.sourceType === 'pms_reservations' &&
+    input.reservation.guestResolution !== 'resolved'
+      ? {
+          contactId: existing?.contactId ?? null,
+          created: false,
+          mapped: false,
+        }
+      : await resolveContact(input, store);
   const saved = await store.saveReservation({
     accountId: input.accountId,
     integrationId: input.integration.integrationId,
@@ -303,14 +312,19 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
 
   async reconcileCanonicalIdentity(input: PmsReservationSyncInput) {
     const aliases = input.reservation.canonicalAliases;
-    if (!aliases?.length) throw new PmsReservationSyncError('Canonical aliases missing.');
+    if (!aliases?.length)
+      throw new PmsReservationSyncError('Canonical aliases missing.');
     const result = await this.admin.rpc('crm_reconcile_pms_reservation_v2', {
-      p_account_id: input.accountId, p_integration_id: input.integration.integrationId,
-      p_property_id: input.property.id, p_parent_id: input.reservation.externalId,
+      p_account_id: input.accountId,
+      p_integration_id: input.integration.integrationId,
+      p_property_id: input.property.id,
+      p_parent_id: input.reservation.externalId,
       p_verified_child_ids: aliases,
     });
     if (result.error || !['insert', 'reconciled'].includes(result.data?.status))
-      throw new PmsReservationSyncError('Canonical identity reconciliation failed.');
+      throw new PmsReservationSyncError(
+        'Canonical identity reconciliation failed.'
+      );
   }
 
   async findGuestMapping(input: {
@@ -434,7 +448,8 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
       accountId: input.accountId,
       contactId: input.contact.id,
     });
-    const { phone: _skippedPhone, ...safePatch } = patch;
+    const safePatch = { ...patch };
+    delete safePatch.phone;
     if (Object.keys(safePatch).length === 0) return input.contact;
 
     const retry = await apply(safePatch);
@@ -540,16 +555,30 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
       external_created_at: input.reservation.createdAt,
       external_updated_at: input.reservation.updatedAt,
       last_synced_at: input.syncedAt,
-      metadata: { source_type: input.reservation.sourceType, ...(input.reservation.sourceType === 'pms_reservations' ? { guest_resolution: input.reservation.guestResolution ?? 'unresolved' } : {}) },
+      metadata: {
+        source_type: input.reservation.sourceType,
+        ...(input.reservation.sourceType === 'pms_reservations'
+          ? {
+              guest_resolution:
+                input.reservation.guestResolution ?? 'unresolved',
+            }
+          : {}),
+      },
     };
     if (input.reservation.sourceType === 'pms_reservations') {
-      if (!input.reservation.sourceVersion) throw new PmsReservationSyncError('Canonical source version missing.');
+      if (!input.reservation.sourceVersion)
+        throw new PmsReservationSyncError('Canonical source version missing.');
       const result = await this.admin.rpc('crm_save_canonical_projection_v2', {
-        p_row: row, p_source_version: input.reservation.sourceVersion
+        p_row: row,
+        p_source_version: input.reservation.sourceVersion,
       });
-      if (result.error || typeof result.data?.id !== 'string' || typeof result.data?.skippedStale !== 'boolean')
+      if (
+        result.error ||
+        typeof result.data?.id !== 'string' ||
+        typeof result.data?.skippedStale !== 'boolean'
+      )
         throw new PmsReservationSyncError('Canonical projection failed.');
-      return result.data as {id:string;skippedStale:boolean};
+      return result.data as { id: string; skippedStale: boolean };
     }
     if (input.existing) {
       let updateQuery = this.admin

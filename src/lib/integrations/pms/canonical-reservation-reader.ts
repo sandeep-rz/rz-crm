@@ -2,6 +2,7 @@ import 'server-only';
 import { PmsHttpClient } from './http-client';
 import { PmsProviderError } from './provider';
 import type { PmsIntegrationContext } from './provider';
+import { RUKIYE_ZARA_PROVIDER } from './types';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -14,7 +15,7 @@ export type CanonicalRead = {kind:'native'|'pms'; reservation:Record<string,unkn
 export class CanonicalReservationReader {
   constructor(private readonly client: Pick<PmsHttpClient,'get'> = new PmsHttpClient()) {}
   async get(input:{integration:PmsIntegrationContext; externalPropertyId:string; externalReservationId:string; sourceType:string}):Promise<CanonicalRead> {
-    if (input.integration.provider !== 'rz_pms' && input.integration.provider !== 'rukiye_zara')
+    if (input.integration.provider !== RUKIYE_ZARA_PROVIDER)
       throw new PmsProviderError('configuration','Invalid provider for canonical read.');
     if (!/^[1-9]\d*$/.test(input.externalPropertyId) || !uuid.test(input.externalReservationId) ||
       !['bookings','pms_bookings','pms_reservations'].includes(input.sourceType))

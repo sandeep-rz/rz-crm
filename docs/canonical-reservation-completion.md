@@ -14,7 +14,7 @@ The original Security Rulebook supplied in this chat governs these changes. New 
 
 | Area | Final behavior |
 | --- | --- |
-| Parent lifecycle producer | Existing deferred PMS booking trigger calls the versioned producer. A parent lock, operation identity, state/version and existing outbox write form one transaction. Multi-room writes use the existing `commit_pms_booking_inventory_delta` RPC; no per-room HTTP emitter was added. Silent baseline prevents historical confirmation replay. |
+| Parent lifecycle producer | Existing deferred PMS booking trigger calls the versioned producer. A source-row lock, normalized snapshot hash, shared state/version and existing outbox write form one transaction. Upstream revision/request IDs reject replayed operations before writes. Multi-room writes use the existing `commit_pms_booking_inventory_delta` RPC; no per-room HTTP emitter was added. Silent baseline prevents historical confirmation replay. |
 | Payments and guests | Booking writes, guest linkage/profile changes, parent changes, transaction/refund ledger writes, partial-payment records and native/PMS adjustment writes reach deferred producers. Payment amount, balance, history/refund and guest-only changes participate in snapshots. Native transaction identity replaces state-hash deduplication, permitting legitimate state reversions. Substantive writes advance source timestamps even when callers omit updated_at. |
 | Read consistency | Parent room guests and financial values are read with their source version in one database statement. The former follow-up guest query could mix two committed versions and has been removed. Unknown financial components remain null. Multiple listings never receive an invented single-listing identity. |
 | Projection | The actual reservation sync uses a service-only atomic projection/version RPC. Older/equal source versions cannot overwrite a newer row. Versions travel as decimal strings and are bounded to PostgreSQL bigint. |
@@ -62,7 +62,7 @@ Run API and CRM type checks and the existing reservation/provider/webhook/schedu
 
 Pause all workers/senders and drain claims before rollback. Capture any new outbox deliveries and remote-send outcomes; never reset sent jobs for replay.
 
-PMS: run `docs/sql/crm_integration_rollback.sql` manually in the PMS database. It removes the new trigger attachments and restores the three modified producer/publication functions from the live production definitions captured during this review. It restores the prior native trigger attachment. It intentionally retains state, operation, outbox, identity and check-in records. Take a fresh pre-application function backup too: the captured definitions are from 26 November, not proof against later drift.
+PMS: run `docs/sql/crm_integration_rollback.sql` manually in the PMS database. It removes the new trigger attachments and restores the three modified producer/publication functions from the live production definitions captured during this review. It restores the prior native trigger attachment. It intentionally retains shared reservation_event_state, outbox, identity and check-in records. Take a fresh pre-application function backup too: the captured definitions are from 26 November, not proof against later drift.
 
 CRM: `docs/sql/crm_integration_restore_functions.sql` restores the three replaced queue/execution functions while workers remain paused. Keep the additive columns and `crm_canonical_reconciliation_history`. That table preserves original reservation/job snapshots, including previous failure diagnostics. Do not delete aliases, canonical rows, contacts, jobs or logs to reverse a rekey. A per-row reversal must first verify that neither newer projection changes nor accepted sends would be overwritten; compare original external IDs against current unique keys. Restore only verified unsent jobs under operator review.
 
@@ -88,12 +88,10 @@ M	apps/rz-api/src/app/v1/integrations/rz-crm/_lib/unified-reservation-data.ts
 M	apps/rz-api/src/app/v1/integrations/rz-crm/_lib/variables.ts
 A	apps/rz-api/supabase/migrations/20261126180710_crm_canonical_reservation_integration.sql
 M	docs/crm-reservation-integration.md
-D	docs/sql/crm_emit_reservation_operation_v2.draft.sql
 A	docs/sql/crm_integration_restore_functions.sql
 A	docs/sql/crm_integration_rollback.sql
 D	docs/sql/crm_read_master_checkin_v2.draft.sql
 D	docs/sql/crm_reservation_context_view.draft.sql
-D	docs/sql/crm_reservation_event_state.draft.sql
 D	docs/sql/crm_reservation_event_trigger_cutover.draft.sql
 M	supabase/tests/crm_reservation_context_contract.sql
 ```
@@ -129,3 +127,5 @@ A	supabase/migrations/20261126180830_canonical_reservation_integration.sql
 M	supabase/migrations/94_integration_capability_contract_v2.sql
 A	supabase/tests/canonical_reservation_integration.sql
 ```
+
+The PMS storage design is superseded by [the shared reservation event architecture](reservation-event-architecture.md). It now uses one integration-independent state table and hashes, with unchanged CRM contracts and migration order. No edits to the two CRM migrations or TypeScript types are required.

@@ -94,3 +94,7 @@ Existing `/variables/resolve` contract v1 stays unchanged; v2 is opt-in.
 The detail route adds `/{reservationId}` and resolves verified child aliases to the parent. Native IDs remain unchanged. Parent `source_version` is a positive bigint encoded as a decimal string, never a JavaScript number. Parent guest data and version are read in the same database statement. Historical unversioned parent/child events may refresh projections but never replay lifecycle occurrences.
 
 Projection/version persistence is atomic. Job insertion and webhook completion are a second recoverable transaction, guarded by source version, lease attempt, projection timestamp, timezone and automation configuration. Projection equality does not imply event completion. The sender gate checks source version again for queued lifecycle jobs.
+
+## Shared PMS event infrastructure
+
+PMS now uses one integration-independent `reservation_event_state` for both native and parent bookings. `emit_reservation_event` persists only the lifecycle marker, version and normalized SHA-256 hash before calling the existing `emit_domain_event` outbox. No state snapshot/operation-ledger dependency exists in this API or CRM migrations. Parent version fields and all HTTP response/automation contracts are unchanged. See `docs/reservation-event-architecture.md` for replay, retention and rollback evidence.

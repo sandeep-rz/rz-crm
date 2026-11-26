@@ -406,6 +406,15 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
   }
 
   async insertEventJob(job: AutomationTriggerJobInsert): Promise<boolean> {
+    if (job.trigger_type === 'reservation_confirmed' && job.occurrence_key.endsWith(':confirmation:reservation_confirmed')) {
+      // Preserve existing confirmation history after a single-record rekey.
+      // Any existing occurrence owns retry/recovery, regardless of its status.
+      const prior = await this.db.from('automation_trigger_jobs').select('id')
+        .eq('account_id',job.account_id).eq('automation_id',job.automation_id)
+        .eq('pms_reservation_id',job.pms_reservation_id).eq('trigger_type','reservation_confirmed').limit(1);
+      if (prior.error) throw new PmsAutomationScheduleError('Confirmation history lookup failed.');
+      if (prior.data?.length) return false;
+    }
     const { data, error } = await this.db
       .from('automation_trigger_jobs')
       .upsert(job, { onConflict: 'occurrence_key', ignoreDuplicates: true })

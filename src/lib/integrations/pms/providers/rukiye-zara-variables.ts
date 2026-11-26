@@ -75,8 +75,6 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
       !object(data.context) ||
       data.context.source_type !== source.source_type ||
       data.context.source_record_id !== source.source_record_id ||
-      data.context.external_account_id !== context.externalAccountId ||
-      data.context.external_property_id !== context.externalPropertyId ||
       !object(data.values)
     )
       throw invalid();
@@ -125,6 +123,8 @@ export class RukiyeZaraVariableResolver implements ConnectedSystemVariableResolv
       !object(data.context) ||
       data.context.source_type !== source.source_type ||
       data.context.source_record_id !== source.source_record_id ||
+      data.context.external_account_id !== context.externalAccountId ||
+      data.context.external_property_id !== context.externalPropertyId ||
       !object(data.values)
     ) {
       throw new PmsProviderError('invalid_response', 'RZ PMS v2 response is invalid.');

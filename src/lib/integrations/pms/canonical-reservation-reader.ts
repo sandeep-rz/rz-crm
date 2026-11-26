@@ -26,7 +26,7 @@ export class CanonicalReservationReader {
     const r=raw.data.reservation;
     if (input.sourceType==='bookings') {
       if(raw.data.kind!=='native') throw invalid();
-      const id=r.external_id ?? r.id ?? r.external_reservation_id;
+      const id=r.id;
       if(id!==input.externalReservationId || String(r.property_id ?? r.external_property_id)!==input.externalPropertyId) throw invalid();
       return {kind:'native',reservation:r,parentId:input.externalReservationId,aliases:[]};
     }

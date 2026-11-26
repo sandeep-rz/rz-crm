@@ -32,6 +32,7 @@ export interface PmsAutomationScheduleInput {
   reservationId: string;
   webhookEventId: string;
   eventType: keyof typeof EVENT_TRIGGER_BY_PMS_EVENT;
+  canonicalParent?: boolean;
 }
 
 export interface PmsAutomationScheduleResult {
@@ -253,7 +254,10 @@ export function eventOccurrenceKey(input: {
   reservationId: string;
   webhookEventId: string;
   triggerType: PmsAutomationTriggerType;
+  canonicalParent?: boolean;
 }) {
+  if (input.canonicalParent && input.triggerType === 'reservation_confirmed')
+    return `pms:event:${input.automationId}:${input.reservationId}:confirmation:${input.triggerType}`;
   return `pms:event:${input.automationId}:${input.reservationId}:${input.webhookEventId}:${input.triggerType}`;
 }
 
@@ -312,6 +316,7 @@ export async function schedulePmsAutomationsAfterSync(
         reservationId: reservation.reservation_id,
         webhookEventId: input.webhookEventId,
         triggerType: eventTrigger,
+        canonicalParent: input.canonicalParent,
       }),
       run_at: now().toISOString(),
       source_updated_at: reservation.reservation_updated_at ?? null,

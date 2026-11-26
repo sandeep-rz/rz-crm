@@ -14,8 +14,6 @@ export type CanonicalRead = {kind:'native'|'pms'; reservation:Record<string,unkn
 export class CanonicalReservationReader {
   constructor(private readonly client: Pick<PmsHttpClient,'get'> = new PmsHttpClient()) {}
   async get(input:{integration:PmsIntegrationContext; externalPropertyId:string; externalReservationId:string; sourceType:string}):Promise<CanonicalRead> {
-    if (process.env.RZ_PMS_CANONICAL_RESERVATIONS_ENABLED !== 'true')
-      throw new PmsProviderError('configuration','Canonical reservation reads are disabled.');
     if (input.integration.provider !== 'rz_pms' && input.integration.provider !== 'rukiye_zara')
       throw new PmsProviderError('configuration','Invalid provider for canonical read.');
     if (!/^[1-9]\d*$/.test(input.externalPropertyId) || !uuid.test(input.externalReservationId) ||

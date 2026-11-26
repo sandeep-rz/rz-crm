@@ -154,6 +154,7 @@ export function canonicalReservationFrom(value: unknown): PmsReservation {
     channel:{code:nullableString(r.channel_code),name:nullableString(r.canonical_channel_name ?? r.channel_name)},
     financial:{totalAmount:numberValue(r.total_amount,'total amount'),paidAmount:numberValue(r.paid_amount,'paid amount'),balanceDue:numberValue(r.balance_due,'balance due'),currency:nullableString(r.currency),paymentStatus:nullableString(r.payment_status)},
     createdAt:nullableString(r.reservation_created_at),updatedAt:nullableString(r.reservation_updated_at),
+    sourceVersion: typeof r.source_version === 'string' && /^[1-9]\d{0,18}$/.test(r.source_version) ? r.source_version : undefined,
     canonicalAliases:rooms.map(room=>identifier(room.booking_id,'room booking')),
     guestResolution:r.guest_resolution==='resolved'?'resolved':'unresolved',
   };

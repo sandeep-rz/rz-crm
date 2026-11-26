@@ -296,6 +296,15 @@ export async function processPmsWebhookEvent(
     if (canonicalParent && reservation.guestResolution !== 'resolved') {
       throw new PmsReservationSyncError('Canonical guest is unresolved.');
     }
+    // A stale cancellation must not cancel the schedules of a reinstated stay.
+    // A stale confirmation must not send confirmation for a cancelled stay.
+    // Keep same-status retries eligible for occurrence-key deduplication.
+    if (canonicalParent &&
+      ((event.eventType === 'reservation.cancelled' && reservation.status !== 'cancelled') ||
+       (event.eventType === 'reservation.confirmed' && reservation.status !== 'confirmed'))) {
+      await store.markIgnored(event, now().toISOString(), 'Reservation lifecycle has advanced.');
+      return { eventId: event.id, status: 'ignored' };
+    }
     await scheduleAutomations({
       accountId: event.accountId,
       reservationId: syncResult.reservationId,

@@ -34,6 +34,7 @@ export interface PmsWebhookEventClaim {
   eventType: string;
   externalResourceId: string | null;
   occurredAt: string | null;
+  sourceType?: string;
   processingStartedAt: string;
   attemptCount: number;
 }
@@ -236,14 +237,20 @@ export async function processPmsWebhookEvent(
       return { eventId: event.id, status: 'processed' };
     }
 
-    const reservation = await provider.getReservation({
+    const canonicalParent = event.sourceType === 'pms_reservations';
+    if (canonicalParent && !provider.getCanonicalReservation) {
+      throw new PmsWebhookEventProcessingError('invalid_resource', 'Canonical provider is unavailable.');
+    }
+    const fetchReservation = canonicalParent ? provider.getCanonicalReservation!.bind(provider) : provider.getReservation.bind(provider);
+    const reservation = await fetchReservation({
       integration: context.integration,
       externalPropertyId: context.property.externalPropertyId,
       externalReservationId: event.externalResourceId,
     });
 
     if (
-      reservation.externalId !== event.externalResourceId ||
+      (reservation.externalId !== event.externalResourceId &&
+        !(canonicalParent && reservation.canonicalAliases?.includes(event.externalResourceId))) ||
       reservation.externalPropertyId !== context.property.externalPropertyId
     ) {
       throw new PmsWebhookEventProcessingError(
@@ -288,6 +295,7 @@ export async function processPmsWebhookEvent(
       accountId: event.accountId,
       reservationId: syncResult.reservationId,
       webhookEventId: event.id,
+      ...(canonicalParent ? { canonicalParent: true } : {}),
       eventType: event.eventType as
         | 'reservation.confirmed'
         | 'reservation.updated'
@@ -400,7 +408,17 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
       throw new PmsWebhookEventStoreError('Event claim failed.');
     }
 
-    return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    // Claim RPC does not project the envelope; load its persisted source from the same scoped event.
+    const claims = await Promise.all(rows.map(async (row) => {
+      const { data: persisted, error: payloadError } = await this.admin.from('pms_webhook_events')
+        .select('payload').eq('id',row.event_id).eq('account_id',row.account_id)
+        .eq('pms_integration_id',row.pms_integration_id).eq('pms_property_id',row.pms_property_id).maybeSingle();
+      if (payloadError || !persisted) throw new PmsWebhookEventStoreError('Event source lookup failed.');
+      const payload = persisted.payload as {source?: {type?: unknown;id?: unknown}} | null;
+      return { ...row, sourceType: payload?.source?.id === row.external_resource_id && typeof payload?.source?.type === 'string' ? payload.source.type : undefined };
+    }));
+    return claims.map((row) => ({
       id: row.event_id as string,
       provider: row.provider as string,
       externalEventId: row.external_event_id as string,
@@ -410,6 +428,7 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
       eventType: row.event_type as string,
       externalResourceId: row.external_resource_id as string | null,
       occurredAt: row.occurred_at as string | null,
+      sourceType: row.sourceType,
       processingStartedAt: row.processing_started_at as string,
       attemptCount: row.attempt_count as number,
     }));

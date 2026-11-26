@@ -31,9 +31,11 @@ export interface PmsContactRecord {
 export interface PmsReservationRecord {
   id: string;
   externalUpdatedAt: string | null;
+  contactId?: string | null;
 }
 
 export interface PmsReservationSyncStore {
+  reconcileCanonicalIdentity?(input: PmsReservationSyncInput): Promise<void>;
   findGuestMapping(input: {
     integrationId: string;
     externalGuestId: string;
@@ -261,12 +263,18 @@ export async function syncPmsReservation(
     throw new PmsReservationSyncError('PMS provider is required.');
   }
 
-  const contact = await resolveContact(input, store);
+  if (input.reservation.sourceType === 'pms_reservations') {
+    if (!store.reconcileCanonicalIdentity) throw new PmsReservationSyncError('Canonical identity reconciliation unavailable.');
+    await store.reconcileCanonicalIdentity(input);
+  }
   const existing = await store.findReservation({
     accountId: input.accountId,
     integrationId: input.integration.integrationId,
     externalReservationId: input.reservation.externalId,
   });
+  const contact = input.reservation.sourceType === 'pms_reservations' && input.reservation.guestResolution !== 'resolved'
+    ? { contactId: existing?.contactId ?? null, created: false, mapped: false }
+    : await resolveContact(input, store);
   const saved = await store.saveReservation({
     accountId: input.accountId,
     integrationId: input.integration.integrationId,
@@ -292,6 +300,26 @@ function isUniqueViolation(error: { code?: string } | null): boolean {
 
 export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore {
   constructor(private readonly admin: SupabaseClient = supabaseAdmin()) {}
+
+  async reconcileCanonicalIdentity(input: PmsReservationSyncInput) {
+    const aliases = input.reservation.canonicalAliases;
+    if (!aliases?.length) throw new PmsReservationSyncError('Canonical aliases missing.');
+    const {data,error} = await this.admin.from('pms_reservations')
+      .select('id,pms_property_id,external_reservation_id')
+      .eq('account_id',input.accountId).eq('pms_integration_id',input.integration.integrationId)
+      .in('external_reservation_id',[input.reservation.externalId,...aliases]);
+    if (error || (data?.length ?? 0)>1 || data?.some(r=>r.pms_property_id!==input.property.id))
+      throw new PmsReservationSyncError('Canonical identity conflict.');
+    const row=data?.[0];
+    if (!row || row.external_reservation_id===input.reservation.externalId) return;
+    const result=await this.admin.rpc('crm_rekey_pms_reservation_v2',{
+      p_account_id:input.accountId,p_integration_id:input.integration.integrationId,p_property_id:input.property.id,
+      p_internal_id:row.id,p_expected_child_id:row.external_reservation_id,p_parent_id:input.reservation.externalId,
+      p_verified_child_ids:aliases,p_dry_run:false
+    });
+    if(result.error || !['rekeyed','already_reconciled'].includes(result.data?.status))
+      throw new PmsReservationSyncError('Canonical identity reconciliation failed.');
+  }
 
   async findGuestMapping(input: {
     integrationId: string;
@@ -458,7 +486,7 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
   }) {
     const { data, error } = await this.admin
       .from('pms_reservations')
-      .select('id, external_updated_at')
+      .select('id, external_updated_at, contact_id')
       .eq('account_id', input.accountId)
       .eq('pms_integration_id', input.integrationId)
       .eq('external_reservation_id', input.externalReservationId)
@@ -468,6 +496,7 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
       ? ({
           id: data.id as string,
           externalUpdatedAt: data.external_updated_at as string | null,
+          contactId: data.contact_id as string | null,
         } satisfies PmsReservationRecord)
       : null;
   }
@@ -518,7 +547,7 @@ export class SupabasePmsReservationSyncStore implements PmsReservationSyncStore 
       external_created_at: input.reservation.createdAt,
       external_updated_at: input.reservation.updatedAt,
       last_synced_at: input.syncedAt,
-      metadata: { source_type: input.reservation.sourceType },
+      metadata: { source_type: input.reservation.sourceType, ...(input.reservation.sourceType === 'pms_reservations' ? { guest_resolution: input.reservation.guestResolution ?? 'unresolved' } : {}) },
     };
     if (input.existing) {
       let updateQuery = this.admin

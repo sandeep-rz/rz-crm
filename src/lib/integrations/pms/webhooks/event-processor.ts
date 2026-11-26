@@ -16,7 +16,7 @@ import {
 } from '../reservation-sync';
 import { isSupportedRzPmsEvent } from './envelope';
 import { PmsGuestSyncError, syncPmsGuestContact } from '../guest-sync';
-import { schedulePmsAutomationsAfterSync } from '@/lib/automations/pms-scheduler';
+import { schedulePmsAutomationsAfterSync, completeCanonicalPmsEvent } from '@/lib/automations/pms-scheduler';
 
 export const PMS_WEBHOOK_EVENT_BATCH_SIZE = 10;
 export const PMS_WEBHOOK_EVENT_STALE_MS = 15 * 60 * 1000;
@@ -35,6 +35,7 @@ export interface PmsWebhookEventClaim {
   externalResourceId: string | null;
   occurredAt: string | null;
   sourceType?: string;
+  sourceVersion?: string;
   processingStartedAt: string;
   attemptCount: number;
 }
@@ -101,6 +102,7 @@ export interface PmsWebhookEventDependencies {
   createProvider?: (provider: string) => PmsProvider;
   now?: () => Date;
   scheduleAutomations?: typeof schedulePmsAutomationsAfterSync;
+  completeCanonicalEvent?: typeof completeCanonicalPmsEvent;
   syncGuest?: typeof syncPmsGuestContact;
 }
 
@@ -305,6 +307,25 @@ export async function processPmsWebhookEvent(
       await store.markIgnored(event, now().toISOString(), 'Reservation lifecycle has advanced.');
       return { eventId: event.id, status: 'ignored' };
     }
+    if (canonicalParent && event.sourceVersion) {
+      if (!reservation.sourceVersion) throw new PmsReservationSyncError('Canonical snapshot version missing.');
+      if (BigInt(reservation.sourceVersion)<BigInt(event.sourceVersion)) throw new PmsReservationSyncError('Canonical snapshot not yet available.');
+      if (BigInt(reservation.sourceVersion)>BigInt(event.sourceVersion)) {
+        await store.markIgnored(event,now().toISOString(),'Canonical event superseded.');
+        return {eventId:event.id,status:'ignored'};
+      }
+      const outcome=await (dependencies.completeCanonicalEvent ?? completeCanonicalPmsEvent)({
+        accountId:event.accountId,reservationId:syncResult.reservationId,webhookEventId:event.id,
+        eventType:event.eventType as 'reservation.confirmed'|'reservation.updated'|'reservation.cancelled',
+        canonicalParent:true,sourceVersion:event.sourceVersion,attemptCount:event.attemptCount
+      });
+      if(outcome==='processed') return {eventId:event.id,status:'processed'};
+      if(outcome==='superseded'){
+        await store.markIgnored(event,now().toISOString(),'Canonical event superseded.');
+        return {eventId:event.id,status:'ignored'};
+      }
+      throw new PmsReservationSyncError('Canonical event must retry.');
+    }
     await scheduleAutomations({
       accountId: event.accountId,
       reservationId: syncResult.reservationId,
@@ -429,8 +450,10 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
         .select('payload').eq('id',row.event_id).eq('account_id',row.account_id)
         .eq('pms_integration_id',row.pms_integration_id).eq('pms_property_id',row.pms_property_id).maybeSingle();
       if (payloadError || !persisted) throw new PmsWebhookEventStoreError('Event source lookup failed.');
-      const payload = persisted.payload as {source?: {type?: unknown;id?: unknown}} | null;
-      return { ...row, sourceType: payload?.source?.id === row.external_resource_id && typeof payload?.source?.type === 'string' ? payload.source.type : undefined };
+      const payload = persisted.payload as {source?: {type?: unknown;id?: unknown};data?:{source_version?:unknown}} | null;
+      const version=payload?.data?.source_version;
+      const sourceVersion=typeof version==='string' && /^[1-9]\d{0,18}$/.test(version)?version:undefined;
+      return { ...row, sourceVersion, sourceType: payload?.source?.id === row.external_resource_id && typeof payload?.source?.type === 'string' ? payload.source.type : undefined };
     }));
     return claims.map((row) => ({
       id: row.event_id as string,
@@ -443,6 +466,7 @@ export class SupabasePmsWebhookEventStore implements PmsWebhookEventStore {
       externalResourceId: row.external_resource_id as string | null,
       occurredAt: row.occurred_at as string | null,
       sourceType: row.sourceType,
+      sourceVersion: row.sourceVersion,
       processingStartedAt: row.processing_started_at as string,
       attemptCount: row.attempt_count as number,
     }));

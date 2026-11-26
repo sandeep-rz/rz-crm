@@ -129,6 +129,36 @@ function reservationFrom(value: unknown): PmsReservation {
   };
 }
 
+
+// Canonical parent contract. A multi-room stay has no single listing identity.
+export function canonicalReservationFrom(value: unknown): PmsReservation {
+  const wrapper = record(value);
+  if (wrapper.kind === 'native') return reservationFrom(wrapper.reservation);
+  if (wrapper.kind !== 'pms') throw new PmsProviderError('invalid_response','Invalid reservation kind.');
+  const r=record(wrapper.reservation);
+  const rooms=Array.isArray(r.rooms)?r.rooms.map(record):[];
+  if (!rooms.length) throw new PmsProviderError('invalid_response','Missing reservation rooms.');
+  const listings=[...new Set(rooms.map(room=>identifier(room.listing_id,'room listing')))];
+  const guest=r.guest_resolution==='resolved'?record(r.guest):{};
+  return {
+    externalId:identifier(r.source_record_id,'parent reservation'),
+    sourceType:'pms_reservations',
+    externalPropertyId:identifier(r.property_id,'property'),
+    externalListingId:listings.length===1?listings[0]:'',
+    reservationCode:stringValue(r.reservation_code,'reservation code')!,
+    status:reservationStatus(r.canonical_status),
+    providerStatus:r.canonical_status==='confirmed' && Number(r.cancelled_rooms)>0?'partially_cancelled':String(r.canonical_status),
+    checkIn:nullableString(r.checkin_date),checkOut:nullableString(r.checkout_date),
+    guest:{externalId:nullableString(guest.external_guest_id),fullName:nullableString(guest.full_name),email:nullableString(guest.email),phone:nullableString(guest.phone)},
+    occupancy:{adults:null,children:null,infants:null,pets:null,total:numberValue(r.expected_guest_count,'occupancy')},
+    channel:{code:nullableString(r.channel_code),name:nullableString(r.canonical_channel_name ?? r.channel_name)},
+    financial:{totalAmount:numberValue(r.total_amount,'total amount'),paidAmount:numberValue(r.paid_amount,'paid amount'),balanceDue:numberValue(r.balance_due,'balance due'),currency:nullableString(r.currency),paymentStatus:nullableString(r.payment_status)},
+    createdAt:nullableString(r.reservation_created_at),updatedAt:nullableString(r.reservation_updated_at),
+    canonicalAliases:rooms.map(room=>identifier(room.booking_id,'room booking')),
+    guestResolution:r.guest_resolution==='resolved'?'resolved':'unresolved',
+  };
+}
+
 export class RukiyeZaraPmsProvider implements PmsProvider {
   readonly provider = RUKIYE_ZARA_PROVIDER;
   constructor(private readonly client = new PmsHttpClient()) {}

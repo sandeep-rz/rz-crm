@@ -291,6 +291,11 @@ export async function processPmsWebhookEvent(
     const scheduleAutomations =
       dependencies.scheduleAutomations ?? schedulePmsAutomationsAfterSync;
 
+    // Never schedule guest-facing actions from an unresolved parent guest.
+    // Keep the event retryable until an authoritative guest is available.
+    if (canonicalParent && reservation.guestResolution !== 'resolved') {
+      throw new PmsReservationSyncError('Canonical guest is unresolved.');
+    }
     await scheduleAutomations({
       accountId: event.accountId,
       reservationId: syncResult.reservationId,

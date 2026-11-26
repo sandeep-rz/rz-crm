@@ -113,6 +113,7 @@ export interface PmsProvider {
     cursor?: string | null;
     updatedSince?: string | null;
   }): Promise<PmsReservationPage>;
+  getCanonicalReservation?(input: {integration: PmsIntegrationContext; externalPropertyId: string; externalReservationId: string}): Promise<PmsReservation>;
   getReservation(input: {
     integration: PmsIntegrationContext;
     externalPropertyId: string;

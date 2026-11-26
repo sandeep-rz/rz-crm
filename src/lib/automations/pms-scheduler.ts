@@ -465,3 +465,28 @@ export class SupabasePmsAutomationScheduleStore implements PmsAutomationSchedule
     return data?.length ?? 0;
   }
 }
+
+/** Plan with the existing scheduler, then commit the jobs and webhook lease together. */
+export async function completeCanonicalPmsEvent(input: PmsAutomationScheduleInput & {
+  sourceVersion:string; attemptCount:number;
+}, db:SupabaseClient=supabaseAdmin()):Promise<string> {
+  const jobs:AutomationTriggerJobInsert[]=[];
+  let cancelTiming=false;
+  const base=new SupabasePmsAutomationScheduleStore(db);
+  await schedulePmsAutomationsAfterSync(input,{
+    store:{
+      loadActiveAutomations:accountId=>base.loadActiveAutomations(accountId),
+      insertEventJob:async job=>{jobs.push(job);return true;},
+      upsertScheduledJob:async job=>{jobs.push(job);return true;},
+      cancelFutureJobs:async()=>{cancelTiming=true;return 0;}
+    },
+    loadContext:(reservationId,accountId)=>loadReservationAutomationContext(reservationId,accountId,db),
+  });
+  const result=await db.rpc('crm_complete_canonical_event_v2',{
+    p_account_id:input.accountId,p_reservation_id:input.reservationId,p_event_id:input.webhookEventId,
+    p_attempt:input.attemptCount,p_source_version:input.sourceVersion,p_jobs:jobs,p_cancel_timing:cancelTiming
+  });
+  if(result.error || !['processed','version_changed','guest_unresolved','superseded'].includes(result.data))
+    throw new PmsAutomationScheduleError('Canonical event completion failed.');
+  return result.data;
+}

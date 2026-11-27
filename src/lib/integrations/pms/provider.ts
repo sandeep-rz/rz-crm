@@ -102,7 +102,21 @@ export class PmsProviderError extends Error {
   }
 }
 
+export interface PmsGuestProfile {
+  externalId: string;
+  externalPropertyId: string;
+  fullName: string | null;
+  email: string | null;
+  phone: string | null;
+  clearedFields: Array<'name' | 'email' | 'phone'>;
+}
+
 export interface PmsProvider {
+  getGuest?(input: {
+    integration: PmsIntegrationContext;
+    externalPropertyId: string;
+    externalGuestId: string;
+  }): Promise<PmsGuestProfile>;
   readonly provider: string;
   getProperty(input: {
     integration: PmsIntegrationContext;

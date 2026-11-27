@@ -207,16 +207,9 @@ export function canonicalReservationFrom(value: unknown): PmsReservation {
     updatedAt: nullableString(r.reservation_updated_at),
     sourceVersion: r.source_version as string,
     canonicalAliases: aliases,
-    // An authoritative phone clear must not reuse an old mapped CRM phone
-    // while the independent guest.updated delivery is still in flight.
-    guestResolution:
-      r.guest_resolution === 'resolved' &&
-      !(
-        Array.isArray(guest.cleared_fields) &&
-        guest.cleared_fields.includes('phone')
-      )
-        ? 'resolved'
-        : 'unresolved',
+    // Identity resolution is independent of phone deliverability.
+    // The automation recipient guard verifies the current guest phone.
+    guestResolution: r.guest_resolution === 'resolved' ? 'resolved' : 'unresolved',
   };
 }
 

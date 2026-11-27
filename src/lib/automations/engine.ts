@@ -39,6 +39,7 @@ import {
   engineSendTemplate,
   engineSendInteractive,
 } from './meta-send';
+import { isCurrentPmsGuestRecipient } from './pms-guest-recipient';
 import { validateInteractivePayload } from '@/lib/whatsapp/interactive';
 import { isDeliverableUrl } from '@/lib/webhooks/ssrf';
 import { resolveWhatsAppConnection } from '@/lib/whatsapp/connection-resolver';
@@ -670,7 +671,8 @@ async function requirePmsContact(step: AutomationStep, args: ExecuteArgs): Promi
     .eq('id', args.contactId)
     .maybeSingle();
   if (error) throw new Error('PMS automation recipient lookup failed.');
-  if (!data || !/^[1-9][0-9]{7,14}$/.test(data.phone_normalized ?? '')) {
+  if (!data || !/^[1-9][0-9]{7,14}$/.test(data.phone_normalized ?? '') ||
+      !(await isCurrentPmsGuestRecipient(current, data.phone_normalized))) {
     throw new PmsContactBlocked(step);
   }
 }

@@ -29,6 +29,10 @@ export interface ReservationAutomationContext {
   reservation_updated_at: string;
   guest_identity_unresolved?: boolean;
   historical_alias?: boolean;
+  source_type?: string;
+  external_guest_id?: string | null;
+  external_property_id?: string;
+  external_account_id?: string;
 }
 
 export class ReservationAutomationContextError extends Error {
@@ -58,7 +62,7 @@ export async function loadReservationAutomationContext(
   const { data: reservation, error: reservationError } = await db
     .from('pms_reservations')
     .select(
-      'id, account_id, pms_integration_id, pms_property_id, contact_id, external_reservation_id, reservation_code, status, provider_status, check_in, check_out, adults, children, occupancy_total, channel_code, channel_name, total_amount, currency, updated_at, metadata, canonical_reservation_id'
+      'id, account_id, pms_integration_id, pms_property_id, contact_id, external_reservation_id, external_guest_id, reservation_code, status, provider_status, check_in, check_out, adults, children, occupancy_total, channel_code, channel_name, total_amount, currency, updated_at, metadata, canonical_reservation_id'
     )
     .eq('id', reservationId)
     .eq('account_id', accountId)
@@ -74,14 +78,14 @@ export async function loadReservationAutomationContext(
   ] = await Promise.all([
     db
       .from('pms_properties')
-      .select('id, account_id, pms_integration_id, name, timezone, status')
+      .select('id, account_id, pms_integration_id, name, timezone, status, external_property_id')
       .eq('id', reservation.pms_property_id)
       .eq('account_id', accountId)
       .eq('pms_integration_id', reservation.pms_integration_id)
       .maybeSingle(),
     db
       .from('pms_integrations')
-      .select('id, account_id, provider, status')
+      .select('id, account_id, provider, status, external_account_id')
       .eq('id', reservation.pms_integration_id)
       .eq('account_id', accountId)
       .maybeSingle(),
@@ -117,6 +121,10 @@ export async function loadReservationAutomationContext(
   }
 
   return {
+    source_type: reservation.metadata?.source_type,
+    external_guest_id: reservation.external_guest_id,
+    external_property_id: property.external_property_id,
+    external_account_id: integration.external_account_id,
     historical_alias: Boolean(reservation.canonical_reservation_id),
     guest_identity_unresolved:
       reservation.metadata?.canonical_identity_pending === true ||

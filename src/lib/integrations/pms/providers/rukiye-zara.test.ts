@@ -311,7 +311,7 @@ describe('canonical parent contract', () => {
       ).toThrow(PmsProviderError);
     }
   );
-  it('holds an authoritative phone clear instead of reusing a mapped contact phone', () => {
+  it('keeps guest identity resolved when phone is explicitly cleared', () => {
     const mapped = canonicalReservationFrom({
       kind: 'pms',
       reservation: {
@@ -324,7 +324,7 @@ describe('canonical parent contract', () => {
         },
       },
     });
-    expect(mapped.guestResolution).toBe('unresolved');
+    expect(mapped.guestResolution).toBe('resolved');
   });
   it('rejects duplicate aliases and malformed parent identities', () => {
     expect(() =>

@@ -3,6 +3,7 @@ import { PmsHttpClient } from '../http-client';
 import {
   PmsProviderError,
   type PmsProperty,
+  type PmsGuestProfile,
   type PmsProvider,
   type PmsReservation,
   type PmsReservationPage,
@@ -222,6 +223,37 @@ export function canonicalReservationFrom(value: unknown): PmsReservation {
 export class RukiyeZaraPmsProvider implements PmsProvider {
   readonly provider = RUKIYE_ZARA_PROVIDER;
   constructor(private readonly client = new PmsHttpClient()) {}
+  async getGuest({
+    externalPropertyId,
+    externalGuestId,
+  }: {
+    integration: unknown;
+    externalPropertyId: string;
+    externalGuestId: string;
+  }): Promise<PmsGuestProfile> {
+    const response = record(await this.client.get(
+      `/v1/integrations/rz-crm/properties/${encodeURIComponent(externalPropertyId)}/guests/${encodeURIComponent(externalGuestId)}`
+    ));
+    const guest = record(response.data);
+    const id = identifier(guest.external_guest_id, 'guest id');
+    const property = identifier(guest.property_id, 'property id');
+    if (response.contract_version !== 'v1' || id !== externalGuestId ||
+        property !== externalPropertyId || !Array.isArray(guest.cleared_fields) ||
+        !guest.cleared_fields.every(field => field === 'name' || field === 'email' || field === 'phone') ||
+        !['full_name', 'email', 'phone'].every(key =>
+          guest[key] === null || typeof guest[key] === 'string')) {
+      throw new PmsProviderError('invalid_response', 'Invalid scoped guest profile.');
+    }
+    const clearedFields = guest.cleared_fields as PmsGuestProfile['clearedFields'];
+    return {
+      externalId: id,
+      externalPropertyId: property,
+      fullName: clearedFields.includes('name') ? null : nullableString(guest.full_name),
+      email: clearedFields.includes('email') ? null : nullableString(guest.email),
+      phone: clearedFields.includes('phone') ? null : nullableString(guest.phone),
+      clearedFields,
+    };
+  }
   async getProperty({
     externalPropertyId,
   }: {

@@ -60,13 +60,44 @@ function harness(reservation: PmsReservation = fixture()) {
     provider: 'rukiye_zara',
     getReservation,
   } as unknown as PmsProvider;
-  const findLinkedReservation = vi.fn(async () => 'reservation-1');
+  const findLinkedReservation = vi.fn(async () => ({ externalId: 'reservation-1', sourceType: 'pms_reservations' }));
   const updateMappedContact = vi.fn(async () => true);
   const store: GuestSyncStore = { findLinkedReservation, updateMappedContact };
   return { provider, store, getReservation, findLinkedReservation, updateMappedContact };
 }
 
 describe('PMS guest.updated contact sync', () => {
+  it('fetches a shared guest directly without retrieving the parent reservation', async () => {
+    const h = harness();
+    h.provider.getGuest = vi.fn(async () => ({
+      externalId: ctx.externalGuestId, externalPropertyId: ctx.externalPropertyId,
+      fullName: 'Example Guest', email: null, phone: null, clearedFields: [],
+    }));
+    await expect(syncPmsGuestContact(ctx, h.provider, h.store)).resolves.toBe('updated');
+    expect(h.getReservation).not.toHaveBeenCalled();
+    expect(h.updateMappedContact).toHaveBeenCalledWith(expect.objectContaining({phone: null}));
+  });
+
+  it('propagates an explicit shared guest phone clear', async () => {
+    const h = harness();
+    h.provider.getGuest = vi.fn(async () => ({
+      externalId: ctx.externalGuestId, externalPropertyId: ctx.externalPropertyId,
+      fullName: null, email: null, phone: null, clearedFields: ['phone' as const],
+    }));
+    await syncPmsGuestContact(ctx, h.provider, h.store);
+    expect(h.updateMappedContact).toHaveBeenCalledWith(expect.objectContaining({phone: ''}));
+  });
+
+  it('rejects a guest profile returned for another property', async () => {
+    const h = harness();
+    h.provider.getGuest = vi.fn(async () => ({
+      externalId: ctx.externalGuestId, externalPropertyId: 'other-property',
+      fullName: null, email: null, phone: null, clearedFields: [],
+    }));
+    await expect(syncPmsGuestContact(ctx, h.provider, h.store)).rejects.toMatchObject({code: 'guest_mismatch'});
+    expect(h.updateMappedContact).not.toHaveBeenCalled();
+  });
+
   it('updates only a mapped contact from a canonical reservation; no automations', async () => {
     const h = harness();
     await expect(syncPmsGuestContact(ctx, h.provider, h.store)).resolves.toBe('updated');

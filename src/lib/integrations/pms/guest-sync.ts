@@ -13,8 +13,13 @@ export interface GuestSyncContext {
   occurredAt: string;
 }
 
+export interface LinkedGuestReservation {
+  externalId: string;
+  sourceType: string;
+}
+
 export interface GuestSyncStore {
-  findLinkedReservation(input: GuestSyncContext): Promise<string | null>;
+  findLinkedReservation(input: GuestSyncContext): Promise<LinkedGuestReservation | null>;
   updateMappedContact(input: GuestSyncContext & {
     name: string | null;
     email: string | null;
@@ -33,12 +38,8 @@ export class PmsGuestSyncError extends Error {
 }
 
 /**
- * Reuses the existing authenticated canonical reservation API.
- * No CRM contact is created or matched by phone/email: only an existing
- * PMS external_guest_id mapping may be updated.
- *
- * Directory-only guests cannot sync until PMS exposes a scoped getGuest API;
- * these are intentionally ignored, never matched heuristically.
+ * Updates only an existing mapped contact. Shared PMS guests use their own
+ * property-scoped endpoint; native bookers retain their legacy identity path.
  */
 export async function syncPmsGuestContact(
   input: GuestSyncContext,
@@ -52,44 +53,58 @@ export async function syncPmsGuestContact(
     throw new PmsGuestSyncError('Integration account mismatch.', 'invalid_guest');
   }
 
-  const reservationId = await store.findLinkedReservation(input);
-  if (!reservationId) return 'unmapped';
+  const linked = await store.findLinkedReservation(input);
+  if (!linked) return 'unmapped';
 
-  const reservation = await provider.getReservation({
-    integration: input.integration,
-    externalPropertyId: input.externalPropertyId,
-    externalReservationId: reservationId,
-  });
-
-  if (reservation.externalPropertyId !== input.externalPropertyId ||
-      reservation.externalId !== reservationId ||
-      reservation.guest.externalId !== input.externalGuestId) {
-    throw new PmsGuestSyncError('Canonical guest/reservation/property mismatch.', 'guest_mismatch');
+  const sharedPms = linked.sourceType === 'pms_reservations' || linked.sourceType === 'pms_bookings';
+  let name: string | null;
+  let email: string | null;
+  let rawPhone: string | null;
+  let explicitlyCleared: boolean;
+  if (sharedPms && provider.getGuest) {
+    const guest = await provider.getGuest({
+      integration: input.integration,
+      externalPropertyId: input.externalPropertyId,
+      externalGuestId: input.externalGuestId,
+    });
+    if (guest.externalPropertyId !== input.externalPropertyId ||
+        guest.externalId !== input.externalGuestId) {
+      throw new PmsGuestSyncError('Guest/property mismatch.', 'guest_mismatch');
+    }
+    name = guest.clearedFields.includes('name') ? null : guest.fullName;
+    email = guest.clearedFields.includes('email') ? null : guest.email;
+    explicitlyCleared = guest.clearedFields.includes('phone');
+    rawPhone = explicitlyCleared ? null : guest.phone;
+  } else {
+    // Existing providers and native booker mappings retain the legacy lookup.
+    const reservation = await provider.getReservation({
+      integration: input.integration,
+      externalPropertyId: input.externalPropertyId,
+      externalReservationId: linked.externalId,
+    });
+    if (reservation.externalPropertyId !== input.externalPropertyId ||
+        reservation.externalId !== linked.externalId ||
+        reservation.guest.externalId !== input.externalGuestId) {
+      throw new PmsGuestSyncError('Canonical guest/reservation/property mismatch.', 'guest_mismatch');
+    }
+    name = reservation.guest.fullName;
+    email = reservation.guest.email;
+    rawPhone = reservation.guest.phone;
+    explicitlyCleared = !rawPhone; // preserve the existing legacy contract
   }
-
-  const rawPhone = reservation.guest.phone;
   const normalized = rawPhone ? parseInternationalPhone(rawPhone) : null;
-  // Preserve CRM phone if the upstream number does not explicitly include its
-  // international + prefix; never infer the country code from a national number.
-  // An explicit PMS clear is represented by an empty string.
-  const phone = !rawPhone ? '' : normalized ? '+' + normalized : null;
-
-  const updated = await store.updateMappedContact({
-    ...input,
-    name: reservation.guest.fullName,
-    email: reservation.guest.email,
-    phone,
-  });
+  const phone = explicitlyCleared ? '' : normalized ? '+' + normalized : null;
+  const updated = await store.updateMappedContact({ ...input, name, email, phone });
   return updated ? 'updated' : 'unmapped';
 }
 
 export class SupabaseGuestSyncStore implements GuestSyncStore {
   constructor(private readonly admin: SupabaseClient = supabaseAdmin()) {}
 
-  async findLinkedReservation(input: GuestSyncContext): Promise<string | null> {
+  async findLinkedReservation(input: GuestSyncContext): Promise<LinkedGuestReservation | null> {
     const { data, error } = await this.admin
       .from('pms_reservations')
-      .select('external_reservation_id')
+      .select('external_reservation_id, metadata')
       .eq('account_id', input.accountId)
       .eq('pms_integration_id', input.integration.integrationId)
       .eq('pms_property_id', input.propertyId)
@@ -99,7 +114,8 @@ export class SupabaseGuestSyncStore implements GuestSyncStore {
       .limit(1)
       .maybeSingle();
     if (error) throw new PmsGuestSyncError('Guest reservation mapping lookup failed.');
-    return data?.external_reservation_id ?? null;
+    if (!data?.external_reservation_id) return null;
+    return { externalId: data.external_reservation_id, sourceType: typeof data.metadata?.source_type === 'string' ? data.metadata.source_type : '' };
   }
 
   async updateMappedContact(input: GuestSyncContext & {
